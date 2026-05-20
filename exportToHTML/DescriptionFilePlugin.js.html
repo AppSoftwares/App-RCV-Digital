@@ -1,0 +1,126 @@
+<html>
+<head>
+<title>DescriptionFilePlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+DescriptionFilePlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const DescriptionFileUtils = require(</span><span class="s2">&quot;./DescriptionFileUtils&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+
+<span class="s1">module.exports = class DescriptionFilePlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {string[]} filenames filenames 
+     * @param {boolean} pathIsFile pathIsFile 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, filenames, pathIsFile, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.filenames = filenames;</span>
+		<span class="s3">this</span><span class="s1">.pathIsFile = pathIsFile;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span>
+				<span class="s2">&quot;DescriptionFilePlugin&quot;</span><span class="s1">,</span>
+				<span class="s1">(request, resolveContext, callback) =&gt; {</span>
+					<span class="s1">const { path } = request;</span>
+					<span class="s3">if </span><span class="s1">(!path) </span><span class="s3">return </span><span class="s1">callback();</span>
+					<span class="s1">const directory = </span><span class="s3">this</span><span class="s1">.pathIsFile</span>
+						<span class="s1">? DescriptionFileUtils.cdUp(path)</span>
+						<span class="s1">: path;</span>
+					<span class="s3">if </span><span class="s1">(!directory) </span><span class="s3">return </span><span class="s1">callback();</span>
+					<span class="s1">DescriptionFileUtils.loadDescriptionFile(</span>
+						<span class="s1">resolver,</span>
+						<span class="s1">directory,</span>
+						<span class="s3">this</span><span class="s1">.filenames,</span>
+						<span class="s1">request.descriptionFilePath</span>
+							<span class="s1">? {</span>
+									<span class="s1">path: request.descriptionFilePath,</span>
+									<span class="s1">content: request.descriptionFileData,</span>
+									<span class="s1">directory:</span>
+										<span class="s0">/** @type {string} */</span>
+										<span class="s1">(request.descriptionFileRoot),</span>
+								<span class="s1">}</span>
+							<span class="s1">: undefined,</span>
+						<span class="s1">resolveContext,</span>
+						<span class="s1">(err, result) =&gt; {</span>
+							<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+							<span class="s3">if </span><span class="s1">(!result) {</span>
+								<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+									<span class="s1">resolveContext.log(</span>
+										<span class="s1">`No description file found </span><span class="s3">in </span><span class="s1">${directory} or above`,</span>
+									<span class="s1">);</span>
+								<span class="s1">}</span>
+								<span class="s3">return </span><span class="s1">callback();</span>
+							<span class="s1">}</span>
+							<span class="s0">// Normalize the relative path to use POSIX separators. On</span>
+							<span class="s0">// POSIX most paths never contain a backslash, so skip the</span>
+							<span class="s0">// regex replace when possible — `includes` is one pass,</span>
+							<span class="s0">// `replace` with a global regex allocates a lastIndex</span>
+							<span class="s0">// state machine.</span>
+							<span class="s1">const rawRelative = path.slice(result.directory.length);</span>
+							<span class="s1">const relativePath = `.${</span>
+								<span class="s1">rawRelative.includes(</span><span class="s2">&quot;</span><span class="s3">\\</span><span class="s2">&quot;</span><span class="s1">)</span>
+									<span class="s1">? rawRelative.replace(/\\/g, </span><span class="s2">&quot;/&quot;</span><span class="s1">)</span>
+									<span class="s1">: rawRelative</span>
+							<span class="s1">}`;</span>
+							<span class="s0">/** @type {ResolveRequest} */</span>
+							<span class="s1">const obj = {</span>
+								<span class="s1">...request,</span>
+								<span class="s1">descriptionFilePath: result.path,</span>
+								<span class="s1">descriptionFileData: result.content,</span>
+								<span class="s1">descriptionFileRoot: result.directory,</span>
+								<span class="s1">relativePath,</span>
+							<span class="s1">};</span>
+							<span class="s1">resolver.doResolve(</span>
+								<span class="s1">target,</span>
+								<span class="s1">obj,</span>
+								<span class="s1">`using description file: ${result.path} (relative path: ${relativePath})`,</span>
+								<span class="s1">resolveContext,</span>
+								<span class="s1">(err, result) =&gt; {</span>
+									<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+
+									<span class="s0">// Don't allow other processing</span>
+									<span class="s3">if </span><span class="s1">(result === undefined) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+									<span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+								<span class="s1">},</span>
+							<span class="s1">);</span>
+						<span class="s1">},</span>
+					<span class="s1">);</span>
+				<span class="s1">},</span>
+			<span class="s1">);</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<html>
+<head>
+<title>SupabaseUserRepository.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SupabaseUserRepository.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ supabase } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../lib/supabase</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ User, SearchCriteria } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../core/entities/User</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ sanitizeInput } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../shared/security</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ apiBreaker } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../infrastructure/network/CircuitBreaker</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ globalCache } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../infrastructure/cache/CacheService</span><span class="s2">';</span>
+
+<span class="s0">export class </span><span class="s2">SupabaseUserRepository {</span>
+  <span class="s0">async </span><span class="s4">searchUsers</span><span class="s2">(criteria: SearchCriteria): Promise&lt;User</span><span class="s1">[]</span><span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">safeQuery = </span><span class="s4">sanitizeInput</span><span class="s1">(</span><span class="s2">criteria.query</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!safeQuery</span><span class="s1">) </span><span class="s0">return </span><span class="s1">[]</span><span class="s2">;</span>
+
+    <span class="s2">// </span><span class="s5">Caching de búsquedas frecuentes (Regla 80/20)</span>
+    <span class="s0">const </span><span class="s2">cacheKey = `</span><span class="s3">search_</span><span class="s2">${safeQuery}</span><span class="s3">_</span><span class="s2">${criteria.limit}`;</span>
+
+    <span class="s0">return await </span><span class="s2">globalCache.</span><span class="s4">getOrSet</span><span class="s1">(</span><span class="s2">cacheKey, </span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s2">apiBreaker.</span><span class="s4">execute</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">{ data, error } = </span><span class="s0">await </span><span class="s2">supabase</span>
+          <span class="s2">.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">'</span><span class="s3">users</span><span class="s2">'</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">select</span><span class="s1">(</span><span class="s2">'</span><span class="s3">*</span><span class="s2">'</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">or</span><span class="s1">(</span><span class="s2">`</span><span class="s3">full_name.ilike.%</span><span class="s2">${safeQuery}</span><span class="s3">%,email.ilike.%</span><span class="s2">${safeQuery}</span><span class="s3">%</span><span class="s2">`</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">limit</span><span class="s1">(</span><span class="s2">criteria.limit || </span><span class="s6">10</span><span class="s1">)</span><span class="s2">;</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">error.message</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">data </span><span class="s0">as </span><span class="s2">User</span><span class="s1">[]</span><span class="s2">;</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}, </span><span class="s6">60000</span><span class="s1">)</span><span class="s2">; // </span><span class="s5">1 minuto para búsquedas</span>
+  <span class="s2">}</span>
+
+  <span class="s0">async </span><span class="s4">getUserById</span><span class="s2">(id: string): Promise&lt;User | null&gt; {</span>
+    <span class="s0">const </span><span class="s2">cacheKey = `</span><span class="s3">user_</span><span class="s2">${id}`;</span>
+
+    <span class="s0">return await </span><span class="s2">globalCache.</span><span class="s4">getOrSet</span><span class="s1">(</span><span class="s2">cacheKey, </span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s2">apiBreaker.</span><span class="s4">execute</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">{ data, error } = </span><span class="s0">await </span><span class="s2">supabase</span>
+          <span class="s2">.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">'</span><span class="s3">users</span><span class="s2">'</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">select</span><span class="s1">(</span><span class="s2">'</span><span class="s3">*</span><span class="s2">'</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">eq</span><span class="s1">(</span><span class="s2">'</span><span class="s3">id</span><span class="s2">', id</span><span class="s1">)</span>
+          <span class="s2">.</span><span class="s4">single</span><span class="s1">()</span><span class="s2">;</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s0">return </span><span class="s7">null</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">data </span><span class="s0">as </span><span class="s2">User;</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}, </span><span class="s6">300000</span><span class="s1">)</span><span class="s2">; // </span><span class="s5">5 minutos para perfiles</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

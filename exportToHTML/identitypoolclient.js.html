@@ -1,0 +1,151 @@
+<html>
+<head>
+<title>identitypoolclient.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+identitypoolclient.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2021 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.IdentityPoolClient = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const baseexternalclient_1 = require(</span><span class="s0">&quot;./baseexternalclient&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const filesubjecttokensupplier_1 = require(</span><span class="s0">&quot;./filesubjecttokensupplier&quot;</span><span class="s1">);</span>
+<span class="s1">const urlsubjecttokensupplier_1 = require(</span><span class="s0">&quot;./urlsubjecttokensupplier&quot;</span><span class="s1">);</span>
+<span class="s1">const certificatesubjecttokensupplier_1 = require(</span><span class="s0">&quot;./certificatesubjecttokensupplier&quot;</span><span class="s1">);</span>
+<span class="s1">const stscredentials_1 = require(</span><span class="s0">&quot;./stscredentials&quot;</span><span class="s1">);</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s2">/** 
+ * Defines the Url-sourced and file-sourced external account clients mainly 
+ * used for K8s and Azure workloads. 
+ */</span>
+<span class="s1">class IdentityPoolClient extends baseexternalclient_1.BaseExternalAccountClient {</span>
+    <span class="s1">subjectTokenSupplier;</span>
+    <span class="s2">/** 
+     * Instantiate an IdentityPoolClient instance using the provided JSON 
+     * object loaded from an external account credentials file. 
+     * An error is thrown if the credential is not a valid file-sourced or 
+     * url-sourced credential or a workforce pool user project is provided 
+     * with a non workforce audience. 
+     * @param options The external account options object typically loaded 
+     *   from the external account JSON credential file. The camelCased options 
+     *   are aliases for the snake_cased options. 
+     */</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s1">super(options);</span>
+        <span class="s1">const opts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(options);</span>
+        <span class="s1">const credentialSource = opts.get(</span><span class="s0">'credential_source'</span><span class="s1">);</span>
+        <span class="s1">const subjectTokenSupplier = opts.get(</span><span class="s0">'subject_token_supplier'</span><span class="s1">);</span>
+        <span class="s2">// Validate credential sourcing configuration.</span>
+        <span class="s3">if </span><span class="s1">(!credentialSource &amp;&amp; !subjectTokenSupplier) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'A credential source or subject token supplier must be specified.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(credentialSource &amp;&amp; subjectTokenSupplier) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Only one of credential source or subject token supplier can be specified.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(subjectTokenSupplier) {</span>
+            <span class="s3">this</span><span class="s1">.subjectTokenSupplier = subjectTokenSupplier;</span>
+            <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'programmatic'</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">const credentialSourceOpts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(credentialSource);</span>
+            <span class="s1">const formatOpts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(credentialSourceOpts.get(</span><span class="s0">'format'</span><span class="s1">));</span>
+            <span class="s2">// Text is the default format type.</span>
+            <span class="s1">const formatType = formatOpts.get(</span><span class="s0">'type'</span><span class="s1">) || </span><span class="s0">'text'</span><span class="s1">;</span>
+            <span class="s1">const formatSubjectTokenFieldName = formatOpts.get(</span><span class="s0">'subject_token_field_name'</span><span class="s1">);</span>
+            <span class="s3">if </span><span class="s1">(formatType !== </span><span class="s0">'json' </span><span class="s1">&amp;&amp; formatType !== </span><span class="s0">'text'</span><span class="s1">) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(`Invalid credential_source format </span><span class="s0">&quot;${formatType}&quot;</span><span class="s1">`);</span>
+            <span class="s1">}</span>
+            <span class="s3">if </span><span class="s1">(formatType === </span><span class="s0">'json' </span><span class="s1">&amp;&amp; !formatSubjectTokenFieldName) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Missing subject_token_field_name for JSON credential_source format'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s1">const file = credentialSourceOpts.get(</span><span class="s0">'file'</span><span class="s1">);</span>
+            <span class="s1">const url = credentialSourceOpts.get(</span><span class="s0">'url'</span><span class="s1">);</span>
+            <span class="s1">const certificate = credentialSourceOpts.get(</span><span class="s0">'certificate'</span><span class="s1">);</span>
+            <span class="s1">const headers = credentialSourceOpts.get(</span><span class="s0">'headers'</span><span class="s1">);</span>
+            <span class="s3">if </span><span class="s1">((file &amp;&amp; url) || (url &amp;&amp; certificate) || (file &amp;&amp; certificate)) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No valid Identity Pool &quot;credential_source&quot; provided, must be either file, url, or certificate.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(file) {</span>
+                <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'file'</span><span class="s1">;</span>
+                <span class="s3">this</span><span class="s1">.subjectTokenSupplier = </span><span class="s3">new </span><span class="s1">filesubjecttokensupplier_1.FileSubjectTokenSupplier({</span>
+                    <span class="s1">filePath: file,</span>
+                    <span class="s1">formatType: formatType,</span>
+                    <span class="s1">subjectTokenFieldName: formatSubjectTokenFieldName,</span>
+                <span class="s1">});</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(url) {</span>
+                <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'url'</span><span class="s1">;</span>
+                <span class="s3">this</span><span class="s1">.subjectTokenSupplier = </span><span class="s3">new </span><span class="s1">urlsubjecttokensupplier_1.UrlSubjectTokenSupplier({</span>
+                    <span class="s1">url: url,</span>
+                    <span class="s1">formatType: formatType,</span>
+                    <span class="s1">subjectTokenFieldName: formatSubjectTokenFieldName,</span>
+                    <span class="s1">headers: headers,</span>
+                    <span class="s1">additionalGaxiosOptions: IdentityPoolClient.RETRY_CONFIG,</span>
+                <span class="s1">});</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(certificate) {</span>
+                <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'certificate'</span><span class="s1">;</span>
+                <span class="s1">const certificateSubjecttokensupplier = </span><span class="s3">new </span><span class="s1">certificatesubjecttokensupplier_1.CertificateSubjectTokenSupplier({</span>
+                    <span class="s1">useDefaultCertificateConfig: certificate.use_default_certificate_config,</span>
+                    <span class="s1">certificateConfigLocation: certificate.certificate_config_location,</span>
+                    <span class="s1">trustChainPath: certificate.trust_chain_path,</span>
+                <span class="s1">});</span>
+                <span class="s3">this</span><span class="s1">.subjectTokenSupplier = certificateSubjecttokensupplier;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No valid Identity Pool &quot;credential_source&quot; provided, must be either file, url, or certificate.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Triggered when a external subject token is needed to be exchanged for a GCP 
+     * access token via GCP STS endpoint. Gets a subject token by calling 
+     * the configured {@link SubjectTokenSupplier} 
+     * @return A promise that resolves with the external subject token. 
+     */</span>
+    <span class="s1">async retrieveSubjectToken() {</span>
+        <span class="s1">const subjectToken = await </span><span class="s3">this</span><span class="s1">.subjectTokenSupplier.getSubjectToken(</span><span class="s3">this</span><span class="s1">.supplierContext);</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.subjectTokenSupplier </span><span class="s3">instanceof </span><span class="s1">certificatesubjecttokensupplier_1.CertificateSubjectTokenSupplier) {</span>
+            <span class="s1">const mtlsAgent = await </span><span class="s3">this</span><span class="s1">.subjectTokenSupplier.createMtlsHttpsAgent();</span>
+            <span class="s3">this</span><span class="s1">.stsCredential = </span><span class="s3">new </span><span class="s1">stscredentials_1.StsCredentials({</span>
+                <span class="s1">tokenExchangeEndpoint: </span><span class="s3">this</span><span class="s1">.getTokenUrl(),</span>
+                <span class="s1">clientAuthentication: </span><span class="s3">this</span><span class="s1">.clientAuth,</span>
+                <span class="s1">transporter: </span><span class="s3">new </span><span class="s1">gaxios_1.Gaxios({ agent: mtlsAgent }),</span>
+            <span class="s1">});</span>
+            <span class="s3">this</span><span class="s1">.transporter = </span><span class="s3">new </span><span class="s1">gaxios_1.Gaxios({</span>
+                <span class="s1">...(</span><span class="s3">this</span><span class="s1">.transporter.defaults || {}),</span>
+                <span class="s1">agent: mtlsAgent,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">subjectToken;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.IdentityPoolClient = IdentityPoolClient;</span>
+<span class="s2">//# sourceMappingURL=identitypoolclient.js.map</span></pre>
+</body>
+</html>

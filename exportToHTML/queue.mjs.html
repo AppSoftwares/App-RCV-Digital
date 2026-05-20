@@ -1,0 +1,77 @@
+<html>
+<head>
+<title>queue.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #c77dbb; font-style: italic;}
+.s5 { color: #56a8f5;}
+.s6 { color: #7a7e85;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+queue.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ removeItem } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ microtask } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/microtask.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ startViewAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./start.mjs</span><span class="s2">';</span>
+
+<span class="s0">let </span><span class="s2">builders = </span><span class="s1">[]</span><span class="s2">;</span>
+<span class="s0">let </span><span class="s2">current = </span><span class="s4">null</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s5">next</span><span class="s2">() {</span>
+    <span class="s2">current = </span><span class="s4">null</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">[nextBuilder] = builders;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">nextBuilder</span><span class="s1">)</span>
+        <span class="s5">start</span><span class="s1">(</span><span class="s2">nextBuilder</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">start</span><span class="s2">(builder) {</span>
+    <span class="s5">removeItem</span><span class="s1">(</span><span class="s2">builders, builder</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">current = builder;</span>
+    <span class="s5">startViewAnimation</span><span class="s1">(</span><span class="s2">builder</span><span class="s1">)</span><span class="s2">.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">(animation) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">builder.</span><span class="s5">notifyReady</span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">animation.finished.</span><span class="s5">finally</span><span class="s1">(</span><span class="s2">next</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">processQueue</span><span class="s2">() {</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Iterate backwards over the builders array. We can ignore the 
+     * &quot;wait&quot; animations. If we have an interrupting animation in the 
+     * queue then we need to batch all preceeding animations into it. 
+     * Currently this only batches the update functions but will also 
+     * need to batch the targets. 
+     </span><span class="s2">*/</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = builders.</span><span class="s1">length </span><span class="s2">- </span><span class="s7">1</span><span class="s2">; i &gt;= </span><span class="s7">0</span><span class="s2">; i--</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">builder = builders</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ interrupt } = builder.options;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">interrupt === &quot;</span><span class="s3">immediate</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">batchedUpdates = builders.</span><span class="s5">slice</span><span class="s1">(</span><span class="s7">0</span><span class="s2">, i + </span><span class="s7">1</span><span class="s1">)</span><span class="s2">.</span><span class="s5">map</span><span class="s1">(</span><span class="s2">(b) </span><span class="s0">=&gt; </span><span class="s2">b.update</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">remaining = builders.</span><span class="s5">slice</span><span class="s1">(</span><span class="s2">i + </span><span class="s7">1</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">builder.</span><span class="s5">update </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s2">batchedUpdates.</span><span class="s5">forEach</span><span class="s1">(</span><span class="s2">(update) </span><span class="s0">=&gt; </span><span class="s5">update</span><span class="s1">())</span><span class="s2">;</span>
+            <span class="s2">};</span>
+            <span class="s2">// </span><span class="s6">Put the current builder at the front, followed by any &quot;wait&quot; builders</span>
+            <span class="s2">builders = </span><span class="s1">[</span><span class="s2">builder, ...remaining</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">break</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!current || builders</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span><span class="s2">?.options.interrupt === &quot;</span><span class="s3">immediate</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s5">next</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">addToQueue</span><span class="s2">(builder) {</span>
+    <span class="s2">builders.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">builder</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">microtask.</span><span class="s5">render</span><span class="s1">(</span><span class="s2">processQueue</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ addToQueue };</span>
+<span class="s2">//</span><span class="s6"># sourceMappingURL=queue.mjs.map</span>
+</pre>
+</body>
+</html>

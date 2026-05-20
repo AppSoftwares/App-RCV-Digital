@@ -1,0 +1,850 @@
+<html>
+<head>
+<title>RealtimeClient.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+.s8 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+RealtimeClient.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">WebSocketFactory, { WebSocketLike } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/websocket-factory</span><span class="s2">'</span>
+
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">CHANNEL_EVENTS,</span>
+  <span class="s2">CONNECTION_STATE,</span>
+  <span class="s2">DEFAULT_VERSION,</span>
+  <span class="s2">DEFAULT_TIMEOUT,</span>
+  <span class="s2">DEFAULT_VSN,</span>
+  <span class="s2">VSN_1_0_0,</span>
+  <span class="s2">VSN_2_0_0,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/constants</span><span class="s2">'</span>
+
+<span class="s0">import </span><span class="s2">Serializer </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/serializer</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ httpEndpointURL } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/transformers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">RealtimeChannel </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./RealtimeChannel</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{ RealtimeChannelOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./RealtimeChannel</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">SocketAdapter </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./phoenix/socketAdapter</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">Message,</span>
+  <span class="s2">SocketOptions,</span>
+  <span class="s2">HeartbeatCallback,</span>
+  <span class="s2">Encode,</span>
+  <span class="s2">Decode,</span>
+  <span class="s2">Timer,</span>
+  <span class="s2">Vsn,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./phoenix/types</span><span class="s2">'</span>
+
+<span class="s0">type </span><span class="s2">Fetch = typeof fetch</span>
+
+<span class="s0">export type </span><span class="s2">LogLevel = '</span><span class="s3">info</span><span class="s2">' | '</span><span class="s3">warn</span><span class="s2">' | '</span><span class="s3">error</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeMessage = {</span>
+  <span class="s2">topic: string</span>
+  <span class="s2">event: string</span>
+  <span class="s2">payload: any</span>
+  <span class="s2">ref: string</span>
+  <span class="s2">join_ref?: string</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeRemoveChannelResponse = '</span><span class="s3">ok</span><span class="s2">' | '</span><span class="s3">timed out</span><span class="s2">' | '</span><span class="s3">error</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+<span class="s0">export type </span><span class="s2">HeartbeatStatus = '</span><span class="s3">sent</span><span class="s2">' | '</span><span class="s3">ok</span><span class="s2">' | '</span><span class="s3">error</span><span class="s2">' | '</span><span class="s3">timeout</span><span class="s2">' | '</span><span class="s3">disconnected</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+<span class="s0">export type </span><span class="s2">HeartbeatTimer = ReturnType&lt;typeof setTimeout&gt; | undefined</span>
+
+<span class="s2">// </span><span class="s4">Connection-related constants</span>
+<span class="s0">const </span><span class="s2">CONNECTION_TIMEOUTS = {</span>
+  <span class="s1">HEARTBEAT_INTERVAL</span><span class="s2">: </span><span class="s5">25000</span><span class="s2">,</span>
+  <span class="s1">RECONNECT_DELAY</span><span class="s2">: </span><span class="s5">10</span><span class="s2">,</span>
+  <span class="s1">HEARTBEAT_TIMEOUT_FALLBACK</span><span class="s2">: </span><span class="s5">100</span><span class="s2">,</span>
+<span class="s2">} </span><span class="s0">as const</span>
+
+<span class="s0">const </span><span class="s2">RECONNECT_INTERVALS = </span><span class="s1">[</span><span class="s5">1000</span><span class="s2">, </span><span class="s5">2000</span><span class="s2">, </span><span class="s5">5000</span><span class="s2">, </span><span class="s5">10000</span><span class="s1">] </span><span class="s0">as const</span>
+<span class="s0">const </span><span class="s2">DEFAULT_RECONNECT_FALLBACK = </span><span class="s5">10000</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Minimal WebSocket constructor interface that RealtimeClient can work with. 
+ * Supply a compatible implementation (native WebSocket, `ws`, etc) when running outside the browser. 
+ </span><span class="s2">*/</span>
+<span class="s0">export interface </span><span class="s2">WebSocketLikeConstructor {</span>
+  <span class="s2">new (address: string | URL, subprotocols?: string | string</span><span class="s1">[] </span><span class="s2">| undefined): WebSocketLike</span>
+  <span class="s2">// </span><span class="s4">Allow additional properties that may exist on WebSocket constructors</span>
+  <span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeClientOptions = {</span>
+  <span class="s2">transport?: WebSocketLikeConstructor</span>
+  <span class="s2">timeout?: number</span>
+  <span class="s2">heartbeatIntervalMs?: number</span>
+  <span class="s6">heartbeatCallback</span><span class="s2">?: (status: HeartbeatStatus, latency?: number) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">vsn?: string</span>
+  <span class="s6">logger</span><span class="s2">?: (kind: string, msg: string, data?: any) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">encode?: Encode&lt;void&gt;</span>
+  <span class="s2">decode?: Decode&lt;void&gt;</span>
+  <span class="s6">reconnectAfterMs</span><span class="s2">?: (tries: number) </span><span class="s0">=&gt; </span><span class="s2">number</span>
+  <span class="s2">headers?: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string }</span>
+  <span class="s2">params?: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }</span>
+  <span class="s2">//</span><span class="s4">Deprecated: Use it in favour of correct casing `logLevel`</span>
+  <span class="s2">log_level?: LogLevel</span>
+  <span class="s2">logLevel?: LogLevel</span>
+  <span class="s2">fetch?: Fetch</span>
+  <span class="s2">worker?: boolean</span>
+  <span class="s2">workerUrl?: string</span>
+  <span class="s6">accessToken</span><span class="s2">?: () </span><span class="s0">=&gt; </span><span class="s2">Promise&lt;string | null&gt;</span>
+  <span class="s2">disconnectOnEmptyChannelsAfterMs?: number</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">WORKER_SCRIPT = `</span>
+  <span class="s3">addEventListener(&quot;message&quot;, (e) =&gt; { 
+    if (e.data.event === &quot;start&quot;) { 
+      setInterval(() =&gt; postMessage({ event: &quot;keepAlive&quot; }), e.data.interval); 
+    } 
+  });</span><span class="s2">`</span>
+
+<span class="s0">export default class </span><span class="s2">RealtimeClient {</span>
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s2">socketAdapter: SocketAdapter</span>
+  <span class="s2">channels: RealtimeChannel</span><span class="s1">[] </span><span class="s2">= new </span><span class="s6">Array</span><span class="s1">()</span>
+
+  <span class="s2">accessTokenValue: string | null = </span><span class="s7">null</span>
+  <span class="s2">accessToken: </span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">Promise&lt;string | null&gt;</span><span class="s1">) </span><span class="s2">| null = </span><span class="s7">null</span>
+  <span class="s2">apiKey: string | null = </span><span class="s7">null</span>
+
+  <span class="s2">httpEndpoint: string = ''</span>
+  <span class="s2">/** @</span><span class="s0">deprecated </span><span class="s4">headers cannot be set on websocket connections </span><span class="s2">*/</span>
+  <span class="s2">headers?: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string } = {}</span>
+  <span class="s2">params?: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string } = {}</span>
+
+  <span class="s2">ref: number = </span><span class="s5">0</span>
+
+  <span class="s2">logLevel?: LogLevel</span>
+
+  <span class="s2">fetch: Fetch</span>
+  <span class="s2">worker?: boolean</span>
+  <span class="s2">workerUrl?: string</span>
+  <span class="s2">workerRef?: Worker</span>
+
+  <span class="s2">serializer: Serializer = new </span><span class="s6">Serializer</span><span class="s1">()</span>
+
+  <span class="s0">get </span><span class="s6">endPoint</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.endPoint</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">timeout</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.timeout</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">transport</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.transport</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">heartbeatCallback</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.heartbeatCallback</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">heartbeatIntervalMs</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.heartbeatIntervalMs</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">heartbeatTimer</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.worker</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">this._workerHeartbeatTimer</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.heartbeatTimer</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">pendingHeartbeatRef</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.worker</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">this._pendingWorkerHeartbeatRef</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.pendingHeartbeatRef</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">reconnectTimer</span><span class="s2">(): Timer {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.reconnectTimer</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">vsn</span><span class="s2">(): Vsn {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.vsn</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">encode</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.encode</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">decode</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.decode</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">reconnectAfterMs</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.reconnectAfterMs</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">sendBuffer</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.sendBuffer</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">stateChangeCallbacks</span><span class="s2">(): {</span>
+    <span class="s2">open: </span><span class="s1">[</span><span class="s2">string, Function</span><span class="s1">][]</span>
+    <span class="s2">close: </span><span class="s1">[</span><span class="s2">string, Function</span><span class="s1">][]</span>
+    <span class="s2">error: </span><span class="s1">[</span><span class="s2">string, Function</span><span class="s1">][]</span>
+    <span class="s2">message: </span><span class="s1">[</span><span class="s2">string, Function</span><span class="s1">][]</span>
+  <span class="s2">} {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.stateChangeCallbacks</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s2">_manuallySetToken: boolean = </span><span class="s7">false</span>
+  <span class="s0">private </span><span class="s2">_authPromise: Promise&lt;void&gt; | null = </span><span class="s7">null</span>
+  <span class="s0">private </span><span class="s2">_workerHeartbeatTimer: HeartbeatTimer = </span><span class="s7">undefined</span>
+  <span class="s0">private </span><span class="s2">_pendingWorkerHeartbeatRef: string | null = </span><span class="s7">null</span>
+  <span class="s0">private </span><span class="s2">_pendingDisconnectTimer: ReturnType&lt;typeof setTimeout&gt; | null = </span><span class="s7">null</span>
+  <span class="s0">private </span><span class="s2">_disconnectOnEmptyChannelsAfterMs: number = </span><span class="s5">0</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Initializes the Socket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">endPoint </span><span class="s4">The string WebSocket endpoint, ie, &quot;ws://example.com/socket&quot;, &quot;wss://example.com&quot;, &quot;/socket&quot; (inherited host &amp; protocol) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">httpEndpoint </span><span class="s4">The string HTTP endpoint, ie, &quot;https://example.com&quot;, &quot;/&quot; (inherited host &amp; protocol) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.transport </span><span class="s4">The Websocket Transport, for example WebSocket. This can be a custom implementation 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.timeout </span><span class="s4">The default timeout in milliseconds to trigger push timeouts. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.params </span><span class="s4">The optional params to pass when connecting. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.headers </span><span class="s4">Deprecated: headers cannot be set on websocket connections and this option will be removed in the future. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.heartbeatIntervalMs </span><span class="s4">The millisec interval to send a heartbeat message. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.heartbeatCallback </span><span class="s4">The optional function to handle heartbeat status and latency. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.logger </span><span class="s4">The optional function for specialized logging, ie: logger: (kind, msg, data) =&gt; { console.log(`${kind}: ${msg}`, data) } 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.logLevel </span><span class="s4">Sets the log level for Realtime 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.encode </span><span class="s4">The function to encode outgoing messages. Defaults to JSON: (payload, callback) =&gt; callback(JSON.stringify(payload)) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.decode </span><span class="s4">The function to decode incoming messages. Defaults to Serializer's decode. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.reconnectAfterMs </span><span class="s4">he optional function that returns the millsec reconnect interval. Defaults to stepped backoff off. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.worker </span><span class="s4">Use Web Worker to set a side flow. Defaults to false. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.workerUrl </span><span class="s4">The URL of the worker script. Defaults to https://realtime.supabase.com/worker.js that includes a heartbeat event call to keep the connection alive. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.vsn </span><span class="s4">The protocol version to use when connecting. Supported versions are &quot;1.0.0&quot; and &quot;2.0.0&quot;. Defaults to &quot;2.0.0&quot;. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s4">* </span><span class="s1">channel 
+   </span><span class="s4">*   </span><span class="s1">.on('broadcast', { event: 'cursor-pos' }, (payload) =&gt; console.log(payload)) 
+   </span><span class="s4">*   </span><span class="s1">.subscribe() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import RealtimeClient from '@supabase/realtime-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const client = new RealtimeClient('https://xyzcompany.supabase.co/realtime/v1', { 
+   </span><span class="s4">*   </span><span class="s1">params: { apikey: 'your-publishable-key' }, 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">client.connect() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(endPoint: string, options?: RealtimeClientOptions) {</span>
+    <span class="s2">// </span><span class="s4">Validate required parameters</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!options?.params?.apikey</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">API key is required to connect to Realtime</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s2">this.apiKey = options.params.apikey</span>
+
+    <span class="s0">const </span><span class="s2">socketAdapterOptions = this.</span><span class="s6">_initializeOptions</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span>
+
+    <span class="s2">this.socketAdapter = new </span><span class="s6">SocketAdapter</span><span class="s1">(</span><span class="s2">endPoint, socketAdapterOptions</span><span class="s1">)</span>
+    <span class="s2">this.httpEndpoint = </span><span class="s6">httpEndpointURL</span><span class="s1">(</span><span class="s2">endPoint</span><span class="s1">)</span>
+
+    <span class="s2">this.fetch = this.</span><span class="s6">_resolveFetch</span><span class="s1">(</span><span class="s2">options?.fetch</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Connects the socket, unless already connected. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">connect</span><span class="s2">(): void {</span>
+    <span class="s2">// </span><span class="s4">Skip if already connecting, disconnecting, or connected</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.</span><span class="s6">isConnecting</span><span class="s1">() </span><span class="s2">|| this.</span><span class="s6">isDisconnecting</span><span class="s1">() </span><span class="s2">|| this.</span><span class="s6">isConnected</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s0">return</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s4">Trigger auth if needed and not already in progress</span>
+    <span class="s2">// </span><span class="s4">This ensures auth is called for standalone RealtimeClient usage</span>
+    <span class="s2">// </span><span class="s4">while avoiding race conditions with SupabaseClient's immediate setAuth call</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.accessToken &amp;&amp; !this._authPromise</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">_setAuthSafely</span><span class="s1">(</span><span class="s2">'</span><span class="s3">connect</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.</span><span class="s6">_setupConnectionHandlers</span><span class="s1">()</span>
+
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s2">this.socketAdapter.</span><span class="s6">connect</span><span class="s1">()</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">errorMessage = </span><span class="s1">(</span><span class="s2">error </span><span class="s0">as </span><span class="s2">Error</span><span class="s1">)</span><span class="s2">.message</span>
+
+      <span class="s2">// </span><span class="s4">Provide helpful error message based on environment</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">errorMessage.</span><span class="s6">includes</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Node.js</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span>
+          <span class="s2">`${errorMessage}</span><span class="s8">\n\n</span><span class="s2">` +</span>
+            <span class="s2">'</span><span class="s3">To use Realtime in Node.js, you need to provide a WebSocket implementation:</span><span class="s8">\n\n</span><span class="s2">' +</span>
+            <span class="s2">'</span><span class="s3">Option 1: Use Node.js 22+ which has native WebSocket support</span><span class="s8">\n</span><span class="s2">' +</span>
+            <span class="s2">'</span><span class="s3">Option 2: Install and provide the &quot;ws&quot; package:</span><span class="s8">\n\n</span><span class="s2">' +</span>
+            <span class="s2">'  </span><span class="s3">npm install ws</span><span class="s8">\n\n</span><span class="s2">' +</span>
+            <span class="s2">'  </span><span class="s3">import ws from &quot;ws&quot;</span><span class="s8">\n</span><span class="s2">' +</span>
+            <span class="s2">'  </span><span class="s3">const client = new RealtimeClient(url, {</span><span class="s8">\n</span><span class="s2">' +</span>
+            <span class="s2">'    </span><span class="s3">...options,</span><span class="s8">\n</span><span class="s2">' +</span>
+            <span class="s2">'    </span><span class="s3">transport: ws</span><span class="s8">\n</span><span class="s2">' +</span>
+            <span class="s2">'  </span><span class="s3">})</span><span class="s2">'</span>
+        <span class="s1">)</span>
+      <span class="s2">}</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">WebSocket not available: </span><span class="s2">${errorMessage}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.</span><span class="s6">_handleNodeJsRaceCondition</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns the URL of the websocket. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">string The URL of the websocket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">endpointURL</span><span class="s2">(): string {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">endPointURL</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Disconnects the socket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">code </span><span class="s4">A numeric status code to send on disconnect. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">reason </span><span class="s4">A custom reason for the disconnect. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">disconnect</span><span class="s2">(code?: number, reason?: string) {</span>
+    <span class="s2">this.</span><span class="s6">_cancelPendingDisconnect</span><span class="s1">()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.</span><span class="s6">isDisconnecting</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">'</span><span class="s3">ok</span><span class="s2">'</span>
+    <span class="s2">}</span>
+    <span class="s0">return await </span><span class="s2">this.socketAdapter.</span><span class="s6">disconnect</span><span class="s1">(</span>
+      <span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s6">clearInterval</span><span class="s1">(</span><span class="s2">this._workerHeartbeatTimer</span><span class="s1">)</span>
+        <span class="s2">this.</span><span class="s6">_terminateWorker</span><span class="s1">()</span>
+      <span class="s2">},</span>
+      <span class="s2">code,</span>
+      <span class="s2">reason</span>
+    <span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns all created channels 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">getChannels</span><span class="s2">(): RealtimeChannel</span><span class="s1">[] </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">this.channels</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Unsubscribes, removes and tears down a single channel 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">channel </span><span class="s4">A RealtimeChannel instance 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">removeChannel</span><span class="s2">(channel: RealtimeChannel): Promise&lt;RealtimeRemoveChannelResponse&gt; {</span>
+    <span class="s0">const </span><span class="s2">status = </span><span class="s0">await </span><span class="s2">channel.</span><span class="s6">unsubscribe</span><span class="s1">()</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">status === '</span><span class="s3">ok</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">channel.</span><span class="s6">teardown</span><span class="s1">()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">status</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Unsubscribes, removes and tears down all channels 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">removeAllChannels</span><span class="s2">(): Promise&lt;RealtimeRemoveChannelResponse</span><span class="s1">[]</span><span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">promises = this.channels.</span><span class="s6">map</span><span class="s1">(</span><span class="s0">async </span><span class="s2">(channel) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">result = </span><span class="s0">await </span><span class="s2">channel.</span><span class="s6">unsubscribe</span><span class="s1">()</span>
+      <span class="s2">channel.</span><span class="s6">teardown</span><span class="s1">()</span>
+      <span class="s0">return </span><span class="s2">result</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">result = </span><span class="s0">await </span><span class="s1">Promise</span><span class="s2">.</span><span class="s6">all</span><span class="s1">(</span><span class="s2">promises</span><span class="s1">)</span>
+    <span class="s0">await </span><span class="s2">this.</span><span class="s6">disconnect</span><span class="s1">()</span>
+    <span class="s0">return </span><span class="s2">result</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Logs the message. 
+   * 
+   * For customized logging, `this.logger` can be overridden in Client constructor. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">log</span><span class="s2">(kind: string, msg: string, data?: any) {</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">kind, msg, data</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns the current state of the socket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">connectionState</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">connectionState</span><span class="s1">() </span><span class="s2">|| CONNECTION_STATE.closed</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns `true` is the connection is open. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">isConnected</span><span class="s2">(): boolean {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">isConnected</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns `true` if the connection is currently connecting. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">isConnecting</span><span class="s2">(): boolean {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">isConnecting</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns `true` if the connection is currently disconnecting. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">isDisconnecting</span><span class="s2">(): boolean {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">isDisconnecting</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Creates (or reuses) a </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">RealtimeChannel} </span><span class="s4">for the provided topic. 
+   * 
+   * Topics are automatically prefixed with `realtime:` to match the Realtime service. 
+   * If a channel with the same topic already exists it will be returned instead of creating 
+   * a duplicate connection. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">channel</span><span class="s2">(topic: string, params: RealtimeChannelOptions = { </span><span class="s1">config</span><span class="s2">: {} }): RealtimeChannel {</span>
+    <span class="s0">const </span><span class="s2">realtimeTopic = `</span><span class="s3">realtime:</span><span class="s2">${topic}`</span>
+    <span class="s0">const </span><span class="s2">exists = this.</span><span class="s6">getChannels</span><span class="s1">()</span><span class="s2">.</span><span class="s6">find</span><span class="s1">(</span><span class="s2">(c: RealtimeChannel) </span><span class="s0">=&gt; </span><span class="s2">c.topic === realtimeTopic</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!exists</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">chan = new </span><span class="s6">RealtimeChannel</span><span class="s1">(</span><span class="s2">`</span><span class="s3">realtime:</span><span class="s2">${topic}`, params, this</span><span class="s1">)</span>
+      <span class="s2">this.</span><span class="s6">_cancelPendingDisconnect</span><span class="s1">()</span>
+      <span class="s2">this.channels.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">chan</span><span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">chan</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">exists</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Push out a message if the socket is connected. 
+   * 
+   * If the socket is not connected, the message gets enqueued within a local buffer, and sent out when a connection is next established. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">push</span><span class="s2">(data: RealtimeMessage): void {</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">data</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Sets the JWT access token used for channel subscription authorization and Realtime RLS. 
+   * 
+   * If param is null it will use the `accessToken` callback function or the token set on the client. 
+   * 
+   * On callback used, it will set the value of the token internal to the client. 
+   * 
+   * When a token is explicitly provided, it will be preserved across channel operations 
+   * (including removeChannel and resubscribe). The `accessToken` callback will not be 
+   * invoked until `setAuth()` is called without arguments. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">token </span><span class="s4">A JWT string to override the token set on the client. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Setting the authorization header 
+   </span><span class="s4">* </span><span class="s1">// Use a manual token (preserved across resubscribes, ignores accessToken callback) 
+   </span><span class="s4">* </span><span class="s1">client.realtime.setAuth('my-custom-jwt') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Switch back to using the accessToken callback 
+   </span><span class="s4">* </span><span class="s1">client.realtime.setAuth() 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">setAuth</span><span class="s2">(token: string | null = </span><span class="s7">null</span><span class="s2">): Promise&lt;void&gt; {</span>
+    <span class="s2">this._authPromise = this.</span><span class="s6">_performAuth</span><span class="s1">(</span><span class="s2">token</span><span class="s1">)</span>
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s0">await </span><span class="s2">this._authPromise</span>
+    <span class="s2">} </span><span class="s0">finally </span><span class="s2">{</span>
+      <span class="s2">this._authPromise = </span><span class="s7">null</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns true if the current access token was explicitly set via setAuth(token), 
+   * false if it was obtained via the accessToken callback. 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s6">_isManualToken</span><span class="s2">(): boolean {</span>
+    <span class="s0">return </span><span class="s2">this._manuallySetToken</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Sends a heartbeat message if the socket is connected. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">sendHeartbeat</span><span class="s2">() {</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">sendHeartbeat</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Sets a callback that receives lifecycle events for internal heartbeat messages. 
+   * Useful for instrumenting connection health (e.g. sent/ok/timeout/disconnected). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">onHeartbeat</span><span class="s2">(callback: HeartbeatCallback) {</span>
+    <span class="s2">this.socketAdapter.heartbeatCallback = this.</span><span class="s6">_wrapHeartbeatCallback</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Use either custom fetch, if provided, or default fetch to make HTTP requests 
+   * 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s6">_resolveFetch </span><span class="s2">= (customFetch?: Fetch): Fetch </span><span class="s0">=&gt; </span><span class="s2">{</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">customFetch</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">(...args) </span><span class="s0">=&gt; </span><span class="s6">customFetch</span><span class="s1">(</span><span class="s2">...args</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">(...args) </span><span class="s0">=&gt; </span><span class="s6">fetch</span><span class="s1">(</span><span class="s2">...args</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Return the next message ref, accounting for overflows 
+   * 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s6">_makeRef</span><span class="s2">(): string {</span>
+    <span class="s0">return </span><span class="s2">this.socketAdapter.</span><span class="s6">makeRef</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Removes a channel from RealtimeClient 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">channel </span><span class="s4">An open subscription. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s6">_remove</span><span class="s2">(channel: RealtimeChannel) {</span>
+    <span class="s2">this.channels = this.channels.</span><span class="s6">filter</span><span class="s1">(</span><span class="s2">(c) </span><span class="s0">=&gt; </span><span class="s2">c.topic !== channel.topic</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.channels.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">transport</span><span class="s2">', '</span><span class="s3">no channels remaining, scheduling disconnect</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">this.</span><span class="s6">_schedulePendingDisconnect</span><span class="s1">()</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_schedulePendingDisconnect</span><span class="s2">() {</span>
+    <span class="s2">this.</span><span class="s6">_cancelPendingDisconnect</span><span class="s1">()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this._disconnectOnEmptyChannelsAfterMs === </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">transport</span><span class="s2">', '</span><span class="s3">disconnecting immediately - no channels</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">this.</span><span class="s6">disconnect</span><span class="s1">()</span>
+      <span class="s0">return</span>
+    <span class="s2">}</span>
+    <span class="s2">this._pendingDisconnectTimer = </span><span class="s6">setTimeout</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">this._pendingDisconnectTimer = </span><span class="s7">null</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.channels.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">transport</span><span class="s2">', '</span><span class="s3">deferred disconnect fired - no channels, disconnecting</span><span class="s2">'</span><span class="s1">)</span>
+        <span class="s2">this.</span><span class="s6">disconnect</span><span class="s1">()</span>
+      <span class="s2">}</span>
+    <span class="s2">}, this._disconnectOnEmptyChannelsAfterMs</span><span class="s1">)</span>
+    <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span>
+      <span class="s2">'</span><span class="s3">transport</span><span class="s2">',</span>
+      <span class="s2">`</span><span class="s3">deferred disconnect scheduled in </span><span class="s2">${this._disconnectOnEmptyChannelsAfterMs}</span><span class="s3">ms</span><span class="s2">`</span>
+    <span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_cancelPendingDisconnect</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this._pendingDisconnectTimer !== </span><span class="s7">null</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">transport</span><span class="s2">', '</span><span class="s3">pending disconnect cancelled - channel activity detected</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">this._pendingDisconnectTimer</span><span class="s1">)</span>
+      <span class="s2">this._pendingDisconnectTimer = </span><span class="s7">null</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform the actual auth operation 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private async </span><span class="s6">_performAuth</span><span class="s2">(token: string | null = </span><span class="s7">null</span><span class="s2">): Promise&lt;void&gt; {</span>
+    <span class="s0">let </span><span class="s2">tokenToSend: string | null</span>
+    <span class="s0">let </span><span class="s2">isManualToken = </span><span class="s7">false</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">token</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">tokenToSend = token</span>
+      <span class="s2">// </span><span class="s4">Track if this is a manually-provided token</span>
+      <span class="s2">isManualToken = </span><span class="s7">true</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">this.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">Call the accessToken callback to get fresh token</span>
+      <span class="s0">try </span><span class="s2">{</span>
+        <span class="s2">tokenToSend = </span><span class="s0">await </span><span class="s2">this.</span><span class="s6">accessToken</span><span class="s1">()</span>
+      <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">e</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', '</span><span class="s3">Error fetching access token from callback</span><span class="s2">', e</span><span class="s1">)</span>
+        <span class="s2">// </span><span class="s4">Fall back to cached value if callback fails</span>
+        <span class="s2">tokenToSend = this.accessTokenValue</span>
+      <span class="s2">}</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">tokenToSend = this.accessTokenValue</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s4">Track whether this token was manually set or fetched via callback</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">isManualToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this._manuallySetToken = </span><span class="s7">true</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">this.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">If we used the callback, clear the manual flag</span>
+      <span class="s2">this._manuallySetToken = </span><span class="s7">false</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.accessTokenValue != tokenToSend</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.accessTokenValue = tokenToSend</span>
+      <span class="s2">this.channels.</span><span class="s6">forEach</span><span class="s1">(</span><span class="s2">(channel) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">payload = {</span>
+          <span class="s1">access_token</span><span class="s2">: tokenToSend,</span>
+          <span class="s1">version</span><span class="s2">: DEFAULT_VERSION,</span>
+        <span class="s2">}</span>
+
+        <span class="s2">tokenToSend &amp;&amp; channel.</span><span class="s6">updateJoinPayload</span><span class="s1">(</span><span class="s2">payload</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">channel.joinedOnce &amp;&amp; channel.channelAdapter.</span><span class="s6">isJoined</span><span class="s1">()) </span><span class="s2">{</span>
+          <span class="s2">channel.channelAdapter.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">CHANNEL_EVENTS.access_token, {</span>
+            <span class="s1">access_token</span><span class="s2">: tokenToSend,</span>
+          <span class="s2">}</span><span class="s1">)</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Wait for any in-flight auth operations to complete 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private async </span><span class="s6">_waitForAuthIfNeeded</span><span class="s2">(): Promise&lt;void&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this._authPromise</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">await </span><span class="s2">this._authPromise</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Safely call setAuth with standardized error handling 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_setAuthSafely</span><span class="s2">(context = '</span><span class="s3">general</span><span class="s2">'): void {</span>
+    <span class="s2">// </span><span class="s4">Only refresh auth if using callback-based tokens</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.</span><span class="s6">_isManualToken</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">setAuth</span><span class="s1">()</span><span class="s2">.</span><span class="s6">catch</span><span class="s1">(</span><span class="s2">(e) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', `</span><span class="s3">Error setting auth in </span><span class="s2">${context}`, e</span><span class="s1">)</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_setupConnectionHandlers</span><span class="s2">(): void {</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">onOpen</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">authPromise =</span>
+        <span class="s2">this._authPromise ||</span>
+        <span class="s1">(</span><span class="s2">this.accessToken &amp;&amp; !this.accessTokenValue ? this.</span><span class="s6">setAuth</span><span class="s1">() </span><span class="s2">: </span><span class="s1">Promise</span><span class="s2">.</span><span class="s6">resolve</span><span class="s1">())</span>
+
+      <span class="s2">authPromise.</span><span class="s6">catch</span><span class="s1">(</span><span class="s2">(e) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', '</span><span class="s3">error waiting for auth on connect</span><span class="s2">', e</span><span class="s1">)</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.worker &amp;&amp; !this.workerRef</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">_startWorkerHeartbeat</span><span class="s1">()</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">onClose</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.worker &amp;&amp; this.workerRef</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">_terminateWorker</span><span class="s1">()</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">this.socketAdapter.</span><span class="s6">onMessage</span><span class="s1">(</span><span class="s2">(message: Message&lt;any&gt;) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">message.ref &amp;&amp; message.ref === this._pendingWorkerHeartbeatRef</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this._pendingWorkerHeartbeatRef = </span><span class="s7">null</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_handleNodeJsRaceCondition</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.socketAdapter.</span><span class="s6">isConnected</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">hack: ensure onConnOpen is called</span>
+      <span class="s2">this.socketAdapter.</span><span class="s6">getSocket</span><span class="s1">()</span><span class="s2">.</span><span class="s6">onConnOpen</span><span class="s1">()</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_wrapHeartbeatCallback</span><span class="s2">(heartbeatCallback?: HeartbeatCallback): HeartbeatCallback {</span>
+    <span class="s0">return </span><span class="s2">(status, latency) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">status == '</span><span class="s3">sent</span><span class="s2">'</span><span class="s1">) </span><span class="s2">this.</span><span class="s6">_setAuthSafely</span><span class="s1">()</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">heartbeatCallback</span><span class="s1">) </span><span class="s6">heartbeatCallback</span><span class="s1">(</span><span class="s2">status, latency</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_startWorkerHeartbeat</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.workerUrl</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">worker</span><span class="s2">', `</span><span class="s3">starting worker for from </span><span class="s2">${this.workerUrl}`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">worker</span><span class="s2">', `</span><span class="s3">starting default worker</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">objectUrl = this.</span><span class="s6">_workerObjectUrl</span><span class="s1">(</span><span class="s2">this.workerUrl!</span><span class="s1">)</span>
+    <span class="s2">this.workerRef = new </span><span class="s6">Worker</span><span class="s1">(</span><span class="s2">objectUrl</span><span class="s1">)</span>
+    <span class="s2">this.workerRef.</span><span class="s6">onerror </span><span class="s2">= (error) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">worker</span><span class="s2">', '</span><span class="s3">worker error</span><span class="s2">', </span><span class="s1">(</span><span class="s2">error </span><span class="s0">as </span><span class="s2">ErrorEvent</span><span class="s1">)</span><span class="s2">.message</span><span class="s1">)</span>
+      <span class="s2">this.</span><span class="s6">_terminateWorker</span><span class="s1">()</span>
+      <span class="s2">this.</span><span class="s6">disconnect</span><span class="s1">()</span>
+    <span class="s2">}</span>
+    <span class="s2">this.workerRef.</span><span class="s6">onmessage </span><span class="s2">= (event) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">event.data.event === '</span><span class="s3">keepAlive</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">sendHeartbeat</span><span class="s1">()</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">this.workerRef.</span><span class="s6">postMessage</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s1">event</span><span class="s2">: '</span><span class="s3">start</span><span class="s2">',</span>
+      <span class="s1">interval</span><span class="s2">: this.heartbeatIntervalMs,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Terminate the Web Worker and clear the reference 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_terminateWorker</span><span class="s2">(): void {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.workerRef</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">'</span><span class="s3">worker</span><span class="s2">', '</span><span class="s3">terminating worker</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">this.workerRef.</span><span class="s6">terminate</span><span class="s1">()</span>
+      <span class="s2">this.workerRef = </span><span class="s7">undefined</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_workerObjectUrl</span><span class="s2">(url: string | undefined): string {</span>
+    <span class="s0">let </span><span class="s2">result_url: string</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">url</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">result_url = url</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">blob = new </span><span class="s6">Blob</span><span class="s1">([</span><span class="s2">WORKER_SCRIPT</span><span class="s1">]</span><span class="s2">, { </span><span class="s1">type</span><span class="s2">: '</span><span class="s3">application/javascript</span><span class="s2">' }</span><span class="s1">)</span>
+      <span class="s2">result_url = URL.</span><span class="s6">createObjectURL</span><span class="s1">(</span><span class="s2">blob</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">result_url</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Initialize socket options with defaults 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_initializeOptions</span><span class="s2">(options?: RealtimeClientOptions): SocketOptions {</span>
+    <span class="s2">this.worker = options?.worker ?? </span><span class="s7">false</span>
+    <span class="s2">this.accessToken = options?.accessToken ?? </span><span class="s7">null</span>
+
+    <span class="s0">const </span><span class="s2">result: SocketOptions = {}</span>
+    <span class="s2">result.timeout = options?.timeout ?? DEFAULT_TIMEOUT</span>
+    <span class="s2">result.heartbeatIntervalMs =</span>
+      <span class="s2">options?.heartbeatIntervalMs ?? CONNECTION_TIMEOUTS.HEARTBEAT_INTERVAL</span>
+
+    <span class="s2">this._disconnectOnEmptyChannelsAfterMs =</span>
+      <span class="s2">options?.disconnectOnEmptyChannelsAfterMs ??</span>
+      <span class="s5">2 </span><span class="s2">* </span><span class="s1">(</span><span class="s2">options?.heartbeatIntervalMs ?? CONNECTION_TIMEOUTS.HEARTBEAT_INTERVAL</span><span class="s1">)</span>
+
+    <span class="s2">// </span><span class="s4">@ts-ignore - mismatch between phoenix and supabase</span>
+    <span class="s2">result.transport = options?.transport ?? WebSocketFactory.</span><span class="s6">getWebSocketConstructor</span><span class="s1">()</span>
+    <span class="s2">result.params = options?.params</span>
+    <span class="s2">result.logger = options?.logger</span>
+    <span class="s2">result.heartbeatCallback = this.</span><span class="s6">_wrapHeartbeatCallback</span><span class="s1">(</span><span class="s2">options?.heartbeatCallback</span><span class="s1">)</span>
+    <span class="s2">result.reconnectAfterMs =</span>
+      <span class="s2">options?.reconnectAfterMs ??</span>
+      <span class="s1">(</span><span class="s2">(tries: number) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">RECONNECT_INTERVALS</span><span class="s1">[</span><span class="s2">tries - </span><span class="s5">1</span><span class="s1">] </span><span class="s2">|| DEFAULT_RECONNECT_FALLBACK</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s0">let </span><span class="s2">defaultEncode: Encode&lt;void&gt;</span>
+    <span class="s0">let </span><span class="s2">defaultDecode: Decode&lt;void&gt;</span>
+
+    <span class="s0">const </span><span class="s2">vsn = options?.vsn ?? DEFAULT_VSN</span>
+
+    <span class="s0">switch </span><span class="s1">(</span><span class="s2">vsn</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">case </span><span class="s2">VSN_1_0_0:</span>
+        <span class="s6">defaultEncode </span><span class="s2">= (payload, callback) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s6">callback</span><span class="s1">(</span><span class="s2">JSON.</span><span class="s6">stringify</span><span class="s1">(</span><span class="s2">payload</span><span class="s1">))</span>
+        <span class="s2">}</span>
+        <span class="s6">defaultDecode </span><span class="s2">= (payload, callback) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s6">callback</span><span class="s1">(</span><span class="s2">JSON.</span><span class="s6">parse</span><span class="s1">(</span><span class="s2">payload </span><span class="s0">as </span><span class="s2">string</span><span class="s1">))</span>
+        <span class="s2">}</span>
+        <span class="s0">break</span>
+      <span class="s0">case </span><span class="s2">VSN_2_0_0:</span>
+        <span class="s2">defaultEncode = this.serializer.encode.</span><span class="s6">bind</span><span class="s1">(</span><span class="s2">this.serializer</span><span class="s1">)</span>
+        <span class="s2">defaultDecode = this.serializer.decode.</span><span class="s6">bind</span><span class="s1">(</span><span class="s2">this.serializer</span><span class="s1">)</span>
+        <span class="s0">break</span>
+      <span class="s0">default</span><span class="s2">:</span>
+        <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">Unsupported serializer version: </span><span class="s2">${result.vsn}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">result.vsn = vsn</span>
+    <span class="s2">result.encode = options?.encode ?? defaultEncode</span>
+    <span class="s2">result.decode = options?.decode ?? defaultDecode</span>
+
+    <span class="s2">result.beforeReconnect = this._reconnectAuth.</span><span class="s6">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.logLevel || options?.log_level</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.logLevel = options.logLevel || options.log_level</span>
+      <span class="s2">result.params = { ...result.params, </span><span class="s1">log_level</span><span class="s2">: this.logLevel </span><span class="s0">as </span><span class="s2">string }</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s4">Handle worker setup</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.worker</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof window !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; !window.Worker</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Web Worker is not supported</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">}</span>
+      <span class="s2">this.workerUrl = options?.workerUrl</span>
+      <span class="s2">result.autoSendHeartbeat = !this.worker</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">result</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private async </span><span class="s6">_reconnectAuth</span><span class="s2">() {</span>
+    <span class="s0">await </span><span class="s2">this.</span><span class="s6">_waitForAuthIfNeeded</span><span class="s1">()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.</span><span class="s6">isConnected</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">connect</span><span class="s1">()</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

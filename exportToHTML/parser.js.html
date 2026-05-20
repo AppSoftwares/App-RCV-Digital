@@ -1,0 +1,632 @@
+<html>
+<head>
+<title>parser.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+parser.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span>
+
+<span class="s1">let AtRule = require(</span><span class="s0">'./at-rule'</span><span class="s1">)</span>
+<span class="s1">let Comment = require(</span><span class="s0">'./comment'</span><span class="s1">)</span>
+<span class="s1">let Declaration = require(</span><span class="s0">'./declaration'</span><span class="s1">)</span>
+<span class="s1">let Root = require(</span><span class="s0">'./root'</span><span class="s1">)</span>
+<span class="s1">let Rule = require(</span><span class="s0">'./rule'</span><span class="s1">)</span>
+<span class="s1">let tokenizer = require(</span><span class="s0">'./tokenize'</span><span class="s1">)</span>
+
+<span class="s1">const SAFE_COMMENT_NEIGHBOR = {</span>
+  <span class="s1">empty: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">space: </span><span class="s2">true</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">findLastWithPosition(tokens) {</span>
+  <span class="s2">for </span><span class="s1">(let i = tokens.length - </span><span class="s3">1</span><span class="s1">; i &gt;= </span><span class="s3">0</span><span class="s1">; i--) {</span>
+    <span class="s1">let token = tokens[i]</span>
+    <span class="s1">let pos = token[</span><span class="s3">3</span><span class="s1">] || token[</span><span class="s3">2</span><span class="s1">]</span>
+    <span class="s2">if </span><span class="s1">(pos) </span><span class="s2">return </span><span class="s1">pos</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">class Parser {</span>
+  <span class="s1">constructor(input) {</span>
+    <span class="s2">this</span><span class="s1">.input = input</span>
+
+    <span class="s2">this</span><span class="s1">.root = </span><span class="s2">new </span><span class="s1">Root()</span>
+    <span class="s2">this</span><span class="s1">.current = </span><span class="s2">this</span><span class="s1">.root</span>
+    <span class="s2">this</span><span class="s1">.spaces = </span><span class="s0">''</span>
+    <span class="s2">this</span><span class="s1">.semicolon = </span><span class="s2">false</span>
+
+    <span class="s2">this</span><span class="s1">.createTokenizer()</span>
+    <span class="s2">this</span><span class="s1">.root.source = { input, start: { column: </span><span class="s3">1</span><span class="s1">, line: </span><span class="s3">1</span><span class="s1">, offset: </span><span class="s3">0 </span><span class="s1">} }</span>
+  <span class="s1">}</span>
+
+  <span class="s1">atrule(token) {</span>
+    <span class="s1">let node = </span><span class="s2">new </span><span class="s1">AtRule()</span>
+    <span class="s1">node.name = token[</span><span class="s3">1</span><span class="s1">].slice(</span><span class="s3">1</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">(node.name === </span><span class="s0">''</span><span class="s1">) {</span>
+      <span class="s2">this</span><span class="s1">.unnamedAtrule(node, token)</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.init(node, token[</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s1">let type</span>
+    <span class="s1">let prev</span>
+    <span class="s1">let shift</span>
+    <span class="s1">let last = </span><span class="s2">false</span>
+    <span class="s1">let open = </span><span class="s2">false</span>
+    <span class="s1">let params = []</span>
+    <span class="s1">let brackets = []</span>
+
+    <span class="s2">while </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.tokenizer.endOfFile()) {</span>
+      <span class="s1">token = </span><span class="s2">this</span><span class="s1">.tokenizer.nextToken()</span>
+      <span class="s1">type = token[</span><span class="s3">0</span><span class="s1">]</span>
+
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">'(' </span><span class="s1">|| type === </span><span class="s0">'['</span><span class="s1">) {</span>
+        <span class="s1">brackets.push(type === </span><span class="s0">'(' </span><span class="s1">? </span><span class="s0">')' </span><span class="s1">: </span><span class="s0">']'</span><span class="s1">)</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'{' </span><span class="s1">&amp;&amp; brackets.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+        <span class="s1">brackets.push(</span><span class="s0">'}'</span><span class="s1">)</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === brackets[brackets.length - </span><span class="s3">1</span><span class="s1">]) {</span>
+        <span class="s1">brackets.pop()</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(brackets.length === </span><span class="s3">0</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(type === </span><span class="s0">';'</span><span class="s1">) {</span>
+          <span class="s1">node.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(token[</span><span class="s3">2</span><span class="s1">])</span>
+          <span class="s1">node.source.end.offset++</span>
+          <span class="s2">this</span><span class="s1">.semicolon = </span><span class="s2">true</span>
+          <span class="s2">break</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'{'</span><span class="s1">) {</span>
+          <span class="s1">open = </span><span class="s2">true</span>
+          <span class="s2">break</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'}'</span><span class="s1">) {</span>
+          <span class="s2">if </span><span class="s1">(params.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+            <span class="s1">shift = params.length - </span><span class="s3">1</span>
+            <span class="s1">prev = params[shift]</span>
+            <span class="s2">while </span><span class="s1">(prev &amp;&amp; prev[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'space'</span><span class="s1">) {</span>
+              <span class="s1">prev = params[--shift]</span>
+            <span class="s1">}</span>
+            <span class="s2">if </span><span class="s1">(prev) {</span>
+              <span class="s1">node.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(prev[</span><span class="s3">3</span><span class="s1">] || prev[</span><span class="s3">2</span><span class="s1">])</span>
+              <span class="s1">node.source.end.offset++</span>
+            <span class="s1">}</span>
+          <span class="s1">}</span>
+          <span class="s2">this</span><span class="s1">.end(token)</span>
+          <span class="s2">break</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">params.push(token)</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">params.push(token)</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.tokenizer.endOfFile()) {</span>
+        <span class="s1">last = </span><span class="s2">true</span>
+        <span class="s2">break</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">node.raws.between = </span><span class="s2">this</span><span class="s1">.spacesAndCommentsFromEnd(params)</span>
+    <span class="s2">if </span><span class="s1">(params.length) {</span>
+      <span class="s1">node.raws.afterName = </span><span class="s2">this</span><span class="s1">.spacesAndCommentsFromStart(params)</span>
+      <span class="s2">this</span><span class="s1">.raw(node, </span><span class="s0">'params'</span><span class="s1">, params)</span>
+      <span class="s2">if </span><span class="s1">(last) {</span>
+        <span class="s1">token = params[params.length - </span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s1">node.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(token[</span><span class="s3">3</span><span class="s1">] || token[</span><span class="s3">2</span><span class="s1">])</span>
+        <span class="s1">node.source.end.offset++</span>
+        <span class="s2">this</span><span class="s1">.spaces = node.raws.between</span>
+        <span class="s1">node.raws.between = </span><span class="s0">''</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">node.raws.afterName = </span><span class="s0">''</span>
+      <span class="s1">node.params = </span><span class="s0">''</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(open) {</span>
+      <span class="s1">node.nodes = []</span>
+      <span class="s2">this</span><span class="s1">.current = node</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">checkMissedSemicolon(tokens) {</span>
+    <span class="s1">let colon = </span><span class="s2">this</span><span class="s1">.colon(tokens)</span>
+    <span class="s2">if </span><span class="s1">(colon === </span><span class="s2">false</span><span class="s1">) </span><span class="s2">return</span>
+
+    <span class="s1">let founded = </span><span class="s3">0</span>
+    <span class="s1">let token</span>
+    <span class="s2">for </span><span class="s1">(let j = colon - </span><span class="s3">1</span><span class="s1">; j &gt;= </span><span class="s3">0</span><span class="s1">; j--) {</span>
+      <span class="s1">token = tokens[j]</span>
+      <span class="s2">if </span><span class="s1">(token[</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'space'</span><span class="s1">) {</span>
+        <span class="s1">founded += </span><span class="s3">1</span>
+        <span class="s2">if </span><span class="s1">(founded === </span><span class="s3">2</span><span class="s1">) </span><span class="s2">break</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s4">// If the token is a word, e.g. `!important`, `red` or any other valid property's value.</span>
+    <span class="s4">// Then we need to return the colon after that word token. [3] is the &quot;end&quot; colon of that word.</span>
+    <span class="s4">// And because we need it after that one we do +1 to get the next one.</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'Missed semicolon'</span><span class="s1">,</span>
+      <span class="s1">token[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'word' </span><span class="s1">? token[</span><span class="s3">3</span><span class="s1">] + </span><span class="s3">1 </span><span class="s1">: token[</span><span class="s3">2</span><span class="s1">]</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">colon(tokens) {</span>
+    <span class="s1">let brackets = </span><span class="s3">0</span>
+    <span class="s1">let prev, token, type</span>
+    <span class="s2">for </span><span class="s1">(let [i, element] of tokens.entries()) {</span>
+      <span class="s1">token = element</span>
+      <span class="s1">type = token[</span><span class="s3">0</span><span class="s1">]</span>
+
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">'('</span><span class="s1">) {</span>
+        <span class="s1">brackets += </span><span class="s3">1</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">')'</span><span class="s1">) {</span>
+        <span class="s1">brackets -= </span><span class="s3">1</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(brackets === </span><span class="s3">0 </span><span class="s1">&amp;&amp; type === </span><span class="s0">':'</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(!prev) {</span>
+          <span class="s2">this</span><span class="s1">.doubleColon(token)</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(prev[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'word' </span><span class="s1">&amp;&amp; prev[</span><span class="s3">1</span><span class="s1">] === </span><span class="s0">'progid'</span><span class="s1">) {</span>
+          <span class="s2">continue</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s2">return </span><span class="s1">i</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s1">prev = token</span>
+    <span class="s1">}</span>
+    <span class="s2">return false</span>
+  <span class="s1">}</span>
+
+  <span class="s1">comment(token) {</span>
+    <span class="s1">let node = </span><span class="s2">new </span><span class="s1">Comment()</span>
+    <span class="s2">this</span><span class="s1">.init(node, token[</span><span class="s3">2</span><span class="s1">])</span>
+    <span class="s1">node.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(token[</span><span class="s3">3</span><span class="s1">] || token[</span><span class="s3">2</span><span class="s1">])</span>
+    <span class="s1">node.source.end.offset++</span>
+
+    <span class="s1">let text = token[</span><span class="s3">1</span><span class="s1">].slice(</span><span class="s3">2</span><span class="s1">, -</span><span class="s3">2</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">(!text.trim()) {</span>
+      <span class="s1">node.text = </span><span class="s0">''</span>
+      <span class="s1">node.raws.left = text</span>
+      <span class="s1">node.raws.right = </span><span class="s0">''</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">let match = text.match(/^(\s*)([^]*\S)(\s*)$/)</span>
+      <span class="s1">node.text = match[</span><span class="s3">2</span><span class="s1">]</span>
+      <span class="s1">node.raws.left = match[</span><span class="s3">1</span><span class="s1">]</span>
+      <span class="s1">node.raws.right = match[</span><span class="s3">3</span><span class="s1">]</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">createTokenizer() {</span>
+    <span class="s2">this</span><span class="s1">.tokenizer = tokenizer(</span><span class="s2">this</span><span class="s1">.input)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">decl(tokens, customProperty) {</span>
+    <span class="s1">let node = </span><span class="s2">new </span><span class="s1">Declaration()</span>
+    <span class="s2">this</span><span class="s1">.init(node, tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s1">let last = tokens[tokens.length - </span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">if </span><span class="s1">(last[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">';'</span><span class="s1">) {</span>
+      <span class="s2">this</span><span class="s1">.semicolon = </span><span class="s2">true</span>
+      <span class="s1">tokens.pop()</span>
+    <span class="s1">}</span>
+
+    <span class="s1">node.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(</span>
+      <span class="s1">last[</span><span class="s3">3</span><span class="s1">] || last[</span><span class="s3">2</span><span class="s1">] || findLastWithPosition(tokens)</span>
+    <span class="s1">)</span>
+    <span class="s1">node.source.end.offset++</span>
+
+    <span class="s2">while </span><span class="s1">(tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'word'</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(tokens.length === </span><span class="s3">1</span><span class="s1">) </span><span class="s2">this</span><span class="s1">.unknownWord(tokens)</span>
+      <span class="s1">node.raws.before += tokens.shift()[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">}</span>
+    <span class="s1">node.source.start = </span><span class="s2">this</span><span class="s1">.getPosition(tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s1">node.prop = </span><span class="s0">''</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">let type = tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">':' </span><span class="s1">|| type === </span><span class="s0">'space' </span><span class="s1">|| type === </span><span class="s0">'comment'</span><span class="s1">) {</span>
+        <span class="s2">break</span>
+      <span class="s1">}</span>
+      <span class="s1">node.prop += tokens.shift()[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">}</span>
+
+    <span class="s1">node.raws.between = </span><span class="s0">''</span>
+
+    <span class="s1">let token</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">token = tokens.shift()</span>
+
+      <span class="s2">if </span><span class="s1">(token[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">':'</span><span class="s1">) {</span>
+        <span class="s1">node.raws.between += token[</span><span class="s3">1</span><span class="s1">]</span>
+        <span class="s2">break</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">if </span><span class="s1">(token[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'word' </span><span class="s1">&amp;&amp; /\w/.test(token[</span><span class="s3">1</span><span class="s1">])) {</span>
+          <span class="s2">this</span><span class="s1">.unknownWord([token])</span>
+        <span class="s1">}</span>
+        <span class="s1">node.raws.between += token[</span><span class="s3">1</span><span class="s1">]</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(node.prop[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'_' </span><span class="s1">|| node.prop[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'*'</span><span class="s1">) {</span>
+      <span class="s1">node.raws.before += node.prop[</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s1">node.prop = node.prop.slice(</span><span class="s3">1</span><span class="s1">)</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let firstSpaces = []</span>
+    <span class="s1">let next</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">next = tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(next !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; next !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">break</span>
+      <span class="s1">firstSpaces.push(tokens.shift())</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.precheckMissedSemicolon(tokens)</span>
+
+    <span class="s2">for </span><span class="s1">(let i = tokens.length - </span><span class="s3">1</span><span class="s1">; i &gt;= </span><span class="s3">0</span><span class="s1">; i--) {</span>
+      <span class="s1">token = tokens[i]</span>
+      <span class="s2">if </span><span class="s1">(token[</span><span class="s3">1</span><span class="s1">].toLowerCase() === </span><span class="s0">'!important'</span><span class="s1">) {</span>
+        <span class="s1">node.important = </span><span class="s2">true</span>
+        <span class="s1">let string = </span><span class="s2">this</span><span class="s1">.stringFrom(tokens, i)</span>
+        <span class="s1">string = </span><span class="s2">this</span><span class="s1">.spacesFromEnd(tokens) + string</span>
+        <span class="s2">if </span><span class="s1">(string !== </span><span class="s0">' !important'</span><span class="s1">) node.raws.important = string</span>
+        <span class="s2">break</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(token[</span><span class="s3">1</span><span class="s1">].toLowerCase() === </span><span class="s0">'important'</span><span class="s1">) {</span>
+        <span class="s1">let cache = tokens.slice(</span><span class="s3">0</span><span class="s1">)</span>
+        <span class="s1">let str = </span><span class="s0">''</span>
+        <span class="s2">for </span><span class="s1">(let j = i; j &gt; </span><span class="s3">0</span><span class="s1">; j--) {</span>
+          <span class="s1">let type = cache[j][</span><span class="s3">0</span><span class="s1">]</span>
+          <span class="s2">if </span><span class="s1">(str.trim().startsWith(</span><span class="s0">'!'</span><span class="s1">) &amp;&amp; type !== </span><span class="s0">'space'</span><span class="s1">) {</span>
+            <span class="s2">break</span>
+          <span class="s1">}</span>
+          <span class="s1">str = cache.pop()[</span><span class="s3">1</span><span class="s1">] + str</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(str.trim().startsWith(</span><span class="s0">'!'</span><span class="s1">)) {</span>
+          <span class="s1">node.important = </span><span class="s2">true</span>
+          <span class="s1">node.raws.important = str</span>
+          <span class="s1">tokens = cache</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(token[</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; token[</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'comment'</span><span class="s1">) {</span>
+        <span class="s2">break</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let hasWord = tokens.some(i =&gt; i[</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; i[</span><span class="s3">0</span><span class="s1">] !== </span><span class="s0">'comment'</span><span class="s1">)</span>
+
+    <span class="s2">if </span><span class="s1">(hasWord) {</span>
+      <span class="s1">node.raws.between += firstSpaces.map(i =&gt; i[</span><span class="s3">1</span><span class="s1">]).join(</span><span class="s0">''</span><span class="s1">)</span>
+      <span class="s1">firstSpaces = []</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.raw(node, </span><span class="s0">'value'</span><span class="s1">, firstSpaces.concat(tokens), customProperty)</span>
+
+    <span class="s2">if </span><span class="s1">(node.value.includes(</span><span class="s0">':'</span><span class="s1">) &amp;&amp; !customProperty) {</span>
+      <span class="s2">this</span><span class="s1">.checkMissedSemicolon(tokens)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">doubleColon(token) {</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'Double colon'</span><span class="s1">,</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] },</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] + token[</span><span class="s3">1</span><span class="s1">].length }</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">emptyRule(token) {</span>
+    <span class="s1">let node = </span><span class="s2">new </span><span class="s1">Rule()</span>
+    <span class="s2">this</span><span class="s1">.init(node, token[</span><span class="s3">2</span><span class="s1">])</span>
+    <span class="s1">node.selector = </span><span class="s0">''</span>
+    <span class="s1">node.raws.between = </span><span class="s0">''</span>
+    <span class="s2">this</span><span class="s1">.current = node</span>
+  <span class="s1">}</span>
+
+  <span class="s1">end(token) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.current.nodes &amp;&amp; </span><span class="s2">this</span><span class="s1">.current.nodes.length) {</span>
+      <span class="s2">this</span><span class="s1">.current.raws.semicolon = </span><span class="s2">this</span><span class="s1">.semicolon</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.semicolon = </span><span class="s2">false</span>
+
+    <span class="s2">this</span><span class="s1">.current.raws.after = (</span><span class="s2">this</span><span class="s1">.current.raws.after || </span><span class="s0">''</span><span class="s1">) + </span><span class="s2">this</span><span class="s1">.spaces</span>
+    <span class="s2">this</span><span class="s1">.spaces = </span><span class="s0">''</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.current.parent) {</span>
+      <span class="s2">this</span><span class="s1">.current.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(token[</span><span class="s3">2</span><span class="s1">])</span>
+      <span class="s2">this</span><span class="s1">.current.source.end.offset++</span>
+      <span class="s2">this</span><span class="s1">.current = </span><span class="s2">this</span><span class="s1">.current.parent</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">this</span><span class="s1">.unexpectedClose(token)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">endFile() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.current.parent) </span><span class="s2">this</span><span class="s1">.unclosedBlock()</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.current.nodes &amp;&amp; </span><span class="s2">this</span><span class="s1">.current.nodes.length) {</span>
+      <span class="s2">this</span><span class="s1">.current.raws.semicolon = </span><span class="s2">this</span><span class="s1">.semicolon</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.current.raws.after = (</span><span class="s2">this</span><span class="s1">.current.raws.after || </span><span class="s0">''</span><span class="s1">) + </span><span class="s2">this</span><span class="s1">.spaces</span>
+    <span class="s2">this</span><span class="s1">.root.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(</span><span class="s2">this</span><span class="s1">.tokenizer.position())</span>
+  <span class="s1">}</span>
+
+  <span class="s1">freeSemicolon(token) {</span>
+    <span class="s2">this</span><span class="s1">.spaces += token[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.current.nodes) {</span>
+      <span class="s1">let prev = </span><span class="s2">this</span><span class="s1">.current.nodes[</span><span class="s2">this</span><span class="s1">.current.nodes.length - </span><span class="s3">1</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(prev &amp;&amp; prev.type === </span><span class="s0">'rule' </span><span class="s1">&amp;&amp; !prev.raws.ownSemicolon) {</span>
+        <span class="s1">prev.raws.ownSemicolon = </span><span class="s2">this</span><span class="s1">.spaces</span>
+        <span class="s2">this</span><span class="s1">.spaces = </span><span class="s0">''</span>
+        <span class="s1">prev.source.end = </span><span class="s2">this</span><span class="s1">.getPosition(token[</span><span class="s3">2</span><span class="s1">])</span>
+        <span class="s1">prev.source.end.offset += prev.raws.ownSemicolon.length</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s4">// Helpers</span>
+
+  <span class="s1">getPosition(offset) {</span>
+    <span class="s1">let pos = </span><span class="s2">this</span><span class="s1">.input.fromOffset(offset)</span>
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">column: pos.col,</span>
+      <span class="s1">line: pos.line,</span>
+      <span class="s1">offset</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">init(node, offset) {</span>
+    <span class="s2">this</span><span class="s1">.current.push(node)</span>
+    <span class="s1">node.source = {</span>
+      <span class="s1">input: </span><span class="s2">this</span><span class="s1">.input,</span>
+      <span class="s1">start: </span><span class="s2">this</span><span class="s1">.getPosition(offset)</span>
+    <span class="s1">}</span>
+    <span class="s1">node.raws.before = </span><span class="s2">this</span><span class="s1">.spaces</span>
+    <span class="s2">this</span><span class="s1">.spaces = </span><span class="s0">''</span>
+    <span class="s2">if </span><span class="s1">(node.type !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">this</span><span class="s1">.semicolon = </span><span class="s2">false</span>
+  <span class="s1">}</span>
+
+  <span class="s1">other(start) {</span>
+    <span class="s1">let end = </span><span class="s2">false</span>
+    <span class="s1">let type = </span><span class="s2">null</span>
+    <span class="s1">let colon = </span><span class="s2">false</span>
+    <span class="s1">let bracket = </span><span class="s2">null</span>
+    <span class="s1">let brackets = []</span>
+    <span class="s1">let customProperty = start[</span><span class="s3">1</span><span class="s1">].startsWith(</span><span class="s0">'--'</span><span class="s1">)</span>
+
+    <span class="s1">let tokens = []</span>
+    <span class="s1">let token = start</span>
+    <span class="s2">while </span><span class="s1">(token) {</span>
+      <span class="s1">type = token[</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s1">tokens.push(token)</span>
+
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">'(' </span><span class="s1">|| type === </span><span class="s0">'['</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(!bracket) bracket = token</span>
+        <span class="s1">brackets.push(type === </span><span class="s0">'(' </span><span class="s1">? </span><span class="s0">')' </span><span class="s1">: </span><span class="s0">']'</span><span class="s1">)</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(customProperty &amp;&amp; colon &amp;&amp; type === </span><span class="s0">'{'</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(!bracket) bracket = token</span>
+        <span class="s1">brackets.push(</span><span class="s0">'}'</span><span class="s1">)</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(brackets.length === </span><span class="s3">0</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(type === </span><span class="s0">';'</span><span class="s1">) {</span>
+          <span class="s2">if </span><span class="s1">(colon) {</span>
+            <span class="s2">this</span><span class="s1">.decl(tokens, customProperty)</span>
+            <span class="s2">return</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s2">break</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'{'</span><span class="s1">) {</span>
+          <span class="s2">this</span><span class="s1">.rule(tokens)</span>
+          <span class="s2">return</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'}'</span><span class="s1">) {</span>
+          <span class="s2">this</span><span class="s1">.tokenizer.back(tokens.pop())</span>
+          <span class="s1">end = </span><span class="s2">true</span>
+          <span class="s2">break</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">':'</span><span class="s1">) {</span>
+          <span class="s1">colon = </span><span class="s2">true</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === brackets[brackets.length - </span><span class="s3">1</span><span class="s1">]) {</span>
+        <span class="s1">brackets.pop()</span>
+        <span class="s2">if </span><span class="s1">(brackets.length === </span><span class="s3">0</span><span class="s1">) bracket = </span><span class="s2">null</span>
+      <span class="s1">}</span>
+
+      <span class="s1">token = </span><span class="s2">this</span><span class="s1">.tokenizer.nextToken()</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.tokenizer.endOfFile()) end = </span><span class="s2">true</span>
+    <span class="s2">if </span><span class="s1">(brackets.length &gt; </span><span class="s3">0</span><span class="s1">) </span><span class="s2">this</span><span class="s1">.unclosedBracket(bracket)</span>
+
+    <span class="s2">if </span><span class="s1">(end &amp;&amp; colon) {</span>
+      <span class="s2">if </span><span class="s1">(!customProperty) {</span>
+        <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+          <span class="s1">token = tokens[tokens.length - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+          <span class="s2">if </span><span class="s1">(token !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; token !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">break</span>
+          <span class="s2">this</span><span class="s1">.tokenizer.back(tokens.pop())</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">this</span><span class="s1">.decl(tokens, customProperty)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">this</span><span class="s1">.unknownWord(tokens)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">parse() {</span>
+    <span class="s1">let token</span>
+    <span class="s2">while </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.tokenizer.endOfFile()) {</span>
+      <span class="s1">token = </span><span class="s2">this</span><span class="s1">.tokenizer.nextToken()</span>
+
+      <span class="s2">switch </span><span class="s1">(token[</span><span class="s3">0</span><span class="s1">]) {</span>
+        <span class="s2">case </span><span class="s0">'space'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.spaces += token[</span><span class="s3">1</span><span class="s1">]</span>
+          <span class="s2">break</span>
+
+        <span class="s2">case </span><span class="s0">';'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.freeSemicolon(token)</span>
+          <span class="s2">break</span>
+
+        <span class="s2">case </span><span class="s0">'}'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.end(token)</span>
+          <span class="s2">break</span>
+
+        <span class="s2">case </span><span class="s0">'comment'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.comment(token)</span>
+          <span class="s2">break</span>
+
+        <span class="s2">case </span><span class="s0">'at-word'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.atrule(token)</span>
+          <span class="s2">break</span>
+
+        <span class="s2">case </span><span class="s0">'{'</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.emptyRule(token)</span>
+          <span class="s2">break</span>
+
+        <span class="s2">default</span><span class="s1">:</span>
+          <span class="s2">this</span><span class="s1">.other(token)</span>
+          <span class="s2">break</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.endFile()</span>
+  <span class="s1">}</span>
+
+  <span class="s1">precheckMissedSemicolon(</span><span class="s4">/* tokens */</span><span class="s1">) {</span>
+    <span class="s4">// Hook for Safe Parser</span>
+  <span class="s1">}</span>
+
+  <span class="s1">raw(node, prop, tokens, customProperty) {</span>
+    <span class="s1">let token, type</span>
+    <span class="s1">let length = tokens.length</span>
+    <span class="s1">let value = </span><span class="s0">''</span>
+    <span class="s1">let clean = </span><span class="s2">true</span>
+    <span class="s1">let next, prev</span>
+
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; length; i += </span><span class="s3">1</span><span class="s1">) {</span>
+      <span class="s1">token = tokens[i]</span>
+      <span class="s1">type = token[</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(type === </span><span class="s0">'space' </span><span class="s1">&amp;&amp; i === length - </span><span class="s3">1 </span><span class="s1">&amp;&amp; !customProperty) {</span>
+        <span class="s1">clean = </span><span class="s2">false</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(type === </span><span class="s0">'comment'</span><span class="s1">) {</span>
+        <span class="s1">prev = tokens[i - </span><span class="s3">1</span><span class="s1">] ? tokens[i - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">0</span><span class="s1">] : </span><span class="s0">'empty'</span>
+        <span class="s1">next = tokens[i + </span><span class="s3">1</span><span class="s1">] ? tokens[i + </span><span class="s3">1</span><span class="s1">][</span><span class="s3">0</span><span class="s1">] : </span><span class="s0">'empty'</span>
+        <span class="s2">if </span><span class="s1">(!SAFE_COMMENT_NEIGHBOR[prev] &amp;&amp; !SAFE_COMMENT_NEIGHBOR[next]) {</span>
+          <span class="s2">if </span><span class="s1">(value.slice(-</span><span class="s3">1</span><span class="s1">) === </span><span class="s0">','</span><span class="s1">) {</span>
+            <span class="s1">clean = </span><span class="s2">false</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">value += token[</span><span class="s3">1</span><span class="s1">]</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">clean = </span><span class="s2">false</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">value += token[</span><span class="s3">1</span><span class="s1">]</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(!clean) {</span>
+      <span class="s1">let raw = tokens.reduce((all, i) =&gt; all + i[</span><span class="s3">1</span><span class="s1">], </span><span class="s0">''</span><span class="s1">)</span>
+      <span class="s1">node.raws[prop] = { raw, value }</span>
+    <span class="s1">}</span>
+    <span class="s1">node[prop] = value</span>
+  <span class="s1">}</span>
+
+  <span class="s1">rule(tokens) {</span>
+    <span class="s1">tokens.pop()</span>
+
+    <span class="s1">let node = </span><span class="s2">new </span><span class="s1">Rule()</span>
+    <span class="s2">this</span><span class="s1">.init(node, tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">2</span><span class="s1">])</span>
+
+    <span class="s1">node.raws.between = </span><span class="s2">this</span><span class="s1">.spacesAndCommentsFromEnd(tokens)</span>
+    <span class="s2">this</span><span class="s1">.raw(node, </span><span class="s0">'selector'</span><span class="s1">, tokens)</span>
+    <span class="s2">this</span><span class="s1">.current = node</span>
+  <span class="s1">}</span>
+
+  <span class="s1">spacesAndCommentsFromEnd(tokens) {</span>
+    <span class="s1">let lastTokenType</span>
+    <span class="s1">let spaces = </span><span class="s0">''</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">lastTokenType = tokens[tokens.length - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(lastTokenType !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; lastTokenType !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">break</span>
+      <span class="s1">spaces = tokens.pop()[</span><span class="s3">1</span><span class="s1">] + spaces</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">spaces</span>
+  <span class="s1">}</span>
+
+  <span class="s4">// Errors</span>
+
+  <span class="s1">spacesAndCommentsFromStart(tokens) {</span>
+    <span class="s1">let next</span>
+    <span class="s1">let spaces = </span><span class="s0">''</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">next = tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(next !== </span><span class="s0">'space' </span><span class="s1">&amp;&amp; next !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">break</span>
+      <span class="s1">spaces += tokens.shift()[</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">spaces</span>
+  <span class="s1">}</span>
+
+  <span class="s1">spacesFromEnd(tokens) {</span>
+    <span class="s1">let lastTokenType</span>
+    <span class="s1">let spaces = </span><span class="s0">''</span>
+    <span class="s2">while </span><span class="s1">(tokens.length) {</span>
+      <span class="s1">lastTokenType = tokens[tokens.length - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">0</span><span class="s1">]</span>
+      <span class="s2">if </span><span class="s1">(lastTokenType !== </span><span class="s0">'space'</span><span class="s1">) </span><span class="s2">break</span>
+      <span class="s1">spaces = tokens.pop()[</span><span class="s3">1</span><span class="s1">] + spaces</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">spaces</span>
+  <span class="s1">}</span>
+
+  <span class="s1">stringFrom(tokens, from) {</span>
+    <span class="s1">let result = </span><span class="s0">''</span>
+    <span class="s2">for </span><span class="s1">(let i = from; i &lt; tokens.length; i++) {</span>
+      <span class="s1">result += tokens[i][</span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">}</span>
+    <span class="s1">tokens.splice(from, tokens.length - from)</span>
+    <span class="s2">return </span><span class="s1">result</span>
+  <span class="s1">}</span>
+
+  <span class="s1">unclosedBlock() {</span>
+    <span class="s1">let pos = </span><span class="s2">this</span><span class="s1">.current.source.start</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span><span class="s0">'Unclosed block'</span><span class="s1">, pos.line, pos.column)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">unclosedBracket(bracket) {</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'Unclosed bracket'</span><span class="s1">,</span>
+      <span class="s1">{ offset: bracket[</span><span class="s3">2</span><span class="s1">] },</span>
+      <span class="s1">{ offset: bracket[</span><span class="s3">2</span><span class="s1">] + </span><span class="s3">1 </span><span class="s1">}</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">unexpectedClose(token) {</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'Unexpected }'</span><span class="s1">,</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] },</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] + </span><span class="s3">1 </span><span class="s1">}</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">unknownWord(tokens) {</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'Unknown word ' </span><span class="s1">+ tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">1</span><span class="s1">],</span>
+      <span class="s1">{ offset: tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">2</span><span class="s1">] },</span>
+      <span class="s1">{ offset: tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">2</span><span class="s1">] + tokens[</span><span class="s3">0</span><span class="s1">][</span><span class="s3">1</span><span class="s1">].length }</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">unnamedAtrule(node, token) {</span>
+    <span class="s2">throw this</span><span class="s1">.input.error(</span>
+      <span class="s0">'At-rule without name'</span><span class="s1">,</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] },</span>
+      <span class="s1">{ offset: token[</span><span class="s3">2</span><span class="s1">] + token[</span><span class="s3">1</span><span class="s1">].length }</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = Parser</span>
+</pre>
+</body>
+</html>

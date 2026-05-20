@@ -1,0 +1,247 @@
+<html>
+<head>
+<title>enum.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+enum.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Enum;</span>
+
+<span class="s2">// extends ReflectionObject</span>
+<span class="s3">var </span><span class="s1">ReflectionObject = require(</span><span class="s0">&quot;./object&quot;</span><span class="s1">);</span>
+<span class="s1">((Enum.prototype = Object.create(ReflectionObject.prototype)).constructor = Enum).className = </span><span class="s0">&quot;Enum&quot;</span><span class="s1">;</span>
+
+<span class="s3">var </span><span class="s1">Namespace = require(</span><span class="s0">&quot;./namespace&quot;</span><span class="s1">),</span>
+    <span class="s1">util = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s2">/** 
+ * Constructs a new enum instance. 
+ * @classdesc Reflected enum. 
+ * @extends ReflectionObject 
+ * @constructor 
+ * @param {string} name Unique name within its namespace 
+ * @param {Object.&lt;string,number&gt;} [values] Enum values as an object, by name 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ * @param {string} [comment] The comment for this enum 
+ * @param {Object.&lt;string,string&gt;} [comments] The value comments for this enum 
+ * @param {Object.&lt;string,Object&lt;string,*&gt;&gt;|undefined} [valuesOptions] The value options for this enum 
+ */</span>
+<span class="s3">function </span><span class="s1">Enum(name, values, options, comment, comments, valuesOptions) {</span>
+    <span class="s1">ReflectionObject.call(</span><span class="s3">this</span><span class="s1">, name, options);</span>
+
+    <span class="s3">if </span><span class="s1">(values &amp;&amp; </span><span class="s3">typeof </span><span class="s1">values !== </span><span class="s0">&quot;object&quot;</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;values must be an object&quot;</span><span class="s1">);</span>
+
+    <span class="s2">/** 
+     * Enum values by id. 
+     * @type {Object.&lt;number,string&gt;} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.valuesById = {};</span>
+
+    <span class="s2">/** 
+     * Enum values by name. 
+     * @type {Object.&lt;string,number&gt;} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.values = Object.create(</span><span class="s3">this</span><span class="s1">.valuesById); </span><span class="s2">// toJSON, marker</span>
+
+    <span class="s2">/** 
+     * Enum comment text. 
+     * @type {string|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.comment = comment;</span>
+
+    <span class="s2">/** 
+     * Value comment texts, if any. 
+     * @type {Object.&lt;string,string&gt;} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.comments = comments || {};</span>
+
+    <span class="s2">/** 
+     * Values options, if any 
+     * @type {Object&lt;string, Object&lt;string, *&gt;&gt;|undefined} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.valuesOptions = valuesOptions;</span>
+
+    <span class="s2">/** 
+     * Resolved values features, if any 
+     * @type {Object&lt;string, Object&lt;string, *&gt;&gt;|undefined} 
+     */</span>
+    <span class="s3">this</span><span class="s1">._valuesFeatures = {};</span>
+
+    <span class="s2">/** 
+     * Reserved ranges, if any. 
+     * @type {Array.&lt;number[]|string&gt;} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.reserved = undefined; </span><span class="s2">// toJSON</span>
+
+    <span class="s2">// Note that values inherit valuesById on their prototype which makes them a TypeScript-</span>
+    <span class="s2">// compatible enum. This is used by pbts to write actual enum definitions that work for</span>
+    <span class="s2">// static and reflection code alike instead of emitting generic object definitions.</span>
+
+    <span class="s3">if </span><span class="s1">(values)</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">keys = Object.keys(values), i = </span><span class="s4">0</span><span class="s1">; i &lt; keys.length; ++i)</span>
+            <span class="s3">if </span><span class="s1">(keys[i] !== </span><span class="s0">&quot;__proto__&quot; </span><span class="s1">&amp;&amp; </span><span class="s3">typeof </span><span class="s1">values[keys[i]] === </span><span class="s0">&quot;number&quot;</span><span class="s1">) </span><span class="s2">// use forward entries only</span>
+                <span class="s3">this</span><span class="s1">.valuesById[ </span><span class="s3">this</span><span class="s1">.values[keys[i]] = values[keys[i]] ] = keys[i];</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">Enum.prototype._resolveFeatures = </span><span class="s3">function </span><span class="s1">_resolveFeatures(edition) {</span>
+    <span class="s1">edition = </span><span class="s3">this</span><span class="s1">._edition || edition;</span>
+    <span class="s1">ReflectionObject.prototype._resolveFeatures.call(</span><span class="s3">this</span><span class="s1">, edition);</span>
+
+    <span class="s1">Object.keys(</span><span class="s3">this</span><span class="s1">.values).forEach(key =&gt; {</span>
+        <span class="s3">var </span><span class="s1">parentFeaturesCopy = Object.assign({}, </span><span class="s3">this</span><span class="s1">._features);</span>
+        <span class="s3">this</span><span class="s1">._valuesFeatures[key] = Object.assign(parentFeaturesCopy, </span><span class="s3">this</span><span class="s1">.valuesOptions &amp;&amp; </span><span class="s3">this</span><span class="s1">.valuesOptions[key] &amp;&amp; </span><span class="s3">this</span><span class="s1">.valuesOptions[key].features);</span>
+    <span class="s1">});</span>
+
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Enum descriptor. 
+ * @interface IEnum 
+ * @property {Object.&lt;string,number&gt;} values Enum values 
+ * @property {Object.&lt;string,*&gt;} [options] Enum options 
+ */</span>
+
+<span class="s2">/** 
+ * Constructs an enum from an enum descriptor. 
+ * @param {string} name Enum name 
+ * @param {IEnum} json Enum descriptor 
+ * @returns {Enum} Created enum 
+ * @throws {TypeError} If arguments are invalid 
+ */</span>
+<span class="s1">Enum.fromJSON = </span><span class="s3">function </span><span class="s1">fromJSON(name, json) {</span>
+    <span class="s3">var </span><span class="s1">enm = </span><span class="s3">new </span><span class="s1">Enum(name, json.values, json.options, json.comment, json.comments);</span>
+    <span class="s1">enm.reserved = json.reserved;</span>
+    <span class="s3">if </span><span class="s1">(json.edition)</span>
+        <span class="s1">enm._edition = json.edition;</span>
+    <span class="s1">enm._defaultEdition = </span><span class="s0">&quot;proto3&quot;</span><span class="s1">;  </span><span class="s2">// For backwards-compatibility.</span>
+    <span class="s3">return </span><span class="s1">enm;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Converts this enum to an enum descriptor. 
+ * @param {IToJSONOptions} [toJSONOptions] JSON conversion options 
+ * @returns {IEnum} Enum descriptor 
+ */</span>
+<span class="s1">Enum.prototype.toJSON = </span><span class="s3">function </span><span class="s1">toJSON(toJSONOptions) {</span>
+    <span class="s3">var </span><span class="s1">keepComments = toJSONOptions ? Boolean(toJSONOptions.keepComments) : </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s3">return </span><span class="s1">util.toObject([</span>
+        <span class="s0">&quot;edition&quot;       </span><span class="s1">, </span><span class="s3">this</span><span class="s1">._editionToJSON(),</span>
+        <span class="s0">&quot;options&quot;       </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.options,</span>
+        <span class="s0">&quot;valuesOptions&quot; </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.valuesOptions,</span>
+        <span class="s0">&quot;values&quot;        </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.values,</span>
+        <span class="s0">&quot;reserved&quot;      </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.reserved &amp;&amp; </span><span class="s3">this</span><span class="s1">.reserved.length ? </span><span class="s3">this</span><span class="s1">.reserved : undefined,</span>
+        <span class="s0">&quot;comment&quot;       </span><span class="s1">, keepComments ? </span><span class="s3">this</span><span class="s1">.comment : undefined,</span>
+        <span class="s0">&quot;comments&quot;      </span><span class="s1">, keepComments ? </span><span class="s3">this</span><span class="s1">.comments : undefined</span>
+    <span class="s1">]);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Adds a value to this enum. 
+ * @param {string} name Value name 
+ * @param {number} id Value id 
+ * @param {string} [comment] Comment, if any 
+ * @param {Object.&lt;string, *&gt;|undefined} [options] Options, if any 
+ * @returns {Enum} `this` 
+ * @throws {TypeError} If arguments are invalid 
+ * @throws {Error} If there is already a value with this name or id 
+ */</span>
+<span class="s1">Enum.prototype.add = </span><span class="s3">function </span><span class="s1">add(name, id, comment, options) {</span>
+    <span class="s2">// utilized by the parser but not by .fromJSON</span>
+
+    <span class="s3">if </span><span class="s1">(!util.isString(name))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;name must be a string&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(!util.isInteger(id))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;id must be an integer&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(name === </span><span class="s0">&quot;__proto__&quot;</span><span class="s1">)</span>
+        <span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.values[name] !== undefined)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;duplicate name '&quot; </span><span class="s1">+ name + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.isReservedId(id))</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;id &quot; </span><span class="s1">+ id + </span><span class="s0">&quot; is reserved in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.isReservedName(name))</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;name '&quot; </span><span class="s1">+ name + </span><span class="s0">&quot;' is reserved in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.valuesById[id] !== undefined) {</span>
+        <span class="s3">if </span><span class="s1">(!(</span><span class="s3">this</span><span class="s1">.options &amp;&amp; </span><span class="s3">this</span><span class="s1">.options.allow_alias))</span>
+            <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;duplicate id &quot; </span><span class="s1">+ id + </span><span class="s0">&quot; in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+        <span class="s3">this</span><span class="s1">.values[name] = id;</span>
+    <span class="s1">} </span><span class="s3">else</span>
+        <span class="s3">this</span><span class="s1">.valuesById[</span><span class="s3">this</span><span class="s1">.values[name] = id] = name;</span>
+
+    <span class="s3">if </span><span class="s1">(options) {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.valuesOptions === undefined)</span>
+            <span class="s3">this</span><span class="s1">.valuesOptions = {};</span>
+        <span class="s3">this</span><span class="s1">.valuesOptions[name] = options || </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s3">this</span><span class="s1">.comments[name] = comment || </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Removes a value from this enum 
+ * @param {string} name Value name 
+ * @returns {Enum} `this` 
+ * @throws {TypeError} If arguments are invalid 
+ * @throws {Error} If `name` is not a name of this enum 
+ */</span>
+<span class="s1">Enum.prototype.remove = </span><span class="s3">function </span><span class="s1">remove(name) {</span>
+
+    <span class="s3">if </span><span class="s1">(!util.isString(name))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;name must be a string&quot;</span><span class="s1">);</span>
+
+    <span class="s3">var </span><span class="s1">val = </span><span class="s3">this</span><span class="s1">.values[name];</span>
+    <span class="s3">if </span><span class="s1">(val == </span><span class="s3">null</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;name '&quot; </span><span class="s1">+ name + </span><span class="s0">&quot;' does not exist in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">delete this</span><span class="s1">.valuesById[val];</span>
+    <span class="s3">delete this</span><span class="s1">.values[name];</span>
+    <span class="s3">delete this</span><span class="s1">.comments[name];</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.valuesOptions)</span>
+        <span class="s3">delete this</span><span class="s1">.valuesOptions[name];</span>
+
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Tests if the specified id is reserved. 
+ * @param {number} id Id to test 
+ * @returns {boolean} `true` if reserved, otherwise `false` 
+ */</span>
+<span class="s1">Enum.prototype.isReservedId = </span><span class="s3">function </span><span class="s1">isReservedId(id) {</span>
+    <span class="s3">return </span><span class="s1">Namespace.isReservedId(</span><span class="s3">this</span><span class="s1">.reserved, id);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Tests if the specified name is reserved. 
+ * @param {string} name Name to test 
+ * @returns {boolean} `true` if reserved, otherwise `false` 
+ */</span>
+<span class="s1">Enum.prototype.isReservedName = </span><span class="s3">function </span><span class="s1">isReservedName(name) {</span>
+    <span class="s3">return </span><span class="s1">Namespace.isReservedName(</span><span class="s3">this</span><span class="s1">.reserved, name);</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

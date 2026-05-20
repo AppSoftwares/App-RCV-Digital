@@ -1,0 +1,462 @@
+<html>
+<head>
+<title>FormData.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+FormData.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* formdata-polyfill. MIT License. Jimmy Wärting &lt;https://jimmy.warting.se/opensource&gt; */</span>
+
+<span class="s0">/* global FormData self Blob File */</span>
+<span class="s0">/* eslint-disable no-inner-declarations */</span>
+
+<span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">Blob !== </span><span class="s3">'undefined' </span><span class="s1">&amp;&amp; (</span><span class="s2">typeof </span><span class="s1">FormData === </span><span class="s3">'undefined' </span><span class="s1">|| !FormData.prototype.keys)) {</span>
+  <span class="s1">const global = </span><span class="s2">typeof </span><span class="s1">globalThis === </span><span class="s3">'object'</span>
+    <span class="s1">? globalThis</span>
+    <span class="s1">: </span><span class="s2">typeof </span><span class="s1">window === </span><span class="s3">'object'</span>
+      <span class="s1">? window</span>
+      <span class="s1">: </span><span class="s2">typeof </span><span class="s1">self === </span><span class="s3">'object' </span><span class="s1">? self : </span><span class="s2">this</span>
+
+  <span class="s0">// keep a reference to native implementation</span>
+  <span class="s1">const _FormData = global.FormData</span>
+
+  <span class="s0">// To be monkey patched</span>
+  <span class="s1">const _send = global.XMLHttpRequest &amp;&amp; global.XMLHttpRequest.prototype.send</span>
+  <span class="s1">const _fetch = global.Request &amp;&amp; global.fetch</span>
+  <span class="s1">const _sendBeacon = global.navigator &amp;&amp; global.navigator.sendBeacon</span>
+  <span class="s0">// Might be a worker thread...</span>
+  <span class="s1">const _match = global.Element &amp;&amp; global.Element.prototype</span>
+
+  <span class="s0">// Unable to patch Request/Response constructor correctly #109</span>
+  <span class="s0">// only way is to use ES6 class extend</span>
+  <span class="s0">// https://github.com/babel/babel/issues/1966</span>
+
+  <span class="s1">const stringTag = global.Symbol &amp;&amp; Symbol.toStringTag</span>
+
+  <span class="s0">// Add missing stringTags to blob and files</span>
+  <span class="s2">if </span><span class="s1">(stringTag) {</span>
+    <span class="s2">if </span><span class="s1">(!Blob.prototype[stringTag]) {</span>
+      <span class="s1">Blob.prototype[stringTag] = </span><span class="s3">'Blob'</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s3">'File' </span><span class="s2">in </span><span class="s1">global &amp;&amp; !File.prototype[stringTag]) {</span>
+      <span class="s1">File.prototype[stringTag] = </span><span class="s3">'File'</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Fix so you can construct your own File</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s2">new </span><span class="s1">File([], </span><span class="s3">''</span><span class="s1">) </span><span class="s0">// eslint-disable-line</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(a) {</span>
+    <span class="s1">global.File = </span><span class="s2">function </span><span class="s1">File (b, d, c) {</span>
+      <span class="s1">const blob = </span><span class="s2">new </span><span class="s1">Blob(b, c || {})</span>
+      <span class="s1">const t = c &amp;&amp; </span><span class="s2">void </span><span class="s4">0 </span><span class="s1">!== c.lastModified ? </span><span class="s2">new </span><span class="s1">Date(c.lastModified) : </span><span class="s2">new </span><span class="s1">Date()</span>
+
+      <span class="s1">Object.defineProperties(blob, {</span>
+        <span class="s1">name: {</span>
+          <span class="s1">value: d</span>
+        <span class="s1">},</span>
+        <span class="s1">lastModified: {</span>
+          <span class="s1">value: +t</span>
+        <span class="s1">},</span>
+        <span class="s1">toString: {</span>
+          <span class="s1">value () {</span>
+            <span class="s2">return </span><span class="s3">'[object File]'</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+
+      <span class="s2">if </span><span class="s1">(stringTag) {</span>
+        <span class="s1">Object.defineProperty(blob, stringTag, {</span>
+          <span class="s1">value: </span><span class="s3">'File'</span>
+        <span class="s1">})</span>
+      <span class="s1">}</span>
+
+      <span class="s2">return </span><span class="s1">blob</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">function </span><span class="s1">ensureArgs (args, expected) {</span>
+    <span class="s2">if </span><span class="s1">(args.length &lt; expected) {</span>
+      <span class="s2">throw new </span><span class="s1">TypeError(`${expected} argument required, but only ${args.length} present.`)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @param {string} name 
+   * @param {string | undefined} filename 
+   * @returns {[string, File|string]} 
+   */</span>
+  <span class="s2">function </span><span class="s1">normalizeArgs (name, value, filename) {</span>
+    <span class="s2">if </span><span class="s1">(value </span><span class="s2">instanceof </span><span class="s1">Blob) {</span>
+      <span class="s1">filename = filename !== undefined</span>
+      <span class="s1">? String(filename + </span><span class="s3">''</span><span class="s1">)</span>
+      <span class="s1">: </span><span class="s2">typeof </span><span class="s1">value.name === </span><span class="s3">'string'</span>
+      <span class="s1">? value.name</span>
+      <span class="s1">: </span><span class="s3">'blob'</span>
+
+      <span class="s2">if </span><span class="s1">(value.name !== filename || Object.prototype.toString.call(value) === </span><span class="s3">'[object Blob]'</span><span class="s1">) {</span>
+        <span class="s1">value = </span><span class="s2">new </span><span class="s1">File([value], filename)</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">[String(name), value]</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">[String(name), String(value)]</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// normalize line feeds for textarea</span>
+  <span class="s0">// https://html.spec.whatwg.org/multipage/form-elements.html#textarea-line-break-normalisation-transformation</span>
+  <span class="s2">function </span><span class="s1">normalizeLinefeeds (value) {</span>
+    <span class="s2">return </span><span class="s1">value.replace(/\r?\n|\r/g, </span><span class="s3">'</span><span class="s2">\r\n</span><span class="s3">'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @template T 
+   * @param {ArrayLike&lt;T&gt;} arr 
+   * @param {{ (elm: T): void; }} cb 
+   */</span>
+  <span class="s2">function </span><span class="s1">each (arr, cb) {</span>
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; arr.length; i++) {</span>
+      <span class="s1">cb(arr[i])</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const escape = str =&gt; str.replace(/\n/g, </span><span class="s3">'%0A'</span><span class="s1">).replace(/\r/g, </span><span class="s3">'%0D'</span><span class="s1">).replace(/</span><span class="s3">&quot;/g, '%22')</span>
+
+  <span class="s0">/** 
+   * @implements {Iterable} 
+   */</span>
+  <span class="s1">class FormDataPolyfill {</span>
+    <span class="s0">/** 
+     * FormData class 
+     * 
+     * @param {HTMLFormElement=} form 
+     */</span>
+    <span class="s1">constructor (form) {</span>
+      <span class="s0">/** @type {[string, string|File][]} */</span>
+      <span class="s2">this</span><span class="s1">._data = []</span>
+
+      <span class="s1">const self = </span><span class="s2">this</span>
+      <span class="s1">form &amp;&amp; each(form.elements, (</span><span class="s0">/** @type {HTMLInputElement} */ </span><span class="s1">elm) =&gt; {</span>
+        <span class="s2">if </span><span class="s1">(</span>
+          <span class="s1">!elm.name ||</span>
+          <span class="s1">elm.disabled ||</span>
+          <span class="s1">elm.type === </span><span class="s3">'submit' </span><span class="s1">||</span>
+          <span class="s1">elm.type === </span><span class="s3">'button' </span><span class="s1">||</span>
+          <span class="s1">elm.matches(</span><span class="s3">'form fieldset[disabled] *'</span><span class="s1">)</span>
+        <span class="s1">) </span><span class="s2">return</span>
+
+        <span class="s2">if </span><span class="s1">(elm.type === </span><span class="s3">'file'</span><span class="s1">) {</span>
+          <span class="s1">const files = elm.files &amp;&amp; elm.files.length</span>
+            <span class="s1">? elm.files</span>
+            <span class="s1">: [</span><span class="s2">new </span><span class="s1">File([], </span><span class="s3">''</span><span class="s1">, { type: </span><span class="s3">'application/octet-stream' </span><span class="s1">})] </span><span class="s0">// #78</span>
+
+          <span class="s1">each(files, file =&gt; {</span>
+            <span class="s1">self.append(elm.name, file)</span>
+          <span class="s1">})</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(elm.type === </span><span class="s3">'select-multiple' </span><span class="s1">|| elm.type === </span><span class="s3">'select-one'</span><span class="s1">) {</span>
+          <span class="s1">each(elm.options, opt =&gt; {</span>
+            <span class="s1">!opt.disabled &amp;&amp; opt.selected &amp;&amp; self.append(elm.name, opt.value)</span>
+          <span class="s1">})</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(elm.type === </span><span class="s3">'checkbox' </span><span class="s1">|| elm.type === </span><span class="s3">'radio'</span><span class="s1">) {</span>
+          <span class="s2">if </span><span class="s1">(elm.checked) self.append(elm.name, elm.value)</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">const value = elm.type === </span><span class="s3">'textarea' </span><span class="s1">? normalizeLinefeeds(elm.value) : elm.value</span>
+          <span class="s1">self.append(elm.name, value)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Append a field 
+     * 
+     * @param   {string}           name      field name 
+     * @param   {string|Blob|File} value     string / blob / file 
+     * @param   {string=}          filename  filename to use with blob 
+     * @return  {undefined} 
+     */</span>
+    <span class="s1">append (name, value, filename) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">2</span><span class="s1">)</span>
+      <span class="s2">this</span><span class="s1">._data.push(normalizeArgs(name, value, filename))</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Delete all fields values given name 
+     * 
+     * @param   {string}  name  Field name 
+     * @return  {undefined} 
+     */</span>
+    <span class="s2">delete </span><span class="s1">(name) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">1</span><span class="s1">)</span>
+      <span class="s1">const result = []</span>
+      <span class="s1">name = String(name)</span>
+
+      <span class="s1">each(</span><span class="s2">this</span><span class="s1">._data, entry =&gt; {</span>
+        <span class="s1">entry[</span><span class="s4">0</span><span class="s1">] !== name &amp;&amp; result.push(entry)</span>
+      <span class="s1">})</span>
+
+      <span class="s2">this</span><span class="s1">._data = result</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Iterate over all fields as [name, value] 
+     * 
+     * @return {Iterator} 
+     */</span>
+    <span class="s1">* entries () {</span>
+      <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._data.length; i++) {</span>
+        <span class="s1">yield </span><span class="s2">this</span><span class="s1">._data[i]</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Iterate over all fields 
+     * 
+     * @param   {Function}  callback  Executed for each item with parameters (value, name, thisArg) 
+     * @param   {Object=}   thisArg   `this` context for callback function 
+     */</span>
+    <span class="s1">forEach (callback, thisArg) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">1</span><span class="s1">)</span>
+      <span class="s2">for </span><span class="s1">(const [name, value] of </span><span class="s2">this</span><span class="s1">) {</span>
+        <span class="s1">callback.call(thisArg, value, name, </span><span class="s2">this</span><span class="s1">)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Return first field value given name 
+     * or null if non existent 
+     * 
+     * @param   {string}  name      Field name 
+     * @return  {string|File|null}  value Fields value 
+     */</span>
+    <span class="s1">get (name) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">1</span><span class="s1">)</span>
+      <span class="s1">const entries = </span><span class="s2">this</span><span class="s1">._data</span>
+      <span class="s1">name = String(name)</span>
+      <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; entries.length; i++) {</span>
+        <span class="s2">if </span><span class="s1">(entries[i][</span><span class="s4">0</span><span class="s1">] === name) {</span>
+          <span class="s2">return </span><span class="s1">entries[i][</span><span class="s4">1</span><span class="s1">]</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">return null</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Return all fields values given name 
+     * 
+     * @param   {string}  name  Fields name 
+     * @return  {Array}         [{String|File}] 
+     */</span>
+    <span class="s1">getAll (name) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">1</span><span class="s1">)</span>
+      <span class="s1">const result = []</span>
+      <span class="s1">name = String(name)</span>
+      <span class="s1">each(</span><span class="s2">this</span><span class="s1">._data, data =&gt; {</span>
+        <span class="s1">data[</span><span class="s4">0</span><span class="s1">] === name &amp;&amp; result.push(data[</span><span class="s4">1</span><span class="s1">])</span>
+      <span class="s1">})</span>
+
+      <span class="s2">return </span><span class="s1">result</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Check for field name existence 
+     * 
+     * @param   {string}   name  Field name 
+     * @return  {boolean} 
+     */</span>
+    <span class="s1">has (name) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">1</span><span class="s1">)</span>
+      <span class="s1">name = String(name)</span>
+      <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._data.length; i++) {</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._data[i][</span><span class="s4">0</span><span class="s1">] === name) {</span>
+          <span class="s2">return true</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">return false</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Iterate over all fields name 
+     * 
+     * @return {Iterator} 
+     */</span>
+    <span class="s1">* keys () {</span>
+      <span class="s2">for </span><span class="s1">(const [name] of </span><span class="s2">this</span><span class="s1">) {</span>
+        <span class="s1">yield name</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Overwrite all values given name 
+     * 
+     * @param   {string}    name      Filed name 
+     * @param   {string}    value     Field value 
+     * @param   {string=}   filename  Filename (optional) 
+     */</span>
+    <span class="s1">set (name, value, filename) {</span>
+      <span class="s1">ensureArgs(arguments, </span><span class="s4">2</span><span class="s1">)</span>
+      <span class="s1">name = String(name)</span>
+      <span class="s0">/** @type {[string, string|File][]} */</span>
+      <span class="s1">const result = []</span>
+      <span class="s1">const args = normalizeArgs(name, value, filename)</span>
+      <span class="s1">let replace = </span><span class="s2">true</span>
+
+      <span class="s0">// - replace the first occurrence with same name</span>
+      <span class="s0">// - discards the remaining with same name</span>
+      <span class="s0">// - while keeping the same order items where added</span>
+      <span class="s1">each(</span><span class="s2">this</span><span class="s1">._data, data =&gt; {</span>
+        <span class="s1">data[</span><span class="s4">0</span><span class="s1">] === name</span>
+          <span class="s1">? replace &amp;&amp; (replace = !result.push(args))</span>
+          <span class="s1">: result.push(data)</span>
+      <span class="s1">})</span>
+
+      <span class="s1">replace &amp;&amp; result.push(args)</span>
+
+      <span class="s2">this</span><span class="s1">._data = result</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Iterate over all fields 
+     * 
+     * @return {Iterator} 
+     */</span>
+    <span class="s1">* values () {</span>
+      <span class="s2">for </span><span class="s1">(const [, value] of </span><span class="s2">this</span><span class="s1">) {</span>
+        <span class="s1">yield value</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Return a native (perhaps degraded) FormData with only a `append` method 
+     * Can throw if it's not supported 
+     * 
+     * @return {FormData} 
+     */</span>
+    <span class="s1">[</span><span class="s3">'_asNative'</span><span class="s1">] () {</span>
+      <span class="s1">const fd = </span><span class="s2">new </span><span class="s1">_FormData()</span>
+
+      <span class="s2">for </span><span class="s1">(const [name, value] of </span><span class="s2">this</span><span class="s1">) {</span>
+        <span class="s1">fd.append(name, value)</span>
+      <span class="s1">}</span>
+
+      <span class="s2">return </span><span class="s1">fd</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * [_blob description] 
+     * 
+     * @return {Blob} [description] 
+     */</span>
+    <span class="s1">[</span><span class="s3">'_blob'</span><span class="s1">] () {</span>
+        <span class="s1">const boundary = </span><span class="s3">'----formdata-polyfill-' </span><span class="s1">+ Math.random(),</span>
+          <span class="s1">chunks = [],</span>
+          <span class="s1">p = `--${boundary}\r\nContent-Disposition: form-data; name=</span><span class="s3">&quot;`</span>
+        <span class="s2">this</span><span class="s1">.forEach((value, name) =&gt; </span><span class="s2">typeof </span><span class="s1">value == </span><span class="s3">'string'</span>
+          <span class="s1">? chunks.push(p + escape(normalizeLinefeeds(name)) + `</span><span class="s3">&quot;</span><span class="s2">\r\n\r\n</span><span class="s3">${normalizeLinefeeds(value)}</span><span class="s2">\r\n</span><span class="s3">`)</span>
+          <span class="s1">: chunks.push(p + escape(normalizeLinefeeds(name)) + `</span><span class="s3">&quot;; filename=&quot;</span><span class="s1">${escape(value.name)}</span><span class="s3">&quot;</span><span class="s2">\r\n</span><span class="s3">Content-Type: ${value.type||&quot;</span><span class="s1">application/octet-stream</span><span class="s3">&quot;}</span><span class="s2">\r\n\r\n</span><span class="s3">`, value, `</span><span class="s2">\r\n</span><span class="s3">`))</span>
+        <span class="s1">chunks.push(`--${boundary}--`)</span>
+        <span class="s2">return new </span><span class="s1">Blob(chunks, {</span>
+          <span class="s1">type: </span><span class="s3">&quot;multipart/form-data; boundary=&quot; </span><span class="s1">+ boundary</span>
+        <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * The class itself is iterable 
+     * alias for formdata.entries() 
+     * 
+     * @return {Iterator} 
+     */</span>
+    <span class="s1">[Symbol.iterator] () {</span>
+      <span class="s2">return this</span><span class="s1">.entries()</span>
+    <span class="s1">}</span>
+
+    <span class="s0">/** 
+     * Create the default string description. 
+     * 
+     * @return  {string} [object FormData] 
+     */</span>
+    <span class="s1">toString () {</span>
+      <span class="s2">return </span><span class="s3">'[object FormData]'</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(_match &amp;&amp; !_match.matches) {</span>
+    <span class="s1">_match.matches =</span>
+      <span class="s1">_match.matchesSelector ||</span>
+      <span class="s1">_match.mozMatchesSelector ||</span>
+      <span class="s1">_match.msMatchesSelector ||</span>
+      <span class="s1">_match.oMatchesSelector ||</span>
+      <span class="s1">_match.webkitMatchesSelector ||</span>
+      <span class="s2">function </span><span class="s1">(s) {</span>
+        <span class="s2">var </span><span class="s1">matches = (</span><span class="s2">this</span><span class="s1">.document || </span><span class="s2">this</span><span class="s1">.ownerDocument).querySelectorAll(s)</span>
+        <span class="s2">var </span><span class="s1">i = matches.length</span>
+        <span class="s2">while </span><span class="s1">(--i &gt;= </span><span class="s4">0 </span><span class="s1">&amp;&amp; matches.item(i) !== </span><span class="s2">this</span><span class="s1">) {}</span>
+        <span class="s2">return </span><span class="s1">i &gt; -</span><span class="s4">1</span>
+      <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(stringTag) {</span>
+    <span class="s0">/** 
+     * Create the default string description. 
+     * It is accessed internally by the Object.prototype.toString(). 
+     */</span>
+    <span class="s1">FormDataPolyfill.prototype[stringTag] = </span><span class="s3">'FormData'</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Patch xhr's send method to call _blob transparently</span>
+  <span class="s2">if </span><span class="s1">(_send) {</span>
+    <span class="s1">const setRequestHeader = global.XMLHttpRequest.prototype.setRequestHeader</span>
+
+    <span class="s1">global.XMLHttpRequest.prototype.setRequestHeader = </span><span class="s2">function </span><span class="s1">(name, value) {</span>
+      <span class="s1">setRequestHeader.call(</span><span class="s2">this</span><span class="s1">, name, value)</span>
+      <span class="s2">if </span><span class="s1">(name.toLowerCase() === </span><span class="s3">'content-type'</span><span class="s1">) </span><span class="s2">this</span><span class="s1">._hasContentType = </span><span class="s2">true</span>
+    <span class="s1">}</span>
+
+    <span class="s1">global.XMLHttpRequest.prototype.send = </span><span class="s2">function </span><span class="s1">(data) {</span>
+      <span class="s0">// need to patch send b/c old IE don't send blob's type (#44)</span>
+      <span class="s2">if </span><span class="s1">(data </span><span class="s2">instanceof </span><span class="s1">FormDataPolyfill) {</span>
+        <span class="s1">const blob = data[</span><span class="s3">'_blob'</span><span class="s1">]()</span>
+        <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">._hasContentType) </span><span class="s2">this</span><span class="s1">.setRequestHeader(</span><span class="s3">'Content-Type'</span><span class="s1">, blob.type)</span>
+        <span class="s1">_send.call(</span><span class="s2">this</span><span class="s1">, blob)</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">_send.call(</span><span class="s2">this</span><span class="s1">, data)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Patch fetch's function to call _blob transparently</span>
+  <span class="s2">if </span><span class="s1">(_fetch) {</span>
+    <span class="s1">global.fetch = </span><span class="s2">function </span><span class="s1">(input, init) {</span>
+      <span class="s2">if </span><span class="s1">(init &amp;&amp; init.body &amp;&amp; init.body </span><span class="s2">instanceof </span><span class="s1">FormDataPolyfill) {</span>
+        <span class="s1">init.body = init.body[</span><span class="s3">'_blob'</span><span class="s1">]()</span>
+      <span class="s1">}</span>
+
+      <span class="s2">return </span><span class="s1">_fetch.call(</span><span class="s2">this</span><span class="s1">, input, init)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Patch navigator.sendBeacon to use native FormData</span>
+  <span class="s2">if </span><span class="s1">(_sendBeacon) {</span>
+    <span class="s1">global.navigator.sendBeacon = </span><span class="s2">function </span><span class="s1">(url, data) {</span>
+      <span class="s2">if </span><span class="s1">(data </span><span class="s2">instanceof </span><span class="s1">FormDataPolyfill) {</span>
+        <span class="s1">data = data[</span><span class="s3">'_asNative'</span><span class="s1">]()</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">_sendBeacon.call(</span><span class="s2">this</span><span class="s1">, url, data)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">global[</span><span class="s3">'FormData'</span><span class="s1">] = FormDataPolyfill</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

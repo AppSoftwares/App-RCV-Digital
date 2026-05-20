@@ -1,0 +1,707 @@
+<html>
+<head>
+<title>CachedInputFileSystem.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+CachedInputFileSystem.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s0">// eslint-disable-next-line n/prefer-global/process</span>
+<span class="s1">const { nextTick } = require(</span><span class="s2">&quot;process&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).FileSystem} FileSystem */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).PathLike} PathLike */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).PathOrFileDescriptor} PathOrFileDescriptor */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).SyncFileSystem} SyncFileSystem */</span>
+<span class="s0">/** @typedef {FileSystem &amp; SyncFileSystem} BaseFileSystem */</span>
+
+<span class="s0">/** 
+ * @template T 
+ * @typedef {import(&quot;./Resolver&quot;).FileSystemCallback&lt;T&gt;} FileSystemCallback&lt;T&gt; 
+ */</span>
+
+<span class="s0">/** 
+ * @param {string} path path 
+ * @returns {string} dirname 
+ */</span>
+<span class="s1">const dirname = (path) =&gt; {</span>
+	<span class="s1">let idx = path.length - </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">while </span><span class="s1">(idx &gt;= </span><span class="s3">0</span><span class="s1">) {</span>
+		<span class="s1">const char = path.charCodeAt(idx);</span>
+		<span class="s0">// slash or backslash</span>
+		<span class="s4">if </span><span class="s1">(char === </span><span class="s3">47 </span><span class="s1">|| char === </span><span class="s3">92</span><span class="s1">) </span><span class="s4">break</span><span class="s1">;</span>
+		<span class="s1">idx--;</span>
+	<span class="s1">}</span>
+	<span class="s4">if </span><span class="s1">(idx &lt; </span><span class="s3">0</span><span class="s1">) </span><span class="s4">return </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+	<span class="s4">return </span><span class="s1">path.slice(</span><span class="s3">0</span><span class="s1">, idx);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @template T 
+ * @param {FileSystemCallback&lt;T&gt;[]} callbacks callbacks 
+ * @param {Error | null} err error 
+ * @param {T} result result 
+ */</span>
+<span class="s1">const runCallbacks = (callbacks, err, result) =&gt; {</span>
+	<span class="s4">if </span><span class="s1">(callbacks.length === </span><span class="s3">1</span><span class="s1">) {</span>
+		<span class="s1">callbacks[</span><span class="s3">0</span><span class="s1">](err, result);</span>
+		<span class="s1">callbacks.length = </span><span class="s3">0</span><span class="s1">;</span>
+		<span class="s4">return</span><span class="s1">;</span>
+	<span class="s1">}</span>
+	<span class="s1">let error;</span>
+	<span class="s4">for </span><span class="s1">(const callback of callbacks) {</span>
+		<span class="s4">try </span><span class="s1">{</span>
+			<span class="s1">callback(err, result);</span>
+		<span class="s1">} </span><span class="s4">catch </span><span class="s1">(err) {</span>
+			<span class="s4">if </span><span class="s1">(!error) error = err;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s1">callbacks.length = </span><span class="s3">0</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(error) </span><span class="s4">throw </span><span class="s1">error;</span>
+<span class="s1">};</span>
+
+<span class="s0">// eslint-disable-next-line jsdoc/reject-function-type</span>
+<span class="s0">/** @typedef {Function} EXPECTED_FUNCTION */</span>
+<span class="s0">// eslint-disable-next-line jsdoc/reject-any-type</span>
+<span class="s0">/** @typedef {any} EXPECTED_ANY */</span>
+
+<span class="s1">class OperationMergerBackend {</span>
+	<span class="s0">/** 
+     * @param {EXPECTED_FUNCTION | undefined} provider async method in filesystem 
+     * @param {EXPECTED_FUNCTION | undefined} syncProvider sync method in filesystem 
+     * @param {BaseFileSystem} providerContext call context for the provider methods 
+     */</span>
+	<span class="s1">constructor(provider, syncProvider, providerContext) {</span>
+		<span class="s4">this</span><span class="s1">._provider = provider;</span>
+		<span class="s4">this</span><span class="s1">._syncProvider = syncProvider;</span>
+		<span class="s4">this</span><span class="s1">._providerContext = providerContext;</span>
+		<span class="s4">this</span><span class="s1">._activeAsyncOperations = </span><span class="s4">new </span><span class="s1">Map();</span>
+
+		<span class="s4">this</span><span class="s1">.provide = </span><span class="s4">this</span><span class="s1">._provider</span>
+			<span class="s1">? </span><span class="s0">// Comment to align jsdoc</span>
+				<span class="s0">/** 
+                 * @param {PathLike | PathOrFileDescriptor} path path 
+                 * @param {object | FileSystemCallback&lt;EXPECTED_ANY&gt; | undefined} options options 
+                 * @param {FileSystemCallback&lt;EXPECTED_ANY&gt;=} callback callback 
+                 * @returns {EXPECTED_ANY} result 
+                 */</span>
+				<span class="s1">(path, options, callback) =&gt; {</span>
+					<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">options === </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+						<span class="s1">callback =</span>
+							<span class="s0">/** @type {FileSystemCallback&lt;EXPECTED_ANY&gt;} */</span>
+							<span class="s1">(options);</span>
+						<span class="s1">options = undefined;</span>
+					<span class="s1">}</span>
+					<span class="s4">if </span><span class="s1">(</span>
+						<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot; </span><span class="s1">&amp;&amp;</span>
+						<span class="s1">!Buffer.isBuffer(path) &amp;&amp;</span>
+						<span class="s1">!(path </span><span class="s4">instanceof </span><span class="s1">URL) &amp;&amp;</span>
+						<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;number&quot;</span>
+					<span class="s1">) {</span>
+						<span class="s0">/** @type {EXPECTED_FUNCTION} */</span>
+						<span class="s1">(callback)(</span>
+							<span class="s4">new </span><span class="s1">TypeError(</span><span class="s2">&quot;path must be a string, Buffer, URL or number&quot;</span><span class="s1">),</span>
+						<span class="s1">);</span>
+						<span class="s4">return</span><span class="s1">;</span>
+					<span class="s1">}</span>
+					<span class="s4">if </span><span class="s1">(options) {</span>
+						<span class="s4">return </span><span class="s0">/** @type {EXPECTED_FUNCTION} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._provider).call(</span>
+							<span class="s4">this</span><span class="s1">._providerContext,</span>
+							<span class="s1">path,</span>
+							<span class="s1">options,</span>
+							<span class="s1">callback,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+					<span class="s1">let callbacks = </span><span class="s4">this</span><span class="s1">._activeAsyncOperations.get(path);</span>
+					<span class="s4">if </span><span class="s1">(callbacks) {</span>
+						<span class="s1">callbacks.push(callback);</span>
+						<span class="s4">return</span><span class="s1">;</span>
+					<span class="s1">}</span>
+					<span class="s4">this</span><span class="s1">._activeAsyncOperations.set(path, (callbacks = [callback]));</span>
+					<span class="s0">/** @type {EXPECTED_FUNCTION} */</span>
+					<span class="s1">(provider)(</span>
+						<span class="s1">path,</span>
+						<span class="s0">/** 
+                         * @param {Error} err error 
+                         * @param {EXPECTED_ANY} result result 
+                         */</span>
+						<span class="s1">(err, result) =&gt; {</span>
+							<span class="s4">this</span><span class="s1">._activeAsyncOperations.</span><span class="s4">delete</span><span class="s1">(path);</span>
+							<span class="s1">runCallbacks(callbacks, err, result);</span>
+						<span class="s1">},</span>
+					<span class="s1">);</span>
+				<span class="s1">}</span>
+			<span class="s1">: </span><span class="s4">null</span><span class="s1">;</span>
+		<span class="s4">this</span><span class="s1">.provideSync = </span><span class="s4">this</span><span class="s1">._syncProvider</span>
+			<span class="s1">? </span><span class="s0">// Comment to align jsdoc</span>
+				<span class="s0">/** 
+                 * @param {PathLike | PathOrFileDescriptor} path path 
+                 * @param {object=} options options 
+                 * @returns {EXPECTED_ANY} result 
+                 */</span>
+				<span class="s1">(path, options) =&gt;</span>
+					<span class="s0">/** @type {EXPECTED_FUNCTION} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._syncProvider).call(</span>
+						<span class="s4">this</span><span class="s1">._providerContext,</span>
+						<span class="s1">path,</span>
+						<span class="s1">options,</span>
+					<span class="s1">)</span>
+			<span class="s1">: </span><span class="s4">null</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">purge() {}</span>
+
+	<span class="s1">purgeParent() {}</span>
+<span class="s1">}</span>
+
+<span class="s0">/* 
+ 
+IDLE: 
+    insert data: goto SYNC 
+ 
+SYNC: 
+    before provide: run ticks 
+    event loop tick: goto ASYNC_ACTIVE 
+ 
+ASYNC: 
+    timeout: run tick, goto ASYNC_PASSIVE 
+ 
+ASYNC_PASSIVE: 
+    before provide: run ticks 
+ 
+IDLE --[insert data]--&gt; SYNC --[event loop tick]--&gt; ASYNC_ACTIVE --[interval tick]-&gt; ASYNC_PASSIVE 
+                                                          ^                             | 
+                                                          +---------[insert data]-------+ 
+*/</span>
+
+<span class="s1">const STORAGE_MODE_IDLE = </span><span class="s3">0</span><span class="s1">;</span>
+<span class="s1">const STORAGE_MODE_SYNC = </span><span class="s3">1</span><span class="s1">;</span>
+<span class="s1">const STORAGE_MODE_ASYNC = </span><span class="s3">2</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * @callback Provide 
+ * @param {PathLike | PathOrFileDescriptor} path path 
+ * @param {EXPECTED_ANY} options options 
+ * @param {FileSystemCallback&lt;EXPECTED_ANY&gt;} callback callback 
+ * @returns {void} 
+ */</span>
+
+<span class="s1">class CacheBackend {</span>
+	<span class="s0">/** 
+     * @param {number} duration max cache duration of items 
+     * @param {EXPECTED_FUNCTION | undefined} provider async method 
+     * @param {EXPECTED_FUNCTION | undefined} syncProvider sync method 
+     * @param {BaseFileSystem} providerContext call context for the provider methods 
+     */</span>
+	<span class="s1">constructor(duration, provider, syncProvider, providerContext) {</span>
+		<span class="s4">this</span><span class="s1">._duration = duration;</span>
+		<span class="s4">this</span><span class="s1">._provider = provider;</span>
+		<span class="s4">this</span><span class="s1">._syncProvider = syncProvider;</span>
+		<span class="s4">this</span><span class="s1">._providerContext = providerContext;</span>
+		<span class="s0">/** @type {Map&lt;string, FileSystemCallback&lt;EXPECTED_ANY&gt;[]&gt;} */</span>
+		<span class="s4">this</span><span class="s1">._activeAsyncOperations = </span><span class="s4">new </span><span class="s1">Map();</span>
+		<span class="s0">/** @type {Map&lt;string, { err: Error | null, result?: EXPECTED_ANY, level: Set&lt;string&gt; }&gt;} */</span>
+		<span class="s4">this</span><span class="s1">._data = </span><span class="s4">new </span><span class="s1">Map();</span>
+		<span class="s0">/** @type {Set&lt;string&gt;[]} */</span>
+		<span class="s4">this</span><span class="s1">._levels = [];</span>
+		<span class="s4">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; </span><span class="s3">10</span><span class="s1">; i++) </span><span class="s4">this</span><span class="s1">._levels.push(</span><span class="s4">new </span><span class="s1">Set());</span>
+		<span class="s4">if </span><span class="s1">(duration !== Infinity) {</span>
+			<span class="s4">for </span><span class="s1">(let i = </span><span class="s3">5000</span><span class="s1">; i &lt; duration; i += </span><span class="s3">500</span><span class="s1">) {</span>
+				<span class="s4">this</span><span class="s1">._levels.push(</span><span class="s4">new </span><span class="s1">Set());</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s4">this</span><span class="s1">._currentLevel = </span><span class="s3">0</span><span class="s1">;</span>
+		<span class="s4">this</span><span class="s1">._tickInterval = Math.floor(duration / </span><span class="s4">this</span><span class="s1">._levels.length);</span>
+		<span class="s0">/** @type {STORAGE_MODE_IDLE | STORAGE_MODE_SYNC | STORAGE_MODE_ASYNC} */</span>
+		<span class="s4">this</span><span class="s1">._mode = STORAGE_MODE_IDLE;</span>
+
+		<span class="s0">/** @type {NodeJS.Timeout | undefined} */</span>
+		<span class="s4">this</span><span class="s1">._timeout = undefined;</span>
+		<span class="s0">/** @type {number | undefined} */</span>
+		<span class="s4">this</span><span class="s1">._nextDecay = undefined;</span>
+
+		<span class="s0">// eslint-disable-next-line no-warning-comments</span>
+		<span class="s0">// @ts-ignore</span>
+		<span class="s4">this</span><span class="s1">.provide = provider ? </span><span class="s4">this</span><span class="s1">.provide.bind(</span><span class="s4">this</span><span class="s1">) : </span><span class="s4">null</span><span class="s1">;</span>
+		<span class="s0">// eslint-disable-next-line no-warning-comments</span>
+		<span class="s0">// @ts-ignore</span>
+		<span class="s4">this</span><span class="s1">.provideSync = syncProvider ? </span><span class="s4">this</span><span class="s1">.provideSync.bind(</span><span class="s4">this</span><span class="s1">) : </span><span class="s4">null</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {PathLike | PathOrFileDescriptor} path path 
+     * @param {EXPECTED_ANY} options options 
+     * @param {FileSystemCallback&lt;EXPECTED_ANY&gt;} callback callback 
+     * @returns {void} 
+     */</span>
+	<span class="s1">provide(path, options, callback) {</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">options === </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+			<span class="s1">callback = options;</span>
+			<span class="s1">options = undefined;</span>
+		<span class="s1">}</span>
+		<span class="s4">if </span><span class="s1">(</span>
+			<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">!Buffer.isBuffer(path) &amp;&amp;</span>
+			<span class="s1">!(path </span><span class="s4">instanceof </span><span class="s1">URL) &amp;&amp;</span>
+			<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;number&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s1">callback(</span><span class="s4">new </span><span class="s1">TypeError(</span><span class="s2">&quot;path must be a string, Buffer, URL or number&quot;</span><span class="s1">));</span>
+			<span class="s4">return</span><span class="s1">;</span>
+		<span class="s1">}</span>
+		<span class="s1">const strPath = </span><span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? path.toString() : path;</span>
+		<span class="s4">if </span><span class="s1">(options) {</span>
+			<span class="s4">return </span><span class="s0">/** @type {EXPECTED_FUNCTION} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._provider).call(</span>
+				<span class="s4">this</span><span class="s1">._providerContext,</span>
+				<span class="s1">path,</span>
+				<span class="s1">options,</span>
+				<span class="s1">callback,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// When in sync mode we can move to async mode</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._mode === STORAGE_MODE_SYNC) {</span>
+			<span class="s4">this</span><span class="s1">._enterAsyncMode();</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// Check in cache</span>
+		<span class="s1">const cacheEntry = </span><span class="s4">this</span><span class="s1">._data.get(strPath);</span>
+		<span class="s4">if </span><span class="s1">(cacheEntry !== undefined) {</span>
+			<span class="s4">if </span><span class="s1">(cacheEntry.err) </span><span class="s4">return </span><span class="s1">nextTick(callback, cacheEntry.err);</span>
+			<span class="s4">return </span><span class="s1">nextTick(callback, </span><span class="s4">null</span><span class="s1">, cacheEntry.result);</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// Check if there is already the same operation running</span>
+		<span class="s1">let callbacks = </span><span class="s4">this</span><span class="s1">._activeAsyncOperations.get(strPath);</span>
+		<span class="s4">if </span><span class="s1">(callbacks !== undefined) {</span>
+			<span class="s1">callbacks.push(callback);</span>
+			<span class="s4">return</span><span class="s1">;</span>
+		<span class="s1">}</span>
+		<span class="s4">this</span><span class="s1">._activeAsyncOperations.set(strPath, (callbacks = [callback]));</span>
+
+		<span class="s0">// Run the operation</span>
+		<span class="s0">/** @type {EXPECTED_FUNCTION} */</span>
+		<span class="s1">(</span><span class="s4">this</span><span class="s1">._provider).call(</span>
+			<span class="s4">this</span><span class="s1">._providerContext,</span>
+			<span class="s1">path,</span>
+			<span class="s0">/** 
+             * @param {Error | null} err error 
+             * @param {EXPECTED_ANY=} result result 
+             */</span>
+			<span class="s1">(err, result) =&gt; {</span>
+				<span class="s4">this</span><span class="s1">._activeAsyncOperations.</span><span class="s4">delete</span><span class="s1">(strPath);</span>
+				<span class="s4">this</span><span class="s1">._storeResult(strPath, err, result);</span>
+
+				<span class="s0">// Enter async mode if not yet done</span>
+				<span class="s4">this</span><span class="s1">._enterAsyncMode();</span>
+
+				<span class="s1">runCallbacks(</span>
+					<span class="s0">/** @type {FileSystemCallback&lt;EXPECTED_ANY&gt;[]} */ </span><span class="s1">(callbacks),</span>
+					<span class="s1">err,</span>
+					<span class="s1">result,</span>
+				<span class="s1">);</span>
+			<span class="s1">},</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {PathLike | PathOrFileDescriptor} path path 
+     * @param {EXPECTED_ANY} options options 
+     * @returns {EXPECTED_ANY} result 
+     */</span>
+	<span class="s1">provideSync(path, options) {</span>
+		<span class="s4">if </span><span class="s1">(</span>
+			<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">!Buffer.isBuffer(path) &amp;&amp;</span>
+			<span class="s1">!(path </span><span class="s4">instanceof </span><span class="s1">URL) &amp;&amp;</span>
+			<span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;number&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s4">throw new </span><span class="s1">TypeError(</span><span class="s2">&quot;path must be a string&quot;</span><span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s1">const strPath = </span><span class="s4">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? path.toString() : path;</span>
+		<span class="s4">if </span><span class="s1">(options) {</span>
+			<span class="s4">return </span><span class="s0">/** @type {EXPECTED_FUNCTION} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._syncProvider).call(</span>
+				<span class="s4">this</span><span class="s1">._providerContext,</span>
+				<span class="s1">path,</span>
+				<span class="s1">options,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// In sync mode we may have to decay some cache items</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._mode === STORAGE_MODE_SYNC) {</span>
+			<span class="s4">this</span><span class="s1">._runDecays();</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// Check in cache</span>
+		<span class="s1">const cacheEntry = </span><span class="s4">this</span><span class="s1">._data.get(strPath);</span>
+		<span class="s4">if </span><span class="s1">(cacheEntry !== undefined) {</span>
+			<span class="s4">if </span><span class="s1">(cacheEntry.err) </span><span class="s4">throw </span><span class="s1">cacheEntry.err;</span>
+			<span class="s4">return </span><span class="s1">cacheEntry.result;</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// Get all active async operations</span>
+		<span class="s0">// This sync operation will also complete them</span>
+		<span class="s1">const callbacks = </span><span class="s4">this</span><span class="s1">._activeAsyncOperations.get(strPath);</span>
+		<span class="s4">this</span><span class="s1">._activeAsyncOperations.</span><span class="s4">delete</span><span class="s1">(strPath);</span>
+
+		<span class="s0">// Run the operation</span>
+		<span class="s0">// When in idle mode, we will enter sync mode</span>
+		<span class="s1">let result;</span>
+		<span class="s4">try </span><span class="s1">{</span>
+			<span class="s1">result = </span><span class="s0">/** @type {EXPECTED_FUNCTION} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._syncProvider).call(</span>
+				<span class="s4">this</span><span class="s1">._providerContext,</span>
+				<span class="s1">path,</span>
+			<span class="s1">);</span>
+		<span class="s1">} </span><span class="s4">catch </span><span class="s1">(err) {</span>
+			<span class="s4">this</span><span class="s1">._storeResult(strPath, </span><span class="s0">/** @type {Error} */ </span><span class="s1">(err), undefined);</span>
+			<span class="s4">this</span><span class="s1">._enterSyncModeWhenIdle();</span>
+			<span class="s4">if </span><span class="s1">(callbacks) {</span>
+				<span class="s1">runCallbacks(callbacks, </span><span class="s0">/** @type {Error} */ </span><span class="s1">(err), undefined);</span>
+			<span class="s1">}</span>
+			<span class="s4">throw </span><span class="s1">err;</span>
+		<span class="s1">}</span>
+		<span class="s4">this</span><span class="s1">._storeResult(strPath, </span><span class="s4">null</span><span class="s1">, result);</span>
+		<span class="s4">this</span><span class="s1">._enterSyncModeWhenIdle();</span>
+		<span class="s4">if </span><span class="s1">(callbacks) {</span>
+			<span class="s1">runCallbacks(callbacks, </span><span class="s4">null</span><span class="s1">, result);</span>
+		<span class="s1">}</span>
+		<span class="s4">return </span><span class="s1">result;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {(string | Buffer | URL | number | (string | URL | Buffer | number)[] | Set&lt;string | URL | Buffer | number&gt;)=} what what to purge 
+     */</span>
+	<span class="s1">purge(what) {</span>
+		<span class="s4">if </span><span class="s1">(!what) {</span>
+			<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._mode !== STORAGE_MODE_IDLE) {</span>
+				<span class="s4">this</span><span class="s1">._data.clear();</span>
+				<span class="s4">for </span><span class="s1">(const level of </span><span class="s4">this</span><span class="s1">._levels) {</span>
+					<span class="s1">level.clear();</span>
+				<span class="s1">}</span>
+				<span class="s4">this</span><span class="s1">._enterIdleMode();</span>
+			<span class="s1">}</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+			<span class="s4">typeof </span><span class="s1">what === </span><span class="s2">&quot;string&quot; </span><span class="s1">||</span>
+			<span class="s1">Buffer.isBuffer(what) ||</span>
+			<span class="s1">what </span><span class="s4">instanceof </span><span class="s1">URL ||</span>
+			<span class="s4">typeof </span><span class="s1">what === </span><span class="s2">&quot;number&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s1">const strWhat = </span><span class="s4">typeof </span><span class="s1">what !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? what.toString() : what;</span>
+			<span class="s4">for </span><span class="s1">(const [key, data] of </span><span class="s4">this</span><span class="s1">._data) {</span>
+				<span class="s4">if </span><span class="s1">(key.startsWith(strWhat)) {</span>
+					<span class="s4">this</span><span class="s1">._data.</span><span class="s4">delete</span><span class="s1">(key);</span>
+					<span class="s1">data.level.</span><span class="s4">delete</span><span class="s1">(key);</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+			<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._data.size === </span><span class="s3">0</span><span class="s1">) {</span>
+				<span class="s4">this</span><span class="s1">._enterIdleMode();</span>
+			<span class="s1">}</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s4">for </span><span class="s1">(const [key, data] of </span><span class="s4">this</span><span class="s1">._data) {</span>
+				<span class="s4">for </span><span class="s1">(const item of what) {</span>
+					<span class="s1">const strItem = </span><span class="s4">typeof </span><span class="s1">item !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? item.toString() : item;</span>
+					<span class="s4">if </span><span class="s1">(key.startsWith(strItem)) {</span>
+						<span class="s4">this</span><span class="s1">._data.</span><span class="s4">delete</span><span class="s1">(key);</span>
+						<span class="s1">data.level.</span><span class="s4">delete</span><span class="s1">(key);</span>
+						<span class="s4">break</span><span class="s1">;</span>
+					<span class="s1">}</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+			<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._data.size === </span><span class="s3">0</span><span class="s1">) {</span>
+				<span class="s4">this</span><span class="s1">._enterIdleMode();</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {(string | Buffer | URL | number | (string | URL | Buffer | number)[] | Set&lt;string | URL | Buffer | number&gt;)=} what what to purge 
+     */</span>
+	<span class="s1">purgeParent(what) {</span>
+		<span class="s4">if </span><span class="s1">(!what) {</span>
+			<span class="s4">this</span><span class="s1">.purge();</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+			<span class="s4">typeof </span><span class="s1">what === </span><span class="s2">&quot;string&quot; </span><span class="s1">||</span>
+			<span class="s1">Buffer.isBuffer(what) ||</span>
+			<span class="s1">what </span><span class="s4">instanceof </span><span class="s1">URL ||</span>
+			<span class="s4">typeof </span><span class="s1">what === </span><span class="s2">&quot;number&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s1">const strWhat = </span><span class="s4">typeof </span><span class="s1">what !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? what.toString() : what;</span>
+			<span class="s4">this</span><span class="s1">.purge(dirname(strWhat));</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s1">const set = </span><span class="s4">new </span><span class="s1">Set();</span>
+			<span class="s4">for </span><span class="s1">(const item of what) {</span>
+				<span class="s1">const strItem = </span><span class="s4">typeof </span><span class="s1">item !== </span><span class="s2">&quot;string&quot; </span><span class="s1">? item.toString() : item;</span>
+				<span class="s1">set.add(dirname(strItem));</span>
+			<span class="s1">}</span>
+			<span class="s4">this</span><span class="s1">.purge(set);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @param {Error | null} err error 
+     * @param {EXPECTED_ANY} result result 
+     */</span>
+	<span class="s1">_storeResult(path, err, result) {</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._data.has(path)) </span><span class="s4">return</span><span class="s1">;</span>
+		<span class="s1">const level = </span><span class="s4">this</span><span class="s1">._levels[</span><span class="s4">this</span><span class="s1">._currentLevel];</span>
+		<span class="s4">this</span><span class="s1">._data.set(path, { err, result, level });</span>
+		<span class="s1">level.add(path);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_decayLevel() {</span>
+		<span class="s1">const nextLevel = (</span><span class="s4">this</span><span class="s1">._currentLevel + </span><span class="s3">1</span><span class="s1">) % </span><span class="s4">this</span><span class="s1">._levels.length;</span>
+		<span class="s1">const decay = </span><span class="s4">this</span><span class="s1">._levels[nextLevel];</span>
+		<span class="s4">this</span><span class="s1">._currentLevel = nextLevel;</span>
+		<span class="s4">for </span><span class="s1">(const item of decay) {</span>
+			<span class="s4">this</span><span class="s1">._data.</span><span class="s4">delete</span><span class="s1">(item);</span>
+		<span class="s1">}</span>
+		<span class="s1">decay.clear();</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._data.size === </span><span class="s3">0</span><span class="s1">) {</span>
+			<span class="s4">this</span><span class="s1">._enterIdleMode();</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s0">/** @type {number} */</span>
+			<span class="s1">(</span><span class="s4">this</span><span class="s1">._nextDecay) += </span><span class="s4">this</span><span class="s1">._tickInterval;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_runDecays() {</span>
+		<span class="s4">while </span><span class="s1">(</span>
+			<span class="s0">/** @type {number} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._nextDecay) &lt;= Date.now() &amp;&amp;</span>
+			<span class="s4">this</span><span class="s1">._mode !== STORAGE_MODE_IDLE</span>
+		<span class="s1">) {</span>
+			<span class="s4">this</span><span class="s1">._decayLevel();</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_enterAsyncMode() {</span>
+		<span class="s1">let timeout = </span><span class="s3">0</span><span class="s1">;</span>
+		<span class="s4">switch </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._mode) {</span>
+			<span class="s4">case </span><span class="s1">STORAGE_MODE_ASYNC:</span>
+				<span class="s4">return</span><span class="s1">;</span>
+			<span class="s4">case </span><span class="s1">STORAGE_MODE_IDLE:</span>
+				<span class="s4">this</span><span class="s1">._nextDecay = Date.now() + </span><span class="s4">this</span><span class="s1">._tickInterval;</span>
+				<span class="s1">timeout = </span><span class="s4">this</span><span class="s1">._tickInterval;</span>
+				<span class="s4">break</span><span class="s1">;</span>
+			<span class="s4">case </span><span class="s1">STORAGE_MODE_SYNC:</span>
+				<span class="s4">this</span><span class="s1">._runDecays();</span>
+				<span class="s0">// _runDecays may change the mode</span>
+				<span class="s4">if </span><span class="s1">(</span>
+					<span class="s0">/** @type {STORAGE_MODE_IDLE | STORAGE_MODE_SYNC | STORAGE_MODE_ASYNC} */</span>
+					<span class="s1">(</span><span class="s4">this</span><span class="s1">._mode) === STORAGE_MODE_IDLE</span>
+				<span class="s1">) {</span>
+					<span class="s4">return</span><span class="s1">;</span>
+				<span class="s1">}</span>
+				<span class="s1">timeout = Math.max(</span>
+					<span class="s3">0</span><span class="s1">,</span>
+					<span class="s0">/** @type {number} */ </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._nextDecay) - Date.now(),</span>
+				<span class="s1">);</span>
+				<span class="s4">break</span><span class="s1">;</span>
+		<span class="s1">}</span>
+		<span class="s4">this</span><span class="s1">._mode = STORAGE_MODE_ASYNC;</span>
+		<span class="s0">// When duration is Infinity, cache entries never expire, so there</span>
+		<span class="s0">// is no need to schedule a decay timer.</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._duration === Infinity) {</span>
+			<span class="s4">return</span><span class="s1">;</span>
+		<span class="s1">}</span>
+		<span class="s1">const ref = setTimeout(() =&gt; {</span>
+			<span class="s4">this</span><span class="s1">._mode = STORAGE_MODE_SYNC;</span>
+			<span class="s4">this</span><span class="s1">._runDecays();</span>
+		<span class="s1">}, timeout);</span>
+		<span class="s4">if </span><span class="s1">(ref.unref) ref.unref();</span>
+		<span class="s4">this</span><span class="s1">._timeout = ref;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_enterSyncModeWhenIdle() {</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._mode === STORAGE_MODE_IDLE) {</span>
+			<span class="s4">this</span><span class="s1">._mode = STORAGE_MODE_SYNC;</span>
+			<span class="s4">this</span><span class="s1">._nextDecay = Date.now() + </span><span class="s4">this</span><span class="s1">._tickInterval;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_enterIdleMode() {</span>
+		<span class="s4">this</span><span class="s1">._mode = STORAGE_MODE_IDLE;</span>
+		<span class="s4">this</span><span class="s1">._nextDecay = undefined;</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._timeout) clearTimeout(</span><span class="s4">this</span><span class="s1">._timeout);</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @template {EXPECTED_FUNCTION} Provider 
+ * @template {EXPECTED_FUNCTION} AsyncProvider 
+ * @template FileSystem 
+ * @param {number} duration duration in ms files are cached 
+ * @param {Provider | undefined} provider provider 
+ * @param {AsyncProvider | undefined} syncProvider sync provider 
+ * @param {BaseFileSystem} providerContext provider context 
+ * @returns {OperationMergerBackend | CacheBackend} backend 
+ */</span>
+<span class="s1">const createBackend = (duration, provider, syncProvider, providerContext) =&gt; {</span>
+	<span class="s4">if </span><span class="s1">(duration &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+		<span class="s4">return new </span><span class="s1">CacheBackend(duration, provider, syncProvider, providerContext);</span>
+	<span class="s1">}</span>
+	<span class="s4">return new </span><span class="s1">OperationMergerBackend(provider, syncProvider, providerContext);</span>
+<span class="s1">};</span>
+
+<span class="s1">module.exports = class CachedInputFileSystem {</span>
+	<span class="s0">/** 
+     * @param {BaseFileSystem} fileSystem file system 
+     * @param {number} duration duration in ms files are cached 
+     */</span>
+	<span class="s1">constructor(fileSystem, duration) {</span>
+		<span class="s4">this</span><span class="s1">.fileSystem = fileSystem;</span>
+
+		<span class="s4">this</span><span class="s1">._lstatBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.lstat,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.lstatSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const lstat = </span><span class="s4">this</span><span class="s1">._lstatBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.lstat = </span><span class="s0">/** @type {FileSystem[&quot;lstat&quot;]} */ </span><span class="s1">(lstat);</span>
+		<span class="s1">const lstatSync = </span><span class="s4">this</span><span class="s1">._lstatBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.lstatSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;lstatSync&quot;]} */ </span><span class="s1">(lstatSync);</span>
+
+		<span class="s4">this</span><span class="s1">._statBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.stat,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.statSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const stat = </span><span class="s4">this</span><span class="s1">._statBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.stat = </span><span class="s0">/** @type {FileSystem[&quot;stat&quot;]} */ </span><span class="s1">(stat);</span>
+		<span class="s1">const statSync = </span><span class="s4">this</span><span class="s1">._statBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.statSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;statSync&quot;]} */ </span><span class="s1">(statSync);</span>
+
+		<span class="s4">this</span><span class="s1">._readdirBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readdir,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readdirSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const readdir = </span><span class="s4">this</span><span class="s1">._readdirBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.readdir = </span><span class="s0">/** @type {FileSystem[&quot;readdir&quot;]} */ </span><span class="s1">(readdir);</span>
+		<span class="s1">const readdirSync = </span><span class="s4">this</span><span class="s1">._readdirBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.readdirSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;readdirSync&quot;]} */ </span><span class="s1">(</span>
+			<span class="s1">readdirSync</span>
+		<span class="s1">);</span>
+
+		<span class="s4">this</span><span class="s1">._readFileBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readFile,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readFileSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const readFile = </span><span class="s4">this</span><span class="s1">._readFileBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.readFile = </span><span class="s0">/** @type {FileSystem[&quot;readFile&quot;]} */ </span><span class="s1">(readFile);</span>
+		<span class="s1">const readFileSync = </span><span class="s4">this</span><span class="s1">._readFileBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.readFileSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;readFileSync&quot;]} */ </span><span class="s1">(</span>
+			<span class="s1">readFileSync</span>
+		<span class="s1">);</span>
+
+		<span class="s4">this</span><span class="s1">._readJsonBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s0">// prettier-ignore</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readJson ||</span>
+				<span class="s1">(</span><span class="s4">this</span><span class="s1">.readFile &amp;&amp;</span>
+					<span class="s1">(</span>
+						<span class="s0">/** 
+                         * @param {string} path path 
+                         * @param {FileSystemCallback&lt;EXPECTED_ANY&gt;} callback callback 
+                         */</span>
+						<span class="s1">(path, callback) =&gt; {</span>
+							<span class="s4">this</span><span class="s1">.readFile(path, (err, buffer) =&gt; {</span>
+								<span class="s4">if </span><span class="s1">(err) </span><span class="s4">return </span><span class="s1">callback(err);</span>
+								<span class="s4">if </span><span class="s1">(!buffer || buffer.length === </span><span class="s3">0</span><span class="s1">)</span>
+									<span class="s1">{</span><span class="s4">return </span><span class="s1">callback(</span><span class="s4">new </span><span class="s1">Error(</span><span class="s2">&quot;No file content&quot;</span><span class="s1">));}</span>
+								<span class="s1">let data;</span>
+								<span class="s4">try </span><span class="s1">{</span>
+									<span class="s1">data = JSON.parse(buffer.toString(</span><span class="s2">&quot;utf8&quot;</span><span class="s1">));</span>
+								<span class="s1">} </span><span class="s4">catch </span><span class="s1">(err_) {</span>
+									<span class="s4">return </span><span class="s1">callback(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(err_));</span>
+								<span class="s1">}</span>
+								<span class="s1">callback(</span><span class="s4">null</span><span class="s1">, data);</span>
+							<span class="s1">});</span>
+						<span class="s1">})</span>
+				<span class="s1">),</span>
+			<span class="s0">// prettier-ignore</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readJsonSync ||</span>
+				<span class="s1">(</span><span class="s4">this</span><span class="s1">.readFileSync &amp;&amp;</span>
+					<span class="s1">(</span>
+						<span class="s0">/** 
+                         * @param {string} path path 
+                         * @returns {EXPECTED_ANY} result 
+                         */</span>
+						<span class="s1">(path) =&gt; {</span>
+							<span class="s1">const buffer = </span><span class="s4">this</span><span class="s1">.readFileSync(path);</span>
+							<span class="s1">const data = JSON.parse(buffer.toString(</span><span class="s2">&quot;utf8&quot;</span><span class="s1">));</span>
+							<span class="s4">return </span><span class="s1">data;</span>
+						<span class="s1">}</span>
+				 <span class="s1">)),</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const readJson = </span><span class="s4">this</span><span class="s1">._readJsonBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.readJson = </span><span class="s0">/** @type {FileSystem[&quot;readJson&quot;]} */ </span><span class="s1">(readJson);</span>
+		<span class="s1">const readJsonSync = </span><span class="s4">this</span><span class="s1">._readJsonBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.readJsonSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;readJsonSync&quot;]} */ </span><span class="s1">(</span>
+			<span class="s1">readJsonSync</span>
+		<span class="s1">);</span>
+
+		<span class="s4">this</span><span class="s1">._readlinkBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readlink,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.readlinkSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const readlink = </span><span class="s4">this</span><span class="s1">._readlinkBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.readlink = </span><span class="s0">/** @type {FileSystem[&quot;readlink&quot;]} */ </span><span class="s1">(readlink);</span>
+		<span class="s1">const readlinkSync = </span><span class="s4">this</span><span class="s1">._readlinkBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.readlinkSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;readlinkSync&quot;]} */ </span><span class="s1">(</span>
+			<span class="s1">readlinkSync</span>
+		<span class="s1">);</span>
+
+		<span class="s4">this</span><span class="s1">._realpathBackend = createBackend(</span>
+			<span class="s1">duration,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.realpath,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem.realpathSync,</span>
+			<span class="s4">this</span><span class="s1">.fileSystem,</span>
+		<span class="s1">);</span>
+		<span class="s1">const realpath = </span><span class="s4">this</span><span class="s1">._realpathBackend.provide;</span>
+		<span class="s4">this</span><span class="s1">.realpath = </span><span class="s0">/** @type {FileSystem[&quot;realpath&quot;]} */ </span><span class="s1">(realpath);</span>
+		<span class="s1">const realpathSync = </span><span class="s4">this</span><span class="s1">._realpathBackend.provideSync;</span>
+		<span class="s4">this</span><span class="s1">.realpathSync = </span><span class="s0">/** @type {SyncFileSystem[&quot;realpathSync&quot;]} */ </span><span class="s1">(</span>
+			<span class="s1">realpathSync</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {(string | Buffer | URL | number | (string | URL | Buffer | number)[] | Set&lt;string | URL | Buffer | number&gt;)=} what what to purge 
+     */</span>
+	<span class="s1">purge(what) {</span>
+		<span class="s4">this</span><span class="s1">._statBackend.purge(what);</span>
+		<span class="s4">this</span><span class="s1">._lstatBackend.purge(what);</span>
+		<span class="s4">this</span><span class="s1">._readdirBackend.purgeParent(what);</span>
+		<span class="s4">this</span><span class="s1">._readFileBackend.purge(what);</span>
+		<span class="s4">this</span><span class="s1">._readlinkBackend.purge(what);</span>
+		<span class="s4">this</span><span class="s1">._readJsonBackend.purge(what);</span>
+		<span class="s4">this</span><span class="s1">._realpathBackend.purge(what);</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

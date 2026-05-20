@@ -1,0 +1,425 @@
+<html>
+<head>
+<title>root.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+root.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Root;</span>
+
+<span class="s2">// extends Namespace</span>
+<span class="s3">var </span><span class="s1">Namespace = require(</span><span class="s0">&quot;./namespace&quot;</span><span class="s1">);</span>
+<span class="s1">((Root.prototype = Object.create(Namespace.prototype)).constructor = Root).className = </span><span class="s0">&quot;Root&quot;</span><span class="s1">;</span>
+
+<span class="s3">var </span><span class="s1">Field   = require(</span><span class="s0">&quot;./field&quot;</span><span class="s1">),</span>
+    <span class="s1">Enum    = require(</span><span class="s0">&quot;./enum&quot;</span><span class="s1">),</span>
+    <span class="s1">OneOf   = require(</span><span class="s0">&quot;./oneof&quot;</span><span class="s1">),</span>
+    <span class="s1">util    = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s3">var </span><span class="s1">Type,   </span><span class="s2">// cyclic</span>
+    <span class="s1">parse,  </span><span class="s2">// might be excluded</span>
+    <span class="s1">common; </span><span class="s2">// &quot;</span>
+
+<span class="s2">/** 
+ * Constructs a new root namespace instance. 
+ * @classdesc Root namespace wrapping all types, enums, services, sub-namespaces etc. that belong together. 
+ * @extends NamespaceBase 
+ * @constructor 
+ * @param {Object.&lt;string,*&gt;} [options] Top level options 
+ */</span>
+<span class="s3">function </span><span class="s1">Root(options) {</span>
+    <span class="s1">Namespace.call(</span><span class="s3">this</span><span class="s1">, </span><span class="s0">&quot;&quot;</span><span class="s1">, options);</span>
+
+    <span class="s2">/** 
+     * Deferred extension fields. 
+     * @type {Field[]} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.deferred = [];</span>
+
+    <span class="s2">/** 
+     * Resolved file names of loaded files. 
+     * @type {string[]} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.files = [];</span>
+
+    <span class="s2">/** 
+     * Edition, defaults to proto2 if unspecified. 
+     * @type {string} 
+     * @private 
+     */</span>
+    <span class="s3">this</span><span class="s1">._edition = </span><span class="s0">&quot;proto2&quot;</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Global lookup cache of fully qualified names. 
+     * @type {Object.&lt;string,ReflectionObject&gt;} 
+     * @private 
+     */</span>
+    <span class="s3">this</span><span class="s1">._fullyQualifiedObjects = {};</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Loads a namespace descriptor into a root namespace. 
+ * @param {INamespace} json Namespace descriptor 
+ * @param {Root} [root] Root namespace, defaults to create a new one if omitted 
+ * @returns {Root} Root namespace 
+ */</span>
+<span class="s1">Root.fromJSON = </span><span class="s3">function </span><span class="s1">fromJSON(json, root) {</span>
+    <span class="s3">if </span><span class="s1">(!root)</span>
+        <span class="s1">root = </span><span class="s3">new </span><span class="s1">Root();</span>
+    <span class="s3">if </span><span class="s1">(json.options)</span>
+        <span class="s1">root.setOptions(json.options);</span>
+    <span class="s3">return </span><span class="s1">root.addJSON(json.nested).resolveAll();</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Resolves the path of an imported file, relative to the importing origin. 
+ * This method exists so you can override it with your own logic in case your imports are scattered over multiple directories. 
+ * @function 
+ * @param {string} origin The file name of the importing file 
+ * @param {string} target The file name being imported 
+ * @returns {string|null} Resolved path to `target` or `null` to skip the file 
+ */</span>
+<span class="s1">Root.prototype.resolvePath = util.path.resolve;</span>
+
+<span class="s2">/** 
+ * Fetch content from file path or url 
+ * This method exists so you can override it with your own logic. 
+ * @function 
+ * @param {string} path File path or url 
+ * @param {FetchCallback} callback Callback function 
+ * @returns {undefined} 
+ */</span>
+<span class="s1">Root.prototype.fetch = util.fetch;</span>
+
+<span class="s2">// A symbol-like function to safely signal synchronous loading</span>
+<span class="s2">/* istanbul ignore next */</span>
+<span class="s3">function </span><span class="s1">SYNC() {} </span><span class="s2">// eslint-disable-line no-empty-function</span>
+
+<span class="s2">/** 
+ * Loads one or multiple .proto or preprocessed .json files into this root namespace and calls the callback. 
+ * @param {string|string[]} filename Names of one or multiple files to load 
+ * @param {IParseOptions} options Parse options 
+ * @param {LoadCallback} callback Callback function 
+ * @returns {undefined} 
+ */</span>
+<span class="s1">Root.prototype.load = </span><span class="s3">function </span><span class="s1">load(filename, options, callback) {</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options === </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+        <span class="s1">callback = options;</span>
+        <span class="s1">options = undefined;</span>
+    <span class="s1">}</span>
+    <span class="s3">var </span><span class="s1">self = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s3">if </span><span class="s1">(!callback) {</span>
+        <span class="s3">return </span><span class="s1">util.asPromise(load, self, filename, options);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">var </span><span class="s1">sync = callback === SYNC; </span><span class="s2">// undocumented</span>
+
+    <span class="s2">// Finishes loading by calling the callback (exactly once)</span>
+    <span class="s3">function </span><span class="s1">finish(err, root) {</span>
+        <span class="s2">/* istanbul ignore if */</span>
+        <span class="s3">if </span><span class="s1">(!callback) {</span>
+            <span class="s3">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(sync) {</span>
+            <span class="s3">throw </span><span class="s1">err;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(root) {</span>
+            <span class="s1">root.resolveAll();</span>
+        <span class="s1">}</span>
+        <span class="s3">var </span><span class="s1">cb = callback;</span>
+        <span class="s1">callback = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">cb(err, root);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Bundled definition existence checking</span>
+    <span class="s3">function </span><span class="s1">getBundledFileName(filename) {</span>
+        <span class="s3">var </span><span class="s1">idx = filename.lastIndexOf(</span><span class="s0">&quot;google/protobuf/&quot;</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(idx &gt; -</span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s3">var </span><span class="s1">altname = filename.substring(idx);</span>
+            <span class="s3">if </span><span class="s1">(altname </span><span class="s3">in </span><span class="s1">common) </span><span class="s3">return </span><span class="s1">altname;</span>
+        <span class="s1">}</span>
+        <span class="s3">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Processes a single file</span>
+    <span class="s3">function </span><span class="s1">process(filename, source) {</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s3">if </span><span class="s1">(util.isString(source) &amp;&amp; source.charAt(</span><span class="s4">0</span><span class="s1">) === </span><span class="s0">&quot;{&quot;</span><span class="s1">)</span>
+                <span class="s1">source = JSON.parse(source);</span>
+            <span class="s3">if </span><span class="s1">(!util.isString(source))</span>
+                <span class="s1">self.setOptions(source.options).addJSON(source.nested);</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s1">parse.filename = filename;</span>
+                <span class="s3">var </span><span class="s1">parsed = parse(source, self, options),</span>
+                    <span class="s1">resolved,</span>
+                    <span class="s1">i = </span><span class="s4">0</span><span class="s1">;</span>
+                <span class="s3">if </span><span class="s1">(parsed.imports)</span>
+                    <span class="s3">for </span><span class="s1">(; i &lt; parsed.imports.length; ++i)</span>
+                        <span class="s3">if </span><span class="s1">(resolved = getBundledFileName(parsed.imports[i]) || self.resolvePath(filename, parsed.imports[i]))</span>
+                            <span class="s1">fetch(resolved);</span>
+                <span class="s3">if </span><span class="s1">(parsed.weakImports)</span>
+                    <span class="s3">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; parsed.weakImports.length; ++i)</span>
+                        <span class="s3">if </span><span class="s1">(resolved = getBundledFileName(parsed.weakImports[i]) || self.resolvePath(filename, parsed.weakImports[i]))</span>
+                            <span class="s1">fetch(resolved, </span><span class="s3">true</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s1">finish(err);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!sync &amp;&amp; !queued) {</span>
+            <span class="s1">finish(</span><span class="s3">null</span><span class="s1">, self); </span><span class="s2">// only once anyway</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Fetches a single file</span>
+    <span class="s3">function </span><span class="s1">fetch(filename, weak) {</span>
+        <span class="s1">filename = getBundledFileName(filename) || filename;</span>
+
+        <span class="s2">// Skip if already loaded / attempted</span>
+        <span class="s3">if </span><span class="s1">(self.files.indexOf(filename) &gt; -</span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s3">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">self.files.push(filename);</span>
+
+        <span class="s2">// Shortcut bundled definitions</span>
+        <span class="s3">if </span><span class="s1">(filename </span><span class="s3">in </span><span class="s1">common) {</span>
+            <span class="s3">if </span><span class="s1">(sync) {</span>
+                <span class="s1">process(filename, common[filename]);</span>
+            <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+                <span class="s1">++queued;</span>
+                <span class="s1">setTimeout(</span><span class="s3">function</span><span class="s1">() {</span>
+                    <span class="s1">--queued;</span>
+                    <span class="s1">process(filename, common[filename]);</span>
+                <span class="s1">});</span>
+            <span class="s1">}</span>
+            <span class="s3">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+
+        <span class="s2">// Otherwise fetch from disk or network</span>
+        <span class="s3">if </span><span class="s1">(sync) {</span>
+            <span class="s3">var </span><span class="s1">source;</span>
+            <span class="s3">try </span><span class="s1">{</span>
+                <span class="s1">source = util.fs.readFileSync(filename).toString(</span><span class="s0">&quot;utf8&quot;</span><span class="s1">);</span>
+            <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+                <span class="s3">if </span><span class="s1">(!weak)</span>
+                    <span class="s1">finish(err);</span>
+                <span class="s3">return</span><span class="s1">;</span>
+            <span class="s1">}</span>
+            <span class="s1">process(filename, source);</span>
+        <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">++queued;</span>
+            <span class="s1">self.fetch(filename, </span><span class="s3">function</span><span class="s1">(err, source) {</span>
+                <span class="s1">--queued;</span>
+                <span class="s2">/* istanbul ignore if */</span>
+                <span class="s3">if </span><span class="s1">(!callback) {</span>
+                    <span class="s3">return</span><span class="s1">; </span><span class="s2">// terminated meanwhile</span>
+                <span class="s1">}</span>
+                <span class="s3">if </span><span class="s1">(err) {</span>
+                    <span class="s2">/* istanbul ignore else */</span>
+                    <span class="s3">if </span><span class="s1">(!weak)</span>
+                        <span class="s1">finish(err);</span>
+                    <span class="s3">else if </span><span class="s1">(!queued) </span><span class="s2">// can't be covered reliably</span>
+                        <span class="s1">finish(</span><span class="s3">null</span><span class="s1">, self);</span>
+                    <span class="s3">return</span><span class="s1">;</span>
+                <span class="s1">}</span>
+                <span class="s1">process(filename, source);</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">var </span><span class="s1">queued = </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s2">// Assembling the root namespace doesn't require working type</span>
+    <span class="s2">// references anymore, so we can load everything in parallel</span>
+    <span class="s3">if </span><span class="s1">(util.isString(filename)) {</span>
+        <span class="s1">filename = [ filename ];</span>
+    <span class="s1">}</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">, resolved; i &lt; filename.length; ++i)</span>
+        <span class="s3">if </span><span class="s1">(resolved = self.resolvePath(</span><span class="s0">&quot;&quot;</span><span class="s1">, filename[i]))</span>
+            <span class="s1">fetch(resolved);</span>
+    <span class="s3">if </span><span class="s1">(sync) {</span>
+        <span class="s1">self.resolveAll();</span>
+        <span class="s3">return </span><span class="s1">self;</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(!queued) {</span>
+        <span class="s1">finish(</span><span class="s3">null</span><span class="s1">, self);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">return </span><span class="s1">self;</span>
+<span class="s1">};</span>
+<span class="s2">// function load(filename:string, options:IParseOptions, callback:LoadCallback):undefined</span>
+
+<span class="s2">/** 
+ * Loads one or multiple .proto or preprocessed .json files into this root namespace and calls the callback. 
+ * @function Root#load 
+ * @param {string|string[]} filename Names of one or multiple files to load 
+ * @param {LoadCallback} callback Callback function 
+ * @returns {undefined} 
+ * @variation 2 
+ */</span>
+<span class="s2">// function load(filename:string, callback:LoadCallback):undefined</span>
+
+<span class="s2">/** 
+ * Loads one or multiple .proto or preprocessed .json files into this root namespace and returns a promise. 
+ * @function Root#load 
+ * @param {string|string[]} filename Names of one or multiple files to load 
+ * @param {IParseOptions} [options] Parse options. Defaults to {@link parse.defaults} when omitted. 
+ * @returns {Promise&lt;Root&gt;} Promise 
+ * @variation 3 
+ */</span>
+<span class="s2">// function load(filename:string, [options:IParseOptions]):Promise&lt;Root&gt;</span>
+
+<span class="s2">/** 
+ * Synchronously loads one or multiple .proto or preprocessed .json files into this root namespace (node only). 
+ * @function Root#loadSync 
+ * @param {string|string[]} filename Names of one or multiple files to load 
+ * @param {IParseOptions} [options] Parse options. Defaults to {@link parse.defaults} when omitted. 
+ * @returns {Root} Root namespace 
+ * @throws {Error} If synchronous fetching is not supported (i.e. in browsers) or if a file's syntax is invalid 
+ */</span>
+<span class="s1">Root.prototype.loadSync = </span><span class="s3">function </span><span class="s1">loadSync(filename, options) {</span>
+    <span class="s3">if </span><span class="s1">(!util.isNode)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;not supported&quot;</span><span class="s1">);</span>
+    <span class="s3">return this</span><span class="s1">.load(filename, options, SYNC);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">Root.prototype.resolveAll = </span><span class="s3">function </span><span class="s1">resolveAll() {</span>
+    <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">._needsRecursiveResolve) </span><span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.deferred.length)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;unresolvable extensions: &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">.deferred.map(</span><span class="s3">function</span><span class="s1">(field) {</span>
+            <span class="s3">return </span><span class="s0">&quot;'extend &quot; </span><span class="s1">+ field.extend + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ field.parent.fullName;</span>
+        <span class="s1">}).join(</span><span class="s0">&quot;, &quot;</span><span class="s1">));</span>
+    <span class="s3">return </span><span class="s1">Namespace.prototype.resolveAll.call(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">// only uppercased (and thus conflict-free) children are exposed, see below</span>
+<span class="s3">var </span><span class="s1">exposeRe = /^[A-Z]/;</span>
+
+<span class="s2">/** 
+ * Handles a deferred declaring extension field by creating a sister field to represent it within its extended type. 
+ * @param {Root} root Root instance 
+ * @param {Field} field Declaring extension field witin the declaring type 
+ * @returns {boolean} `true` if successfully added to the extended type, `false` otherwise 
+ * @inner 
+ * @ignore 
+ */</span>
+<span class="s3">function </span><span class="s1">tryHandleExtension(root, field) {</span>
+    <span class="s3">var </span><span class="s1">extendedType = field.parent.lookup(field.extend);</span>
+    <span class="s3">if </span><span class="s1">(extendedType) {</span>
+        <span class="s3">var </span><span class="s1">sisterField = </span><span class="s3">new </span><span class="s1">Field(field.fullName, field.id, field.type, field.rule, undefined, field.options);</span>
+        <span class="s2">//do not allow to extend same field twice to prevent the error</span>
+        <span class="s3">if </span><span class="s1">(extendedType.get(sisterField.name)) {</span>
+            <span class="s3">return true</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">sisterField.declaringField = field;</span>
+        <span class="s1">field.extensionField = sisterField;</span>
+        <span class="s1">extendedType.add(sisterField);</span>
+        <span class="s3">return true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s3">return false</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Called when any object is added to this root or its sub-namespaces. 
+ * @param {ReflectionObject} object Object added 
+ * @returns {undefined} 
+ * @private 
+ */</span>
+<span class="s1">Root.prototype._handleAdd = </span><span class="s3">function </span><span class="s1">_handleAdd(object) {</span>
+    <span class="s3">if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Field) {</span>
+
+        <span class="s3">if </span><span class="s1">(</span><span class="s2">/* an extension field (implies not part of a oneof) */ </span><span class="s1">object.extend !== undefined &amp;&amp; </span><span class="s2">/* not already handled */ </span><span class="s1">!object.extensionField)</span>
+            <span class="s3">if </span><span class="s1">(!tryHandleExtension(</span><span class="s3">this</span><span class="s1">, object))</span>
+                <span class="s3">this</span><span class="s1">.deferred.push(object);</span>
+
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Enum) {</span>
+
+        <span class="s3">if </span><span class="s1">(exposeRe.test(object.name))</span>
+            <span class="s1">object.parent[object.name] = object.values; </span><span class="s2">// expose enum values as property of its parent</span>
+
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(!(object </span><span class="s3">instanceof </span><span class="s1">OneOf)) </span><span class="s2">/* everything else is a namespace */ </span><span class="s1">{</span>
+
+        <span class="s3">if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Type) </span><span class="s2">// Try to handle any deferred extensions</span>
+            <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s3">this</span><span class="s1">.deferred.length;)</span>
+                <span class="s3">if </span><span class="s1">(tryHandleExtension(</span><span class="s3">this</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.deferred[i]))</span>
+                    <span class="s3">this</span><span class="s1">.deferred.splice(i, </span><span class="s4">1</span><span class="s1">);</span>
+                <span class="s3">else</span>
+                    <span class="s1">++i;</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">j = </span><span class="s4">0</span><span class="s1">; j &lt; </span><span class="s2">/* initializes */ </span><span class="s1">object.nestedArray.length; ++j) </span><span class="s2">// recurse into the namespace</span>
+            <span class="s3">this</span><span class="s1">._handleAdd(object._nestedArray[j]);</span>
+        <span class="s3">if </span><span class="s1">(exposeRe.test(object.name))</span>
+            <span class="s1">object.parent[object.name] = object; </span><span class="s2">// expose namespace as property of its parent</span>
+    <span class="s1">}</span>
+
+    <span class="s3">if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Type || object </span><span class="s3">instanceof </span><span class="s1">Enum || object </span><span class="s3">instanceof </span><span class="s1">Field) {</span>
+        <span class="s2">// Only store types and enums for quick lookup during resolve.</span>
+        <span class="s3">this</span><span class="s1">._fullyQualifiedObjects[object.fullName] = object;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// The above also adds uppercased (and thus conflict-free) nested types, services and enums as</span>
+    <span class="s2">// properties of namespaces just like static code does. This allows using a .d.ts generated for</span>
+    <span class="s2">// a static module with reflection-based solutions where the condition is met.</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Called when any object is removed from this root or its sub-namespaces. 
+ * @param {ReflectionObject} object Object removed 
+ * @returns {undefined} 
+ * @private 
+ */</span>
+<span class="s1">Root.prototype._handleRemove = </span><span class="s3">function </span><span class="s1">_handleRemove(object) {</span>
+    <span class="s3">if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Field) {</span>
+
+        <span class="s3">if </span><span class="s1">(</span><span class="s2">/* an extension field */ </span><span class="s1">object.extend !== undefined) {</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s2">/* already handled */ </span><span class="s1">object.extensionField) { </span><span class="s2">// remove its sister field</span>
+                <span class="s1">object.extensionField.parent.remove(object.extensionField);</span>
+                <span class="s1">object.extensionField = </span><span class="s3">null</span><span class="s1">;</span>
+            <span class="s1">} </span><span class="s3">else </span><span class="s1">{ </span><span class="s2">// cancel the extension</span>
+                <span class="s3">var </span><span class="s1">index = </span><span class="s3">this</span><span class="s1">.deferred.indexOf(object);</span>
+                <span class="s2">/* istanbul ignore else */</span>
+                <span class="s3">if </span><span class="s1">(index &gt; -</span><span class="s4">1</span><span class="s1">)</span>
+                    <span class="s3">this</span><span class="s1">.deferred.splice(index, </span><span class="s4">1</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Enum) {</span>
+
+        <span class="s3">if </span><span class="s1">(exposeRe.test(object.name))</span>
+            <span class="s3">delete </span><span class="s1">object.parent[object.name]; </span><span class="s2">// unexpose enum values</span>
+
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(object </span><span class="s3">instanceof </span><span class="s1">Namespace) {</span>
+
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">/* initializes */ </span><span class="s1">object.nestedArray.length; ++i) </span><span class="s2">// recurse into the namespace</span>
+            <span class="s3">this</span><span class="s1">._handleRemove(object._nestedArray[i]);</span>
+
+        <span class="s3">if </span><span class="s1">(exposeRe.test(object.name))</span>
+            <span class="s3">delete </span><span class="s1">object.parent[object.name]; </span><span class="s2">// unexpose namespaces</span>
+
+    <span class="s1">}</span>
+
+    <span class="s3">delete this</span><span class="s1">._fullyQualifiedObjects[object.fullName];</span>
+<span class="s1">};</span>
+
+<span class="s2">// Sets up cyclic dependencies (called in index-light)</span>
+<span class="s1">Root._configure = </span><span class="s3">function</span><span class="s1">(Type_, parse_, common_) {</span>
+    <span class="s1">Type   = Type_;</span>
+    <span class="s1">parse  = parse_;</span>
+    <span class="s1">common = common_;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

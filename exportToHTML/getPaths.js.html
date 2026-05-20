@@ -1,0 +1,103 @@
+<html>
+<head>
+<title>getPaths.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+getPaths.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).FileSystem} FileSystem */</span>
+<span class="s0">/** @typedef {{ paths: string[], segments: string[] }} GetPathsResult */</span>
+
+<span class="s0">/** 
+ * Walk `path` from tip to root, returning every ancestor directory (plus the 
+ * input itself) in `paths`, and each corresponding segment name in `segments`. 
+ * 
+ * The return value may be shared across callers via `getPathsCached` — treat 
+ * it as read-only. Callers that need to mutate (currently only 
+ * `SymlinkPlugin`) should `slice()` the arrays locally before writing. 
+ * @param {string} path path 
+ * @returns {GetPathsResult} paths and segments 
+ */</span>
+<span class="s3">function </span><span class="s1">getPaths(path) {</span>
+	<span class="s3">if </span><span class="s1">(path === </span><span class="s2">&quot;/&quot;</span><span class="s1">) </span><span class="s3">return </span><span class="s1">{ paths: [</span><span class="s2">&quot;/&quot;</span><span class="s1">], segments: [</span><span class="s2">&quot;&quot;</span><span class="s1">] };</span>
+	<span class="s1">const parts = path.split(/(.*?[\\/]+)/);</span>
+	<span class="s1">const paths = [path];</span>
+	<span class="s1">const segments = [parts[parts.length - </span><span class="s4">1</span><span class="s1">]];</span>
+	<span class="s1">let part = parts[parts.length - </span><span class="s4">1</span><span class="s1">];</span>
+	<span class="s1">path = path.slice(</span><span class="s4">0</span><span class="s1">, Math.max(</span><span class="s4">0</span><span class="s1">, path.length - part.length - </span><span class="s4">1</span><span class="s1">));</span>
+	<span class="s3">for </span><span class="s1">(let i = parts.length - </span><span class="s4">2</span><span class="s1">; i &gt; </span><span class="s4">2</span><span class="s1">; i -= </span><span class="s4">2</span><span class="s1">) {</span>
+		<span class="s1">paths.push(path);</span>
+		<span class="s1">part = parts[i];</span>
+		<span class="s1">path = path.slice(</span><span class="s4">0</span><span class="s1">, Math.max(</span><span class="s4">0</span><span class="s1">, path.length - part.length)) || </span><span class="s2">&quot;/&quot;</span><span class="s1">;</span>
+		<span class="s1">segments.push(part.slice(</span><span class="s4">0</span><span class="s1">, -</span><span class="s4">1</span><span class="s1">));</span>
+	<span class="s1">}</span>
+	<span class="s1">[, part] = parts;</span>
+	<span class="s1">segments.push(part);</span>
+	<span class="s1">paths.push(part);</span>
+	<span class="s3">return </span><span class="s1">{</span>
+		<span class="s1">paths,</span>
+		<span class="s1">segments,</span>
+	<span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Per-filesystem memoization of `getPaths`. Kept in a standalone WeakMap 
+ * rather than being hung off `resolver.pathCache` so that adding this cache 
+ * does not change the hidden-class shape of `pathCache` — which is accessed 
+ * on the hot path of every resolve as `resolver.pathCache.{join,dirname, 
+ * basename}.fn(...)`. CodSpeed caught that shape change as a ~1–2% 
+ * instruction-count regression on `cache-predicate`, so we keep pathCache 
+ * shape-stable by owning this cache here instead. 
+ * 
+ * The cache lifetime is tied to the filesystem object (same invariant as 
+ * `_pathCacheByFs` in `Resolver.js`): when the user swaps filesystems the 
+ * entries become unreachable and get collected. 
+ * @type {WeakMap&lt;FileSystem, Map&lt;string, GetPathsResult&gt;&gt;} 
+ */</span>
+<span class="s1">const _getPathsCacheByFs = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * Memoized `getPaths`. The returned object is shared across callers — do 
+ * not mutate the `paths` or `segments` arrays in-place; `slice()` first if 
+ * you need a mutable copy. 
+ * @param {FileSystem} fileSystem filesystem used as the cache namespace 
+ * @param {string} path path 
+ * @returns {GetPathsResult} paths and segments 
+ */</span>
+<span class="s3">function </span><span class="s1">getPathsCached(fileSystem, path) {</span>
+	<span class="s1">let cache = _getPathsCacheByFs.get(fileSystem);</span>
+	<span class="s3">if </span><span class="s1">(cache === undefined) {</span>
+		<span class="s1">cache = </span><span class="s3">new </span><span class="s1">Map();</span>
+		<span class="s1">_getPathsCacheByFs.set(fileSystem, cache);</span>
+	<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+		<span class="s1">const cached = cache.get(path);</span>
+		<span class="s3">if </span><span class="s1">(cached !== undefined) </span><span class="s3">return </span><span class="s1">cached;</span>
+	<span class="s1">}</span>
+	<span class="s1">const result = getPaths(path);</span>
+	<span class="s1">cache.set(path, result);</span>
+	<span class="s3">return </span><span class="s1">result;</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = getPaths;</span>
+<span class="s1">module.exports.getPathsCached = getPathsCached;</span>
+</pre>
+</body>
+</html>

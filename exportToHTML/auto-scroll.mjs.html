@@ -1,0 +1,148 @@
+<html>
+<head>
+<title>auto-scroll.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #2aacb8; font-style: italic;}
+.s4 { color: #56a8f5;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+auto-scroll.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">const </span><span class="s2">threshold = </span><span class="s3">50</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">maxSpeed = </span><span class="s3">25</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">overflowStyles = new </span><span class="s4">Set</span><span class="s1">([</span><span class="s2">&quot;</span><span class="s5">auto</span><span class="s2">&quot;, &quot;</span><span class="s5">scroll</span><span class="s2">&quot;</span><span class="s1">])</span><span class="s2">;</span>
+<span class="s2">// </span><span class="s6">Track initial scroll limits per scrollable element (Bug 1 fix)</span>
+<span class="s0">const </span><span class="s2">initialScrollLimits = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">activeScrollEdge = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">// </span><span class="s6">Track which group element is currently dragging to clear state on end</span>
+<span class="s0">let </span><span class="s2">currentGroupElement = </span><span class="s7">null</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s4">resetAutoScrollState</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">currentGroupElement</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">scrollableAncestor = </span><span class="s4">findScrollableAncestor</span><span class="s1">(</span><span class="s2">currentGroupElement, &quot;</span><span class="s5">y</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">activeScrollEdge.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">initialScrollLimits.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s6">Also try x axis</span>
+        <span class="s0">const </span><span class="s2">scrollableAncestorX = </span><span class="s4">findScrollableAncestor</span><span class="s1">(</span><span class="s2">currentGroupElement, &quot;</span><span class="s5">x</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">scrollableAncestorX &amp;&amp; scrollableAncestorX !== scrollableAncestor</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">activeScrollEdge.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestorX</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">initialScrollLimits.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestorX</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">currentGroupElement = </span><span class="s7">null</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">isScrollableElement</span><span class="s2">(element, axis) {</span>
+    <span class="s0">const </span><span class="s2">style = </span><span class="s4">getComputedStyle</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">overflow = axis === &quot;</span><span class="s5">x</span><span class="s2">&quot; ? style.overflowX : style.overflowY;</span>
+    <span class="s0">const </span><span class="s2">isDocumentScroll = element === document.body ||</span>
+        <span class="s2">element === document.documentElement;</span>
+    <span class="s0">return </span><span class="s2">overflowStyles.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">overflow</span><span class="s1">) </span><span class="s2">|| isDocumentScroll;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">findScrollableAncestor</span><span class="s2">(element, axis) {</span>
+    <span class="s0">let </span><span class="s2">current = element?.parentElement;</span>
+    <span class="s0">while </span><span class="s1">(</span><span class="s2">current</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s4">isScrollableElement</span><span class="s1">(</span><span class="s2">current, axis</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">current;</span>
+        <span class="s2">}</span>
+        <span class="s2">current = current.parentElement;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s7">null</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">getScrollAmount</span><span class="s2">(pointerPosition, scrollElement, axis) {</span>
+    <span class="s0">const </span><span class="s2">rect = scrollElement.</span><span class="s4">getBoundingClientRect</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">start = axis === &quot;</span><span class="s5">x</span><span class="s2">&quot; ? Math.</span><span class="s4">max</span><span class="s1">(</span><span class="s3">0</span><span class="s2">, rect.left</span><span class="s1">) </span><span class="s2">: Math.</span><span class="s4">max</span><span class="s1">(</span><span class="s3">0</span><span class="s2">, rect.top</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">end = axis === &quot;</span><span class="s5">x</span><span class="s2">&quot; ? Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">window.innerWidth, rect.right</span><span class="s1">) </span><span class="s2">: Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">window.innerHeight, rect.bottom</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">distanceFromStart = pointerPosition - start;</span>
+    <span class="s0">const </span><span class="s2">distanceFromEnd = end - pointerPosition;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">distanceFromStart &lt; threshold</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">intensity = </span><span class="s3">1 </span><span class="s2">- distanceFromStart / threshold;</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">amount</span><span class="s2">: -maxSpeed * intensity * intensity, </span><span class="s1">edge</span><span class="s2">: &quot;</span><span class="s5">start</span><span class="s2">&quot; };</span>
+    <span class="s2">}</span>
+    <span class="s0">else if </span><span class="s1">(</span><span class="s2">distanceFromEnd &lt; threshold</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">intensity = </span><span class="s3">1 </span><span class="s2">- distanceFromEnd / threshold;</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">amount</span><span class="s2">: maxSpeed * intensity * intensity, </span><span class="s1">edge</span><span class="s2">: &quot;</span><span class="s5">end</span><span class="s2">&quot; };</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{ </span><span class="s1">amount</span><span class="s2">: </span><span class="s3">0</span><span class="s2">, </span><span class="s1">edge</span><span class="s2">: </span><span class="s7">null </span><span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">autoScrollIfNeeded</span><span class="s2">(groupElement, pointerPosition, axis, velocity) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!groupElement</span><span class="s1">)</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s6">Track the group element for cleanup</span>
+    <span class="s2">currentGroupElement = groupElement;</span>
+    <span class="s0">const </span><span class="s2">scrollableAncestor = </span><span class="s4">findScrollableAncestor</span><span class="s1">(</span><span class="s2">groupElement, axis</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!scrollableAncestor</span><span class="s1">)</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s6">Convert pointer position from page coordinates to viewport coordinates.</span>
+    <span class="s2">// </span><span class="s6">The gesture system uses pageX/pageY but getBoundingClientRect() returns</span>
+    <span class="s2">// </span><span class="s6">viewport-relative coordinates, so we need to account for page scroll.</span>
+    <span class="s0">const </span><span class="s2">viewportPointerPosition = pointerPosition - </span><span class="s1">(</span><span class="s2">axis === &quot;</span><span class="s5">x</span><span class="s2">&quot; ? window.scrollX : window.scrollY</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">{ amount: scrollAmount, edge } = </span><span class="s4">getScrollAmount</span><span class="s1">(</span><span class="s2">viewportPointerPosition, scrollableAncestor, axis</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s6">If not in any threshold zone, clear all state</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">edge === </span><span class="s7">null</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">activeScrollEdge.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">initialScrollLimits.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">currentActiveEdge = activeScrollEdge.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">isDocumentScroll = scrollableAncestor === document.body ||</span>
+        <span class="s2">scrollableAncestor === document.documentElement;</span>
+    <span class="s2">// </span><span class="s6">If not currently scrolling this edge, check velocity to see if we should start</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">currentActiveEdge !== edge</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s6">Only start scrolling if velocity is towards the edge</span>
+        <span class="s0">const </span><span class="s2">shouldStart = </span><span class="s1">(</span><span class="s2">edge === &quot;</span><span class="s5">start</span><span class="s2">&quot; &amp;&amp; velocity &lt; </span><span class="s3">0</span><span class="s1">) </span><span class="s2">||</span>
+            <span class="s1">(</span><span class="s2">edge === &quot;</span><span class="s5">end</span><span class="s2">&quot; &amp;&amp; velocity &gt; </span><span class="s3">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!shouldStart</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s6">Activate this edge</span>
+        <span class="s2">activeScrollEdge.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">scrollableAncestor, edge</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s6">Record initial scroll limit (prevents infinite scroll)</span>
+        <span class="s0">const </span><span class="s2">maxScroll = axis === &quot;</span><span class="s5">x</span><span class="s2">&quot;</span>
+            <span class="s2">? scrollableAncestor.scrollWidth - </span><span class="s1">(</span><span class="s2">isDocumentScroll ? window.innerWidth : scrollableAncestor.clientWidth</span><span class="s1">)</span>
+            <span class="s2">: scrollableAncestor.scrollHeight - </span><span class="s1">(</span><span class="s2">isDocumentScroll ? window.innerHeight : scrollableAncestor.clientHeight</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">initialScrollLimits.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">scrollableAncestor, maxScroll</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">// </span><span class="s6">Cap scrolling at initial limit (prevents infinite scroll)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">scrollAmount &gt; </span><span class="s3">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">initialLimit = initialScrollLimits.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">scrollableAncestor</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">currentScroll = axis === &quot;</span><span class="s5">x</span><span class="s2">&quot;</span>
+            <span class="s2">? </span><span class="s1">(</span><span class="s2">isDocumentScroll ? window.scrollX : scrollableAncestor.scrollLeft</span><span class="s1">)</span>
+            <span class="s2">: </span><span class="s1">(</span><span class="s2">isDocumentScroll ? window.scrollY : scrollableAncestor.scrollTop</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">currentScroll &gt;= initialLimit</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">// </span><span class="s6">Apply scroll</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">axis === &quot;</span><span class="s5">x</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isDocumentScroll</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">window.</span><span class="s4">scrollBy</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">left</span><span class="s2">: scrollAmount }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">scrollableAncestor.scrollLeft += scrollAmount;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">else </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isDocumentScroll</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">window.</span><span class="s4">scrollBy</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">top</span><span class="s2">: scrollAmount }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">scrollableAncestor.scrollTop += scrollAmount;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ autoScrollIfNeeded, resetAutoScrollState };</span>
+<span class="s2">//</span><span class="s6"># sourceMappingURL=auto-scroll.mjs.map</span>
+</pre>
+</body>
+</html>

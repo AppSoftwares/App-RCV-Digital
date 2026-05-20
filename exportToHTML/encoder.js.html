@@ -1,0 +1,121 @@
+<html>
+<head>
+<title>encoder.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+encoder.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = encoder;</span>
+
+<span class="s2">var </span><span class="s1">Enum     = require(</span><span class="s0">&quot;./enum&quot;</span><span class="s1">),</span>
+    <span class="s1">types    = require(</span><span class="s0">&quot;./types&quot;</span><span class="s1">),</span>
+    <span class="s1">util     = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * Generates a partial message type encoder. 
+ * @param {Codegen} gen Codegen instance 
+ * @param {Field} field Reflected field 
+ * @param {number} fieldIndex Field index 
+ * @param {string} ref Variable reference 
+ * @returns {Codegen} Codegen instance 
+ * @ignore 
+ */</span>
+<span class="s2">function </span><span class="s1">genTypePartial(gen, field, fieldIndex, ref) {</span>
+    <span class="s2">return </span><span class="s1">field.delimited</span>
+        <span class="s1">? gen(</span><span class="s0">&quot;types[%i].encode(%s,w.uint32(%i)).uint32(%i)&quot;</span><span class="s1">, fieldIndex, ref, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| </span><span class="s4">3</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| </span><span class="s4">4</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">: gen(</span><span class="s0">&quot;types[%i].encode(%s,w.uint32(%i).fork()).ldelim()&quot;</span><span class="s1">, fieldIndex, ref, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| </span><span class="s4">2</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Generates an encoder specific to the specified message type. 
+ * @param {Type} mtype Message type 
+ * @returns {Codegen} Codegen instance 
+ */</span>
+<span class="s2">function </span><span class="s1">encoder(mtype) {</span>
+    <span class="s3">/* eslint-disable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+    <span class="s2">var </span><span class="s1">gen = util.codegen([</span><span class="s0">&quot;m&quot;</span><span class="s1">, </span><span class="s0">&quot;w&quot;</span><span class="s1">], mtype.name + </span><span class="s0">&quot;$encode&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(!w)&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;w=Writer.create()&quot;</span><span class="s1">);</span>
+
+    <span class="s2">var </span><span class="s1">i, ref;</span>
+
+    <span class="s3">// &quot;when a message is serialized its known fields should be written sequentially by field number&quot;</span>
+    <span class="s2">var </span><span class="s1">fields = </span><span class="s3">/* initializes */ </span><span class="s1">mtype.fieldsArray.slice().sort(util.compareFieldsById);</span>
+
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; fields.length; ++i) {</span>
+        <span class="s2">var </span><span class="s1">field    = fields[i].resolve(),</span>
+            <span class="s1">index    = mtype._fieldsArray.indexOf(field),</span>
+            <span class="s1">type     = field.resolvedType </span><span class="s2">instanceof </span><span class="s1">Enum ? </span><span class="s0">&quot;int32&quot; </span><span class="s1">: field.type,</span>
+            <span class="s1">wireType = types.basic[type];</span>
+            <span class="s1">ref      = </span><span class="s0">&quot;m&quot; </span><span class="s1">+ util.safeProp(field.name);</span>
+
+        <span class="s3">// Map fields</span>
+        <span class="s2">if </span><span class="s1">(field.map) {</span>
+            <span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(%s!=null&amp;&amp;Object.hasOwnProperty.call(m,%j)){&quot;</span><span class="s1">, ref, field.name) </span><span class="s3">// !== undefined &amp;&amp; !== null</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var ks=Object.keys(%s),i=0;i&lt;ks.length;++i){&quot;</span><span class="s1">, ref)</span>
+            <span class="s1">(</span><span class="s0">&quot;w.uint32(%i).fork().uint32(%i).%s(ks[i])&quot;</span><span class="s1">, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| </span><span class="s4">2</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">, </span><span class="s4">8 </span><span class="s1">| types.mapKey[field.keyType], field.keyType);</span>
+            <span class="s2">if </span><span class="s1">(wireType === undefined) gen</span>
+            <span class="s1">(</span><span class="s0">&quot;types[%i].encode(%s[ks[i]],w.uint32(18).fork()).ldelim().ldelim()&quot;</span><span class="s1">, index, ref); </span><span class="s3">// can't be groups</span>
+            <span class="s2">else </span><span class="s1">gen</span>
+            <span class="s1">(</span><span class="s0">&quot;.uint32(%i).%s(%s[ks[i]]).ldelim()&quot;</span><span class="s1">, </span><span class="s4">16 </span><span class="s1">| wireType, type, ref);</span>
+            <span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+
+            <span class="s3">// Repeated fields</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(field.repeated) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(%s!=null&amp;&amp;%s.length){&quot;</span><span class="s1">, ref, ref); </span><span class="s3">// !== undefined &amp;&amp; !== null</span>
+
+            <span class="s3">// Packed repeated</span>
+            <span class="s2">if </span><span class="s1">(field.packed &amp;&amp; types.packed[type] !== undefined) { gen</span>
+
+        <span class="s1">(</span><span class="s0">&quot;w.uint32(%i).fork()&quot;</span><span class="s1">, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| </span><span class="s4">2</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var i=0;i&lt;%s.length;++i)&quot;</span><span class="s1">, ref)</span>
+            <span class="s1">(</span><span class="s0">&quot;w.%s(%s[i])&quot;</span><span class="s1">, type, ref)</span>
+        <span class="s1">(</span><span class="s0">&quot;w.ldelim()&quot;</span><span class="s1">);</span>
+
+            <span class="s3">// Non-packed</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{ gen</span>
+
+        <span class="s1">(</span><span class="s0">&quot;for(var i=0;i&lt;%s.length;++i)&quot;</span><span class="s1">, ref);</span>
+                <span class="s2">if </span><span class="s1">(wireType === undefined)</span>
+            <span class="s1">genTypePartial(gen, field, index, ref + </span><span class="s0">&quot;[i]&quot;</span><span class="s1">);</span>
+                <span class="s2">else </span><span class="s1">gen</span>
+            <span class="s1">(</span><span class="s0">&quot;w.uint32(%i).%s(%s[i])&quot;</span><span class="s1">, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| wireType) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">, type, ref);</span>
+
+            <span class="s1">} gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+
+        <span class="s3">// Non-repeated</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s2">if </span><span class="s1">(field.optional) gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(%s!=null&amp;&amp;Object.hasOwnProperty.call(m,%j))&quot;</span><span class="s1">, ref, field.name); </span><span class="s3">// !== undefined &amp;&amp; !== null</span>
+
+            <span class="s2">if </span><span class="s1">(wireType === undefined)</span>
+        <span class="s1">genTypePartial(gen, field, index, ref);</span>
+            <span class="s2">else </span><span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;w.uint32(%i).%s(%s)&quot;</span><span class="s1">, (field.id &lt;&lt; </span><span class="s4">3 </span><span class="s1">| wireType) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">, type, ref);</span>
+
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;return w&quot;</span><span class="s1">);</span>
+    <span class="s3">/* eslint-enable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

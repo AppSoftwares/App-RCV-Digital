@@ -1,0 +1,282 @@
+<html>
+<head>
+<title>caching.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+caching.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.assertSimpleType = assertSimpleType;</span>
+<span class="s1">exports.makeStrongCache = makeStrongCache;</span>
+<span class="s1">exports.makeStrongCacheSync = makeStrongCacheSync;</span>
+<span class="s1">exports.makeWeakCache = makeWeakCache;</span>
+<span class="s1">exports.makeWeakCacheSync = makeWeakCacheSync;</span>
+<span class="s2">function </span><span class="s1">_gensync() {</span>
+  <span class="s1">const data = require(</span><span class="s0">&quot;gensync&quot;</span><span class="s1">);</span>
+  <span class="s1">_gensync = </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">return </span><span class="s1">data;</span>
+  <span class="s1">};</span>
+  <span class="s2">return </span><span class="s1">data;</span>
+<span class="s1">}</span>
+<span class="s2">var </span><span class="s1">_async = require(</span><span class="s0">&quot;../gensync-utils/async.js&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_util = require(</span><span class="s0">&quot;./util.js&quot;</span><span class="s1">);</span>
+<span class="s1">const synchronize = gen =&gt; {</span>
+  <span class="s2">return </span><span class="s1">_gensync()(gen).sync;</span>
+<span class="s1">};</span>
+<span class="s2">function</span><span class="s1">* genTrue() {</span>
+  <span class="s2">return true</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeWeakCache(handler) {</span>
+  <span class="s2">return </span><span class="s1">makeCachedFunction(WeakMap, handler);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeWeakCacheSync(handler) {</span>
+  <span class="s2">return </span><span class="s1">synchronize(makeWeakCache(handler));</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeStrongCache(handler) {</span>
+  <span class="s2">return </span><span class="s1">makeCachedFunction(Map, handler);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeStrongCacheSync(handler) {</span>
+  <span class="s2">return </span><span class="s1">synchronize(makeStrongCache(handler));</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeCachedFunction(CallCache, handler) {</span>
+  <span class="s1">const callCacheSync = </span><span class="s2">new </span><span class="s1">CallCache();</span>
+  <span class="s1">const callCacheAsync = </span><span class="s2">new </span><span class="s1">CallCache();</span>
+  <span class="s1">const futureCache = </span><span class="s2">new </span><span class="s1">CallCache();</span>
+  <span class="s2">return function</span><span class="s1">* cachedFunction(arg, data) {</span>
+    <span class="s1">const asyncContext = yield* (</span><span class="s3">0</span><span class="s1">, _async.isAsync)();</span>
+    <span class="s1">const callCache = asyncContext ? callCacheAsync : callCacheSync;</span>
+    <span class="s1">const cached = yield* getCachedValueOrWait(asyncContext, callCache, futureCache, arg, data);</span>
+    <span class="s2">if </span><span class="s1">(cached.valid) </span><span class="s2">return </span><span class="s1">cached.value;</span>
+    <span class="s1">const cache = </span><span class="s2">new </span><span class="s1">CacheConfigurator(data);</span>
+    <span class="s1">const handlerResult = handler(arg, cache);</span>
+    <span class="s1">let finishLock;</span>
+    <span class="s1">let value;</span>
+    <span class="s2">if </span><span class="s1">((</span><span class="s3">0</span><span class="s1">, _util.isIterableIterator)(handlerResult)) {</span>
+      <span class="s1">value = yield* (</span><span class="s3">0</span><span class="s1">, _async.onFirstPause)(handlerResult, () =&gt; {</span>
+        <span class="s1">finishLock = setupAsyncLocks(cache, futureCache, arg);</span>
+      <span class="s1">});</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">value = handlerResult;</span>
+    <span class="s1">}</span>
+    <span class="s1">updateFunctionCache(callCache, cache, arg, value);</span>
+    <span class="s2">if </span><span class="s1">(finishLock) {</span>
+      <span class="s1">futureCache.</span><span class="s2">delete</span><span class="s1">(arg);</span>
+      <span class="s1">finishLock.release(value);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">value;</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function</span><span class="s1">* getCachedValue(cache, arg, data) {</span>
+  <span class="s1">const cachedValue = cache.get(arg);</span>
+  <span class="s2">if </span><span class="s1">(cachedValue) {</span>
+    <span class="s2">for </span><span class="s1">(const {</span>
+      <span class="s1">value,</span>
+      <span class="s1">valid</span>
+    <span class="s1">} of cachedValue) {</span>
+      <span class="s2">if </span><span class="s1">(yield* valid(data)) </span><span class="s2">return </span><span class="s1">{</span>
+        <span class="s1">valid: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">value</span>
+      <span class="s1">};</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">valid: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">value: </span><span class="s2">null</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function</span><span class="s1">* getCachedValueOrWait(asyncContext, callCache, futureCache, arg, data) {</span>
+  <span class="s1">const cached = yield* getCachedValue(callCache, arg, data);</span>
+  <span class="s2">if </span><span class="s1">(cached.valid) {</span>
+    <span class="s2">return </span><span class="s1">cached;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(asyncContext) {</span>
+    <span class="s1">const cached = yield* getCachedValue(futureCache, arg, data);</span>
+    <span class="s2">if </span><span class="s1">(cached.valid) {</span>
+      <span class="s1">const value = yield* (</span><span class="s3">0</span><span class="s1">, _async.waitFor)(cached.value.promise);</span>
+      <span class="s2">return </span><span class="s1">{</span>
+        <span class="s1">valid: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">value</span>
+      <span class="s1">};</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">valid: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">value: </span><span class="s2">null</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">setupAsyncLocks(config, futureCache, arg) {</span>
+  <span class="s1">const finishLock = </span><span class="s2">new </span><span class="s1">Lock();</span>
+  <span class="s1">updateFunctionCache(futureCache, config, arg, finishLock);</span>
+  <span class="s2">return </span><span class="s1">finishLock;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">updateFunctionCache(cache, config, arg, value) {</span>
+  <span class="s2">if </span><span class="s1">(!config.configured()) config.forever();</span>
+  <span class="s1">let cachedValue = cache.get(arg);</span>
+  <span class="s1">config.deactivate();</span>
+  <span class="s2">switch </span><span class="s1">(config.mode()) {</span>
+    <span class="s2">case </span><span class="s0">&quot;forever&quot;</span><span class="s1">:</span>
+      <span class="s1">cachedValue = [{</span>
+        <span class="s1">value,</span>
+        <span class="s1">valid: genTrue</span>
+      <span class="s1">}];</span>
+      <span class="s1">cache.set(arg, cachedValue);</span>
+      <span class="s2">break</span><span class="s1">;</span>
+    <span class="s2">case </span><span class="s0">&quot;invalidate&quot;</span><span class="s1">:</span>
+      <span class="s1">cachedValue = [{</span>
+        <span class="s1">value,</span>
+        <span class="s1">valid: config.validator()</span>
+      <span class="s1">}];</span>
+      <span class="s1">cache.set(arg, cachedValue);</span>
+      <span class="s2">break</span><span class="s1">;</span>
+    <span class="s2">case </span><span class="s0">&quot;valid&quot;</span><span class="s1">:</span>
+      <span class="s2">if </span><span class="s1">(cachedValue) {</span>
+        <span class="s1">cachedValue.push({</span>
+          <span class="s1">value,</span>
+          <span class="s1">valid: config.validator()</span>
+        <span class="s1">});</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">cachedValue = [{</span>
+          <span class="s1">value,</span>
+          <span class="s1">valid: config.validator()</span>
+        <span class="s1">}];</span>
+        <span class="s1">cache.set(arg, cachedValue);</span>
+      <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">class CacheConfigurator {</span>
+  <span class="s1">constructor(data) {</span>
+    <span class="s2">this</span><span class="s1">._active = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._never = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._forever = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._invalidate = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._configured = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._pairs = [];</span>
+    <span class="s2">this</span><span class="s1">._data = </span><span class="s2">void </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._data = data;</span>
+  <span class="s1">}</span>
+  <span class="s1">simple() {</span>
+    <span class="s2">return </span><span class="s1">makeSimpleConfigurator(</span><span class="s2">this</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">mode() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._never) </span><span class="s2">return </span><span class="s0">&quot;never&quot;</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._forever) </span><span class="s2">return </span><span class="s0">&quot;forever&quot;</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._invalidate) </span><span class="s2">return </span><span class="s0">&quot;invalidate&quot;</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s0">&quot;valid&quot;</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">forever() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">._active) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Cannot change caching after evaluation has completed.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._never) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Caching has already been configured with .never()&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">._forever = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._configured = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">never() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">._active) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Cannot change caching after evaluation has completed.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._forever) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Caching has already been configured with .forever()&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">._never = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._configured = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">using(handler) {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">._active) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Cannot change caching after evaluation has completed.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._never || </span><span class="s2">this</span><span class="s1">._forever) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Caching has already been configured with .never or .forever()&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">._configured = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">const key = handler(</span><span class="s2">this</span><span class="s1">._data);</span>
+    <span class="s1">const fn = (</span><span class="s3">0</span><span class="s1">, _async.maybeAsync)(handler, `You appear to be using an async cache handler, but Babel has been called synchronously`);</span>
+    <span class="s2">if </span><span class="s1">((</span><span class="s3">0</span><span class="s1">, _async.isThenable)(key)) {</span>
+      <span class="s2">return </span><span class="s1">key.then(key =&gt; {</span>
+        <span class="s2">this</span><span class="s1">._pairs.push([key, fn]);</span>
+        <span class="s2">return </span><span class="s1">key;</span>
+      <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">._pairs.push([key, fn]);</span>
+    <span class="s2">return </span><span class="s1">key;</span>
+  <span class="s1">}</span>
+  <span class="s1">invalidate(handler) {</span>
+    <span class="s2">this</span><span class="s1">._invalidate = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">.using(handler);</span>
+  <span class="s1">}</span>
+  <span class="s1">validator() {</span>
+    <span class="s1">const pairs = </span><span class="s2">this</span><span class="s1">._pairs;</span>
+    <span class="s2">return function</span><span class="s1">* (data) {</span>
+      <span class="s2">for </span><span class="s1">(const [key, fn] of pairs) {</span>
+        <span class="s2">if </span><span class="s1">(key !== (yield* fn(data))) </span><span class="s2">return false</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s2">return true</span><span class="s1">;</span>
+    <span class="s1">};</span>
+  <span class="s1">}</span>
+  <span class="s1">deactivate() {</span>
+    <span class="s2">this</span><span class="s1">._active = </span><span class="s2">false</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">configured() {</span>
+    <span class="s2">return this</span><span class="s1">._configured;</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">makeSimpleConfigurator(cache) {</span>
+  <span class="s2">function </span><span class="s1">cacheFn(val) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">val === </span><span class="s0">&quot;boolean&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(val) cache.forever();</span><span class="s2">else </span><span class="s1">cache.never();</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">cache.using(() =&gt; assertSimpleType(val()));</span>
+  <span class="s1">}</span>
+  <span class="s1">cacheFn.forever = () =&gt; cache.forever();</span>
+  <span class="s1">cacheFn.never = () =&gt; cache.never();</span>
+  <span class="s1">cacheFn.using = cb =&gt; cache.using(() =&gt; assertSimpleType(cb()));</span>
+  <span class="s1">cacheFn.invalidate = cb =&gt; cache.invalidate(() =&gt; assertSimpleType(cb()));</span>
+  <span class="s2">return </span><span class="s1">cacheFn;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">assertSimpleType(value) {</span>
+  <span class="s2">if </span><span class="s1">((</span><span class="s3">0</span><span class="s1">, _async.isThenable)(value)) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(`You appear to be using an async cache handler, ` + `which your current version of Babel does not support. ` + `We may add support </span><span class="s2">for this in </span><span class="s1">the future, ` + `but </span><span class="s2">if </span><span class="s1">you</span><span class="s0">'re on the most recent version of @babel/core and still ` + `seeing this error, then you'</span><span class="s1">ll need to synchronously handle your caching logic.`);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(value != </span><span class="s2">null </span><span class="s1">&amp;&amp; </span><span class="s2">typeof </span><span class="s1">value !== </span><span class="s0">&quot;string&quot; </span><span class="s1">&amp;&amp; </span><span class="s2">typeof </span><span class="s1">value !== </span><span class="s0">&quot;boolean&quot; </span><span class="s1">&amp;&amp; </span><span class="s2">typeof </span><span class="s1">value !== </span><span class="s0">&quot;number&quot;</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Cache keys must be either string, boolean, number, null, or undefined.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">value;</span>
+<span class="s1">}</span>
+<span class="s1">class Lock {</span>
+  <span class="s1">constructor() {</span>
+    <span class="s2">this</span><span class="s1">.released = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.promise = </span><span class="s2">void </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._resolve = </span><span class="s2">void </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.promise = </span><span class="s2">new </span><span class="s1">Promise(resolve =&gt; {</span>
+      <span class="s2">this</span><span class="s1">._resolve = resolve;</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s1">release(value) {</span>
+    <span class="s2">this</span><span class="s1">.released = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">._resolve(value);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s3">0 </span><span class="s1">&amp;&amp; </span><span class="s3">0</span><span class="s1">;</span>
+
+<span class="s4">//# sourceMappingURL=caching.js.map</span>
+</pre>
+</body>
+</html>

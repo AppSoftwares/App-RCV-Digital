@@ -1,0 +1,110 @@
+<html>
+<head>
+<title>presenceAdapter.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+presenceAdapter.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import { Presence } from </span><span class="s1">'@supabase/phoenix'</span><span class="s0">;</span>
+<span class="s0">export </span><span class="s2">default </span><span class="s0">class PresenceAdapter {</span>
+    <span class="s0">constructor(channel, opts) {</span>
+        <span class="s0">const phoenixOptions = phoenixPresenceOptions(opts);</span>
+        <span class="s2">this</span><span class="s0">.presence = </span><span class="s2">new </span><span class="s0">Presence(channel.getChannel(), phoenixOptions);</span>
+        <span class="s2">this</span><span class="s0">.presence.onJoin((key, currentPresence, newPresence) =&gt; {</span>
+            <span class="s0">const onJoinPayload = PresenceAdapter.onJoinPayload(key, currentPresence, newPresence);</span>
+            <span class="s0">channel.getChannel().trigger(</span><span class="s1">'presence'</span><span class="s0">, onJoinPayload);</span>
+        <span class="s0">});</span>
+        <span class="s2">this</span><span class="s0">.presence.onLeave((key, currentPresence, leftPresence) =&gt; {</span>
+            <span class="s0">const onLeavePayload = PresenceAdapter.onLeavePayload(key, currentPresence, leftPresence);</span>
+            <span class="s0">channel.getChannel().trigger(</span><span class="s1">'presence'</span><span class="s0">, onLeavePayload);</span>
+        <span class="s0">});</span>
+        <span class="s2">this</span><span class="s0">.presence.onSync(() =&gt; {</span>
+            <span class="s0">channel.getChannel().trigger(</span><span class="s1">'presence'</span><span class="s0">, { event: </span><span class="s1">'sync' </span><span class="s0">});</span>
+        <span class="s0">});</span>
+    <span class="s0">}</span>
+    <span class="s0">get state() {</span>
+        <span class="s2">return </span><span class="s0">PresenceAdapter.transformState(</span><span class="s2">this</span><span class="s0">.presence.state);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * @private 
+     * Remove 'metas' key 
+     * Change 'phx_ref' to 'presence_ref' 
+     * Remove 'phx_ref' and 'phx_ref_prev' 
+     * 
+     * @example Transform state 
+     * // returns { 
+     *  abc123: [ 
+     *    { presence_ref: '2', user_id: 1 }, 
+     *    { presence_ref: '3', user_id: 2 } 
+     *  ] 
+     * } 
+     * RealtimePresence.transformState({ 
+     *  abc123: { 
+     *    metas: [ 
+     *      { phx_ref: '2', phx_ref_prev: '1' user_id: 1 }, 
+     *      { phx_ref: '3', user_id: 2 } 
+     *    ] 
+     *  } 
+     * }) 
+     * 
+     */</span>
+    <span class="s0">static transformState(state) {</span>
+        <span class="s0">state = cloneState(state);</span>
+        <span class="s2">return </span><span class="s0">Object.getOwnPropertyNames(state).reduce((newState, key) =&gt; {</span>
+            <span class="s0">const presences = state[key];</span>
+            <span class="s0">newState[key] = transformState(presences);</span>
+            <span class="s2">return </span><span class="s0">newState;</span>
+        <span class="s0">}, {});</span>
+    <span class="s0">}</span>
+    <span class="s0">static onJoinPayload(key, currentPresence, newPresence) {</span>
+        <span class="s0">const currentPresences = parseCurrentPresences(currentPresence);</span>
+        <span class="s0">const newPresences = transformState(newPresence);</span>
+        <span class="s2">return </span><span class="s0">{</span>
+            <span class="s0">event: </span><span class="s1">'join'</span><span class="s0">,</span>
+            <span class="s0">key,</span>
+            <span class="s0">currentPresences,</span>
+            <span class="s0">newPresences,</span>
+        <span class="s0">};</span>
+    <span class="s0">}</span>
+    <span class="s0">static onLeavePayload(key, currentPresence, leftPresence) {</span>
+        <span class="s0">const currentPresences = parseCurrentPresences(currentPresence);</span>
+        <span class="s0">const leftPresences = transformState(leftPresence);</span>
+        <span class="s2">return </span><span class="s0">{</span>
+            <span class="s0">event: </span><span class="s1">'leave'</span><span class="s0">,</span>
+            <span class="s0">key,</span>
+            <span class="s0">currentPresences,</span>
+            <span class="s0">leftPresences,</span>
+        <span class="s0">};</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">transformState(presences) {</span>
+    <span class="s2">return </span><span class="s0">presences.metas.map((presence) =&gt; {</span>
+        <span class="s0">presence[</span><span class="s1">'presence_ref'</span><span class="s0">] = presence[</span><span class="s1">'phx_ref'</span><span class="s0">];</span>
+        <span class="s2">delete </span><span class="s0">presence[</span><span class="s1">'phx_ref'</span><span class="s0">];</span>
+        <span class="s2">delete </span><span class="s0">presence[</span><span class="s1">'phx_ref_prev'</span><span class="s0">];</span>
+        <span class="s2">return </span><span class="s0">presence;</span>
+    <span class="s0">});</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">cloneState(state) {</span>
+    <span class="s2">return </span><span class="s0">JSON.parse(JSON.stringify(state));</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">phoenixPresenceOptions(opts) {</span>
+    <span class="s2">return </span><span class="s0">(opts === </span><span class="s2">null </span><span class="s0">|| opts === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: opts.events) &amp;&amp; { events: opts.events };</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">parseCurrentPresences(currentPresences) {</span>
+    <span class="s2">return </span><span class="s0">(currentPresences === </span><span class="s2">null </span><span class="s0">|| currentPresences === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: currentPresences.metas) ? transformState(currentPresences) : [];</span>
+<span class="s0">}</span>
+<span class="s3">//# sourceMappingURL=presenceAdapter.js.map</span></pre>
+</body>
+</html>

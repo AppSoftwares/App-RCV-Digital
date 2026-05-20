@@ -1,0 +1,447 @@
+<html>
+<head>
+<title>reader.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+reader.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Reader;</span>
+
+<span class="s2">var </span><span class="s1">util      = require(</span><span class="s0">&quot;./util/minimal&quot;</span><span class="s1">);</span>
+
+<span class="s2">var </span><span class="s1">BufferReader; </span><span class="s3">// cyclic</span>
+
+<span class="s2">var </span><span class="s1">LongBits  = util.LongBits,</span>
+    <span class="s1">utf8      = util.utf8;</span>
+
+<span class="s3">/* istanbul ignore next */</span>
+<span class="s2">function </span><span class="s1">indexOutOfRange(reader, writeLength) {</span>
+    <span class="s2">return </span><span class="s1">RangeError(</span><span class="s0">&quot;index out of range: &quot; </span><span class="s1">+ reader.pos + </span><span class="s0">&quot; + &quot; </span><span class="s1">+ (writeLength || </span><span class="s4">1</span><span class="s1">) + </span><span class="s0">&quot; &gt; &quot; </span><span class="s1">+ reader.len);</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Constructs a new reader instance using the specified buffer. 
+ * @classdesc Wire format reader using `Uint8Array` if available, otherwise `Array`. 
+ * @constructor 
+ * @param {Uint8Array} buffer Buffer to read from 
+ */</span>
+<span class="s2">function </span><span class="s1">Reader(buffer) {</span>
+
+    <span class="s3">/** 
+     * Read buffer. 
+     * @type {Uint8Array} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.buf = buffer;</span>
+
+    <span class="s3">/** 
+     * Read buffer position. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.pos = </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s3">/** 
+     * Read buffer length. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.len = buffer.length;</span>
+<span class="s1">}</span>
+
+<span class="s2">var </span><span class="s1">create_array = </span><span class="s2">typeof </span><span class="s1">Uint8Array !== </span><span class="s0">&quot;undefined&quot;</span>
+    <span class="s1">? </span><span class="s2">function </span><span class="s1">create_typed_array(buffer) {</span>
+        <span class="s2">if </span><span class="s1">(buffer </span><span class="s2">instanceof </span><span class="s1">Uint8Array || Array.isArray(buffer))</span>
+            <span class="s2">return new </span><span class="s1">Reader(buffer);</span>
+        <span class="s2">throw </span><span class="s1">Error(</span><span class="s0">&quot;illegal buffer&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">/* istanbul ignore next */</span>
+    <span class="s1">: </span><span class="s2">function </span><span class="s1">create_array(buffer) {</span>
+        <span class="s2">if </span><span class="s1">(Array.isArray(buffer))</span>
+            <span class="s2">return new </span><span class="s1">Reader(buffer);</span>
+        <span class="s2">throw </span><span class="s1">Error(</span><span class="s0">&quot;illegal buffer&quot;</span><span class="s1">);</span>
+    <span class="s1">};</span>
+
+<span class="s2">var </span><span class="s1">create = </span><span class="s2">function </span><span class="s1">create() {</span>
+    <span class="s2">return </span><span class="s1">util.Buffer</span>
+        <span class="s1">? </span><span class="s2">function </span><span class="s1">create_buffer_setup(buffer) {</span>
+            <span class="s2">return </span><span class="s1">(Reader.create = </span><span class="s2">function </span><span class="s1">create_buffer(buffer) {</span>
+                <span class="s2">return </span><span class="s1">util.Buffer.isBuffer(buffer)</span>
+                    <span class="s1">? </span><span class="s2">new </span><span class="s1">BufferReader(buffer)</span>
+                    <span class="s3">/* istanbul ignore next */</span>
+                    <span class="s1">: create_array(buffer);</span>
+            <span class="s1">})(buffer);</span>
+        <span class="s1">}</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s1">: create_array;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Creates a new reader using the specified buffer. 
+ * @function 
+ * @param {Uint8Array|Buffer} buffer Buffer to read from 
+ * @returns {Reader|BufferReader} A {@link BufferReader} if `buffer` is a Buffer, otherwise a {@link Reader} 
+ * @throws {Error} If `buffer` is not a valid buffer 
+ */</span>
+<span class="s1">Reader.create = create();</span>
+
+<span class="s1">Reader.prototype._slice = util.Array.prototype.subarray || </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">util.Array.prototype.slice;</span>
+
+<span class="s3">/** 
+ * Reads a varint as an unsigned 32 bit value. 
+ * @function 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.uint32 = (</span><span class="s2">function </span><span class="s1">read_uint32_setup() {</span>
+    <span class="s2">var </span><span class="s1">value = </span><span class="s4">4294967295</span><span class="s1">; </span><span class="s3">// optimizer type-hint, tends to deopt otherwise (?!)</span>
+    <span class="s2">return function </span><span class="s1">read_uint32() {</span>
+        <span class="s1">value = (         </span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127       </span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">; </span><span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">) </span><span class="s2">return </span><span class="s1">value;</span>
+        <span class="s1">value = (value | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt;  </span><span class="s4">7</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">; </span><span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">) </span><span class="s2">return </span><span class="s1">value;</span>
+        <span class="s1">value = (value | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; </span><span class="s4">14</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">; </span><span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">) </span><span class="s2">return </span><span class="s1">value;</span>
+        <span class="s1">value = (value | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; </span><span class="s4">21</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">; </span><span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">) </span><span class="s2">return </span><span class="s1">value;</span>
+        <span class="s1">value = (value | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp;  </span><span class="s4">15</span><span class="s1">) &lt;&lt; </span><span class="s4">28</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">; </span><span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">) </span><span class="s2">return </span><span class="s1">value;</span>
+
+        <span class="s3">/* istanbul ignore if */</span>
+        <span class="s2">if </span><span class="s1">((</span><span class="s2">this</span><span class="s1">.pos += </span><span class="s4">5</span><span class="s1">) &gt; </span><span class="s2">this</span><span class="s1">.len) {</span>
+            <span class="s2">this</span><span class="s1">.pos = </span><span class="s2">this</span><span class="s1">.len;</span>
+            <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">10</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">value;</span>
+    <span class="s1">};</span>
+<span class="s1">})();</span>
+
+<span class="s3">/** 
+ * Reads a varint as a signed 32 bit value. 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.int32 = </span><span class="s2">function </span><span class="s1">read_int32() {</span>
+    <span class="s2">return this</span><span class="s1">.uint32() | </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Reads a zig-zag encoded varint as a signed 32 bit value. 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.sint32 = </span><span class="s2">function </span><span class="s1">read_sint32() {</span>
+    <span class="s2">var </span><span class="s1">value = </span><span class="s2">this</span><span class="s1">.uint32();</span>
+    <span class="s2">return </span><span class="s1">value &gt;&gt;&gt; </span><span class="s4">1 </span><span class="s1">^ -(value &amp; </span><span class="s4">1</span><span class="s1">) | </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/* eslint-disable no-invalid-this */</span>
+
+<span class="s2">function </span><span class="s1">readLongVarint() {</span>
+    <span class="s3">// tends to deopt with local vars for octet etc.</span>
+    <span class="s2">var </span><span class="s1">bits = </span><span class="s2">new </span><span class="s1">LongBits(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+    <span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.len - </span><span class="s2">this</span><span class="s1">.pos &gt; </span><span class="s4">4</span><span class="s1">) { </span><span class="s3">// fast route (lo)</span>
+        <span class="s2">for </span><span class="s1">(; i &lt; </span><span class="s4">4</span><span class="s1">; ++i) {</span>
+            <span class="s3">// 1st..4th</span>
+            <span class="s1">bits.lo = (bits.lo | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; i * </span><span class="s4">7</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">bits;</span>
+        <span class="s1">}</span>
+        <span class="s3">// 5th</span>
+        <span class="s1">bits.lo = (bits.lo | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; </span><span class="s4">28</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s1">bits.hi = (bits.hi | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &gt;&gt;  </span><span class="s4">4</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">)</span>
+            <span class="s2">return </span><span class="s1">bits;</span>
+        <span class="s1">i = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">for </span><span class="s1">(; i &lt; </span><span class="s4">3</span><span class="s1">; ++i) {</span>
+            <span class="s3">/* istanbul ignore if */</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos &gt;= </span><span class="s2">this</span><span class="s1">.len)</span>
+                <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">);</span>
+            <span class="s3">// 1st..3th</span>
+            <span class="s1">bits.lo = (bits.lo | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; i * </span><span class="s4">7</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">bits;</span>
+        <span class="s1">}</span>
+        <span class="s3">// 4th</span>
+        <span class="s1">bits.lo = (bits.lo | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; i * </span><span class="s4">7</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">bits;</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.len - </span><span class="s2">this</span><span class="s1">.pos &gt; </span><span class="s4">4</span><span class="s1">) { </span><span class="s3">// fast route (hi)</span>
+        <span class="s2">for </span><span class="s1">(; i &lt; </span><span class="s4">5</span><span class="s1">; ++i) {</span>
+            <span class="s3">// 6th..10th</span>
+            <span class="s1">bits.hi = (bits.hi | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; i * </span><span class="s4">7 </span><span class="s1">+ </span><span class="s4">3</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">bits;</span>
+        <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">for </span><span class="s1">(; i &lt; </span><span class="s4">5</span><span class="s1">; ++i) {</span>
+            <span class="s3">/* istanbul ignore if */</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos &gt;= </span><span class="s2">this</span><span class="s1">.len)</span>
+                <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">);</span>
+            <span class="s3">// 6th..10th</span>
+            <span class="s1">bits.hi = (bits.hi | (</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos] &amp; </span><span class="s4">127</span><span class="s1">) &lt;&lt; i * </span><span class="s4">7 </span><span class="s1">+ </span><span class="s4">3</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &lt; </span><span class="s4">128</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">bits;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">/* istanbul ignore next */</span>
+    <span class="s2">throw </span><span class="s1">Error(</span><span class="s0">&quot;invalid varint encoding&quot;</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s3">/* eslint-enable no-invalid-this */</span>
+
+<span class="s3">/** 
+ * Reads a varint as a signed 64 bit value. 
+ * @name Reader#int64 
+ * @function 
+ * @returns {Long} Value read 
+ */</span>
+
+<span class="s3">/** 
+ * Reads a varint as an unsigned 64 bit value. 
+ * @name Reader#uint64 
+ * @function 
+ * @returns {Long} Value read 
+ */</span>
+
+<span class="s3">/** 
+ * Reads a zig-zag encoded varint as a signed 64 bit value. 
+ * @name Reader#sint64 
+ * @function 
+ * @returns {Long} Value read 
+ */</span>
+
+<span class="s3">/** 
+ * Reads a varint as a boolean. 
+ * @returns {boolean} Value read 
+ */</span>
+<span class="s1">Reader.prototype.bool = </span><span class="s2">function </span><span class="s1">read_bool() {</span>
+    <span class="s2">return this</span><span class="s1">.uint32() !== </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">function </span><span class="s1">readFixed32_end(buf, end) { </span><span class="s3">// note that this uses `end`, not `pos`</span>
+    <span class="s2">return </span><span class="s1">(buf[end - </span><span class="s4">4</span><span class="s1">]</span>
+          <span class="s1">| buf[end - </span><span class="s4">3</span><span class="s1">] &lt;&lt; </span><span class="s4">8</span>
+          <span class="s1">| buf[end - </span><span class="s4">2</span><span class="s1">] &lt;&lt; </span><span class="s4">16</span>
+          <span class="s1">| buf[end - </span><span class="s4">1</span><span class="s1">] &lt;&lt; </span><span class="s4">24</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Reads fixed 32 bits as an unsigned 32 bit integer. 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.fixed32 = </span><span class="s2">function </span><span class="s1">read_fixed32() {</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + </span><span class="s4">4 </span><span class="s1">&gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">4</span><span class="s1">);</span>
+
+    <span class="s2">return </span><span class="s1">readFixed32_end(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos += </span><span class="s4">4</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Reads fixed 32 bits as a signed 32 bit integer. 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.sfixed32 = </span><span class="s2">function </span><span class="s1">read_sfixed32() {</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + </span><span class="s4">4 </span><span class="s1">&gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">4</span><span class="s1">);</span>
+
+    <span class="s2">return </span><span class="s1">readFixed32_end(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos += </span><span class="s4">4</span><span class="s1">) | </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/* eslint-disable no-invalid-this */</span>
+
+<span class="s2">function </span><span class="s1">readFixed64(</span><span class="s3">/* this: Reader */</span><span class="s1">) {</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + </span><span class="s4">8 </span><span class="s1">&gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">8</span><span class="s1">);</span>
+
+    <span class="s2">return new </span><span class="s1">LongBits(readFixed32_end(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos += </span><span class="s4">4</span><span class="s1">), readFixed32_end(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos += </span><span class="s4">4</span><span class="s1">));</span>
+<span class="s1">}</span>
+
+<span class="s3">/* eslint-enable no-invalid-this */</span>
+
+<span class="s3">/** 
+ * Reads fixed 64 bits. 
+ * @name Reader#fixed64 
+ * @function 
+ * @returns {Long} Value read 
+ */</span>
+
+<span class="s3">/** 
+ * Reads zig-zag encoded fixed 64 bits. 
+ * @name Reader#sfixed64 
+ * @function 
+ * @returns {Long} Value read 
+ */</span>
+
+<span class="s3">/** 
+ * Reads a float (32 bit) as a number. 
+ * @function 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.float = </span><span class="s2">function </span><span class="s1">read_float() {</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + </span><span class="s4">4 </span><span class="s1">&gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">4</span><span class="s1">);</span>
+
+    <span class="s2">var </span><span class="s1">value = util.float.readFloatLE(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos);</span>
+    <span class="s2">this</span><span class="s1">.pos += </span><span class="s4">4</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">value;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Reads a double (64 bit float) as a number. 
+ * @function 
+ * @returns {number} Value read 
+ */</span>
+<span class="s1">Reader.prototype.double = </span><span class="s2">function </span><span class="s1">read_double() {</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + </span><span class="s4">8 </span><span class="s1">&gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, </span><span class="s4">4</span><span class="s1">);</span>
+
+    <span class="s2">var </span><span class="s1">value = util.float.readDoubleLE(</span><span class="s2">this</span><span class="s1">.buf, </span><span class="s2">this</span><span class="s1">.pos);</span>
+    <span class="s2">this</span><span class="s1">.pos += </span><span class="s4">8</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">value;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Reads a sequence of bytes preceeded by its length as a varint. 
+ * @returns {Uint8Array} Value read 
+ */</span>
+<span class="s1">Reader.prototype.bytes = </span><span class="s2">function </span><span class="s1">read_bytes() {</span>
+    <span class="s2">var </span><span class="s1">length = </span><span class="s2">this</span><span class="s1">.uint32(),</span>
+        <span class="s1">start  = </span><span class="s2">this</span><span class="s1">.pos,</span>
+        <span class="s1">end    = </span><span class="s2">this</span><span class="s1">.pos + length;</span>
+
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(end &gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+        <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, length);</span>
+
+    <span class="s2">this</span><span class="s1">.pos += length;</span>
+    <span class="s2">if </span><span class="s1">(Array.isArray(</span><span class="s2">this</span><span class="s1">.buf)) </span><span class="s3">// plain array</span>
+        <span class="s2">return this</span><span class="s1">.buf.slice(start, end);</span>
+
+    <span class="s2">if </span><span class="s1">(start === end) { </span><span class="s3">// fix for IE 10/Win8 and others' subarray returning array of size 1</span>
+        <span class="s2">var </span><span class="s1">nativeBuffer = util.Buffer;</span>
+        <span class="s2">return </span><span class="s1">nativeBuffer</span>
+            <span class="s1">? nativeBuffer.alloc(</span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s1">: </span><span class="s2">new this</span><span class="s1">.buf.constructor(</span><span class="s4">0</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">._slice.call(</span><span class="s2">this</span><span class="s1">.buf, start, end);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Reads a string preceeded by its byte length as a varint. 
+ * @returns {string} Value read 
+ */</span>
+<span class="s1">Reader.prototype.string = </span><span class="s2">function </span><span class="s1">read_string() {</span>
+    <span class="s2">var </span><span class="s1">bytes = </span><span class="s2">this</span><span class="s1">.bytes();</span>
+    <span class="s2">return </span><span class="s1">utf8.read(bytes, </span><span class="s4">0</span><span class="s1">, bytes.length);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Skips the specified number of bytes if specified, otherwise skips a varint. 
+ * @param {number} [length] Length if known, otherwise a varint is assumed 
+ * @returns {Reader} `this` 
+ */</span>
+<span class="s1">Reader.prototype.skip = </span><span class="s2">function </span><span class="s1">skip(length) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">length === </span><span class="s0">&quot;number&quot;</span><span class="s1">) {</span>
+        <span class="s3">/* istanbul ignore if */</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos + length &gt; </span><span class="s2">this</span><span class="s1">.len)</span>
+            <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">, length);</span>
+        <span class="s2">this</span><span class="s1">.pos += length;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">do </span><span class="s1">{</span>
+            <span class="s3">/* istanbul ignore if */</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.pos &gt;= </span><span class="s2">this</span><span class="s1">.len)</span>
+                <span class="s2">throw </span><span class="s1">indexOutOfRange(</span><span class="s2">this</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s2">while </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.buf[</span><span class="s2">this</span><span class="s1">.pos++] &amp; </span><span class="s4">128</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Recursion limit. 
+ * @type {number} 
+ */</span>
+<span class="s1">Reader.recursionLimit = util.recursionLimit;</span>
+
+<span class="s3">/** 
+ * Skips the next element of the specified wire type. 
+ * @param {number} wireType Wire type received 
+ * @param {number} [depth] Depth of recursion to control nested calls; 0 if omitted 
+ * @returns {Reader} `this` 
+ */</span>
+<span class="s1">Reader.prototype.skipType = </span><span class="s2">function</span><span class="s1">(wireType, depth) {</span>
+    <span class="s2">if </span><span class="s1">(depth === undefined) depth = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(depth &gt; Reader.recursionLimit)</span>
+        <span class="s2">throw </span><span class="s1">Error(</span><span class="s0">&quot;maximum nesting depth exceeded&quot;</span><span class="s1">);</span>
+    <span class="s2">switch </span><span class="s1">(wireType) {</span>
+        <span class="s2">case </span><span class="s4">0</span><span class="s1">:</span>
+            <span class="s2">this</span><span class="s1">.skip();</span>
+            <span class="s2">break</span><span class="s1">;</span>
+        <span class="s2">case </span><span class="s4">1</span><span class="s1">:</span>
+            <span class="s2">this</span><span class="s1">.skip(</span><span class="s4">8</span><span class="s1">);</span>
+            <span class="s2">break</span><span class="s1">;</span>
+        <span class="s2">case </span><span class="s4">2</span><span class="s1">:</span>
+            <span class="s2">this</span><span class="s1">.skip(</span><span class="s2">this</span><span class="s1">.uint32());</span>
+            <span class="s2">break</span><span class="s1">;</span>
+        <span class="s2">case </span><span class="s4">3</span><span class="s1">:</span>
+            <span class="s2">while </span><span class="s1">((wireType = </span><span class="s2">this</span><span class="s1">.uint32() &amp; </span><span class="s4">7</span><span class="s1">) !== </span><span class="s4">4</span><span class="s1">) {</span>
+                <span class="s2">this</span><span class="s1">.skipType(wireType, depth + </span><span class="s4">1</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s2">break</span><span class="s1">;</span>
+        <span class="s2">case </span><span class="s4">5</span><span class="s1">:</span>
+            <span class="s2">this</span><span class="s1">.skip(</span><span class="s4">4</span><span class="s1">);</span>
+            <span class="s2">break</span><span class="s1">;</span>
+
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s2">default</span><span class="s1">:</span>
+            <span class="s2">throw </span><span class="s1">Error(</span><span class="s0">&quot;invalid wire type &quot; </span><span class="s1">+ wireType + </span><span class="s0">&quot; at offset &quot; </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.pos);</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">Reader._configure = </span><span class="s2">function</span><span class="s1">(BufferReader_) {</span>
+    <span class="s1">BufferReader = BufferReader_;</span>
+    <span class="s1">Reader.create = create();</span>
+    <span class="s1">BufferReader._configure();</span>
+
+    <span class="s2">var </span><span class="s1">fn = util.Long ? </span><span class="s0">&quot;toLong&quot; </span><span class="s1">: </span><span class="s3">/* istanbul ignore next */ </span><span class="s0">&quot;toNumber&quot;</span><span class="s1">;</span>
+    <span class="s1">util.merge(Reader.prototype, {</span>
+
+        <span class="s1">int64: </span><span class="s2">function </span><span class="s1">read_int64() {</span>
+            <span class="s2">return </span><span class="s1">readLongVarint.call(</span><span class="s2">this</span><span class="s1">)[fn](</span><span class="s2">false</span><span class="s1">);</span>
+        <span class="s1">},</span>
+
+        <span class="s1">uint64: </span><span class="s2">function </span><span class="s1">read_uint64() {</span>
+            <span class="s2">return </span><span class="s1">readLongVarint.call(</span><span class="s2">this</span><span class="s1">)[fn](</span><span class="s2">true</span><span class="s1">);</span>
+        <span class="s1">},</span>
+
+        <span class="s1">sint64: </span><span class="s2">function </span><span class="s1">read_sint64() {</span>
+            <span class="s2">return </span><span class="s1">readLongVarint.call(</span><span class="s2">this</span><span class="s1">).zzDecode()[fn](</span><span class="s2">false</span><span class="s1">);</span>
+        <span class="s1">},</span>
+
+        <span class="s1">fixed64: </span><span class="s2">function </span><span class="s1">read_fixed64() {</span>
+            <span class="s2">return </span><span class="s1">readFixed64.call(</span><span class="s2">this</span><span class="s1">)[fn](</span><span class="s2">true</span><span class="s1">);</span>
+        <span class="s1">},</span>
+
+        <span class="s1">sfixed64: </span><span class="s2">function </span><span class="s1">read_sfixed64() {</span>
+            <span class="s2">return </span><span class="s1">readFixed64.call(</span><span class="s2">this</span><span class="s1">)[fn](</span><span class="s2">false</span><span class="s1">);</span>
+        <span class="s1">}</span>
+
+    <span class="s1">});</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

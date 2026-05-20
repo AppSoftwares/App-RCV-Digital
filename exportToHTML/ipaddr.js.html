@@ -1,0 +1,693 @@
+<html>
+<head>
+<title>ipaddr.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #cf8e6d;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ipaddr.js</font>
+</center></td></tr></table>
+<pre><span class="s0">(</span><span class="s1">function</span><span class="s0">() {</span>
+  <span class="s1">var </span><span class="s0">expandIPv6, ipaddr, ipv4Part, ipv4Regexes, ipv6Part, ipv6Regexes, matchCIDR, root, zoneIndex;</span>
+
+  <span class="s0">ipaddr = {};</span>
+
+  <span class="s0">root = </span><span class="s1">this</span><span class="s0">;</span>
+
+  <span class="s1">if </span><span class="s0">((</span><span class="s1">typeof </span><span class="s0">module !== </span><span class="s2">&quot;undefined&quot; </span><span class="s0">&amp;&amp; module !== </span><span class="s1">null</span><span class="s0">) &amp;&amp; module.exports) {</span>
+    <span class="s0">module.exports = ipaddr;</span>
+  <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+    <span class="s0">root[</span><span class="s2">'ipaddr'</span><span class="s0">] = ipaddr;</span>
+  <span class="s0">}</span>
+
+  <span class="s0">matchCIDR = </span><span class="s1">function</span><span class="s0">(first, second, partSize, cidrBits) {</span>
+    <span class="s1">var </span><span class="s0">part, shift;</span>
+    <span class="s1">if </span><span class="s0">(first.length !== second.length) {</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: cannot match CIDR for objects with different lengths&quot;</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s0">part = </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s1">while </span><span class="s0">(cidrBits &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+      <span class="s0">shift = partSize - cidrBits;</span>
+      <span class="s1">if </span><span class="s0">(shift &lt; </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s0">shift = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s1">if </span><span class="s0">(first[part] &gt;&gt; shift !== second[part] &gt;&gt; shift) {</span>
+        <span class="s1">return false</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s0">cidrBits -= partSize;</span>
+      <span class="s0">part += </span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s1">return true</span><span class="s0">;</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.subnetMatch = </span><span class="s1">function</span><span class="s0">(address, rangeList, defaultName) {</span>
+    <span class="s1">var </span><span class="s0">k, len, rangeName, rangeSubnets, subnet;</span>
+    <span class="s1">if </span><span class="s0">(defaultName == </span><span class="s1">null</span><span class="s0">) {</span>
+      <span class="s0">defaultName = </span><span class="s2">'unicast'</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s1">for </span><span class="s0">(rangeName </span><span class="s1">in </span><span class="s0">rangeList) {</span>
+      <span class="s0">rangeSubnets = rangeList[rangeName];</span>
+      <span class="s1">if </span><span class="s0">(rangeSubnets[</span><span class="s3">0</span><span class="s0">] &amp;&amp; !(rangeSubnets[</span><span class="s3">0</span><span class="s0">] </span><span class="s1">instanceof </span><span class="s0">Array)) {</span>
+        <span class="s0">rangeSubnets = [rangeSubnets];</span>
+      <span class="s0">}</span>
+      <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = rangeSubnets.length; k &lt; len; k++) {</span>
+        <span class="s0">subnet = rangeSubnets[k];</span>
+        <span class="s1">if </span><span class="s0">(address.kind() === subnet[</span><span class="s3">0</span><span class="s0">].kind()) {</span>
+          <span class="s1">if </span><span class="s0">(address.match.apply(address, subnet)) {</span>
+            <span class="s1">return </span><span class="s0">rangeName;</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s1">return </span><span class="s0">defaultName;</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4 = (</span><span class="s1">function</span><span class="s0">() {</span>
+    <span class="s1">function </span><span class="s0">IPv4(octets) {</span>
+      <span class="s1">var </span><span class="s0">k, len, octet;</span>
+      <span class="s1">if </span><span class="s0">(octets.length !== </span><span class="s3">4</span><span class="s0">) {</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: ipv4 octet count should be 4&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = octets.length; k &lt; len; k++) {</span>
+        <span class="s0">octet = octets[k];</span>
+        <span class="s1">if </span><span class="s0">(!((</span><span class="s3">0 </span><span class="s0">&lt;= octet &amp;&amp; octet &lt;= </span><span class="s3">255</span><span class="s0">))) {</span>
+          <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: ipv4 octet should fit in 8 bits&quot;</span><span class="s0">);</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s1">this</span><span class="s0">.octets = octets;</span>
+    <span class="s0">}</span>
+
+    <span class="s0">IPv4.prototype.kind = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return </span><span class="s2">'ipv4'</span><span class="s0">;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.toString = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return this</span><span class="s0">.octets.join(</span><span class="s2">&quot;.&quot;</span><span class="s0">);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.toNormalizedString = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return this</span><span class="s0">.toString();</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.toByteArray = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return this</span><span class="s0">.octets.slice(</span><span class="s3">0</span><span class="s0">);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.match = </span><span class="s1">function</span><span class="s0">(other, cidrRange) {</span>
+      <span class="s1">var </span><span class="s0">ref;</span>
+      <span class="s1">if </span><span class="s0">(cidrRange === </span><span class="s1">void </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s0">ref = other, other = ref[</span><span class="s3">0</span><span class="s0">], cidrRange = ref[</span><span class="s3">1</span><span class="s0">];</span>
+      <span class="s0">}</span>
+      <span class="s1">if </span><span class="s0">(other.kind() !== </span><span class="s2">'ipv4'</span><span class="s0">) {</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: cannot match ipv4 address with non-ipv4 one&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">matchCIDR(</span><span class="s1">this</span><span class="s0">.octets, other.octets, </span><span class="s3">8</span><span class="s0">, cidrRange);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.SpecialRanges = {</span>
+      <span class="s0">unspecified: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">8</span><span class="s0">]],</span>
+      <span class="s0">broadcast: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">255</span><span class="s0">, </span><span class="s3">255</span><span class="s0">, </span><span class="s3">255</span><span class="s0">, </span><span class="s3">255</span><span class="s0">]), </span><span class="s3">32</span><span class="s0">]],</span>
+      <span class="s0">multicast: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">224</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">4</span><span class="s0">]],</span>
+      <span class="s0">linkLocal: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">169</span><span class="s0">, </span><span class="s3">254</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">16</span><span class="s0">]],</span>
+      <span class="s0">loopback: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">127</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">8</span><span class="s0">]],</span>
+      <span class="s0">carrierGradeNat: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">100</span><span class="s0">, </span><span class="s3">64</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">10</span><span class="s0">]],</span>
+      <span class="s2">&quot;private&quot;</span><span class="s0">: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">10</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">8</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">172</span><span class="s0">, </span><span class="s3">16</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">12</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">192</span><span class="s0">, </span><span class="s3">168</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">16</span><span class="s0">]],</span>
+      <span class="s0">reserved: [[</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">192</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">24</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">192</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">2</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">24</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">192</span><span class="s0">, </span><span class="s3">88</span><span class="s0">, </span><span class="s3">99</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">24</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">198</span><span class="s0">, </span><span class="s3">51</span><span class="s0">, </span><span class="s3">100</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">24</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">203</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">113</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">24</span><span class="s0">], [</span><span class="s1">new </span><span class="s0">IPv4([</span><span class="s3">240</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">4</span><span class="s0">]]</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.range = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return </span><span class="s0">ipaddr.subnetMatch(</span><span class="s1">this</span><span class="s0">, </span><span class="s1">this</span><span class="s0">.SpecialRanges);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.toIPv4MappedAddress = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return </span><span class="s0">ipaddr.IPv6.parse(</span><span class="s2">&quot;::ffff:&quot; </span><span class="s0">+ (</span><span class="s1">this</span><span class="s0">.toString()));</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv4.prototype.prefixLengthFromSubnetMask = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">cidr, i, k, octet, stop, zeros, zerotable;</span>
+      <span class="s0">zerotable = {</span>
+        <span class="s3">0</span><span class="s0">: </span><span class="s3">8</span><span class="s0">,</span>
+        <span class="s3">128</span><span class="s0">: </span><span class="s3">7</span><span class="s0">,</span>
+        <span class="s3">192</span><span class="s0">: </span><span class="s3">6</span><span class="s0">,</span>
+        <span class="s3">224</span><span class="s0">: </span><span class="s3">5</span><span class="s0">,</span>
+        <span class="s3">240</span><span class="s0">: </span><span class="s3">4</span><span class="s0">,</span>
+        <span class="s3">248</span><span class="s0">: </span><span class="s3">3</span><span class="s0">,</span>
+        <span class="s3">252</span><span class="s0">: </span><span class="s3">2</span><span class="s0">,</span>
+        <span class="s3">254</span><span class="s0">: </span><span class="s3">1</span><span class="s0">,</span>
+        <span class="s3">255</span><span class="s0">: </span><span class="s3">0</span>
+      <span class="s0">};</span>
+      <span class="s0">cidr = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">stop = </span><span class="s1">false</span><span class="s0">;</span>
+      <span class="s1">for </span><span class="s0">(i = k = </span><span class="s3">3</span><span class="s0">; k &gt;= </span><span class="s3">0</span><span class="s0">; i = k += -</span><span class="s3">1</span><span class="s0">) {</span>
+        <span class="s0">octet = </span><span class="s1">this</span><span class="s0">.octets[i];</span>
+        <span class="s1">if </span><span class="s0">(octet </span><span class="s1">in </span><span class="s0">zerotable) {</span>
+          <span class="s0">zeros = zerotable[octet];</span>
+          <span class="s1">if </span><span class="s0">(stop &amp;&amp; zeros !== </span><span class="s3">0</span><span class="s0">) {</span>
+            <span class="s1">return null</span><span class="s0">;</span>
+          <span class="s0">}</span>
+          <span class="s1">if </span><span class="s0">(zeros !== </span><span class="s3">8</span><span class="s0">) {</span>
+            <span class="s0">stop = </span><span class="s1">true</span><span class="s0">;</span>
+          <span class="s0">}</span>
+          <span class="s0">cidr += zeros;</span>
+        <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+          <span class="s1">return null</span><span class="s0">;</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s3">32 </span><span class="s0">- cidr;</span>
+    <span class="s0">};</span>
+
+    <span class="s1">return </span><span class="s0">IPv4;</span>
+
+  <span class="s0">})();</span>
+
+  <span class="s0">ipv4Part = </span><span class="s2">&quot;(0?</span><span class="s1">\\</span><span class="s2">d+|0x[a-f0-9]+)&quot;</span><span class="s0">;</span>
+
+  <span class="s0">ipv4Regexes = {</span>
+    <span class="s0">fourOctet: </span><span class="s1">new </span><span class="s0">RegExp(</span><span class="s2">&quot;^&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;$&quot;</span><span class="s0">, </span><span class="s2">'i'</span><span class="s0">),</span>
+    <span class="s0">longValue: </span><span class="s1">new </span><span class="s0">RegExp(</span><span class="s2">&quot;^&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;$&quot;</span><span class="s0">, </span><span class="s2">'i'</span><span class="s0">)</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.parser = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">match, parseIntAuto, part, shift, value;</span>
+    <span class="s0">parseIntAuto = </span><span class="s1">function</span><span class="s0">(string) {</span>
+      <span class="s1">if </span><span class="s0">(string[</span><span class="s3">0</span><span class="s0">] === </span><span class="s2">&quot;0&quot; </span><span class="s0">&amp;&amp; string[</span><span class="s3">1</span><span class="s0">] !== </span><span class="s2">&quot;x&quot;</span><span class="s0">) {</span>
+        <span class="s1">return </span><span class="s0">parseInt(string, </span><span class="s3">8</span><span class="s0">);</span>
+      <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+        <span class="s1">return </span><span class="s0">parseInt(string);</span>
+      <span class="s0">}</span>
+    <span class="s0">};</span>
+    <span class="s1">if </span><span class="s0">(match = string.match(ipv4Regexes.fourOctet)) {</span>
+      <span class="s1">return </span><span class="s0">(</span><span class="s1">function</span><span class="s0">() {</span>
+        <span class="s1">var </span><span class="s0">k, len, ref, results;</span>
+        <span class="s0">ref = match.slice(</span><span class="s3">1</span><span class="s0">, </span><span class="s3">6</span><span class="s0">);</span>
+        <span class="s0">results = [];</span>
+        <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = ref.length; k &lt; len; k++) {</span>
+          <span class="s0">part = ref[k];</span>
+          <span class="s0">results.push(parseIntAuto(part));</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">results;</span>
+      <span class="s0">})();</span>
+    <span class="s0">} </span><span class="s1">else if </span><span class="s0">(match = string.match(ipv4Regexes.longValue)) {</span>
+      <span class="s0">value = parseIntAuto(match[</span><span class="s3">1</span><span class="s0">]);</span>
+      <span class="s1">if </span><span class="s0">(value &gt; </span><span class="s3">0</span><span class="s0">xffffffff || value &lt; </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: address outside defined range&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">((</span><span class="s1">function</span><span class="s0">() {</span>
+        <span class="s1">var </span><span class="s0">k, results;</span>
+        <span class="s0">results = [];</span>
+        <span class="s1">for </span><span class="s0">(shift = k = </span><span class="s3">0</span><span class="s0">; k &lt;= </span><span class="s3">24</span><span class="s0">; shift = k += </span><span class="s3">8</span><span class="s0">) {</span>
+          <span class="s0">results.push((value &gt;&gt; shift) &amp; </span><span class="s3">0</span><span class="s0">xff);</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">results;</span>
+      <span class="s0">})()).reverse();</span>
+    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+      <span class="s1">return null</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv6 = (</span><span class="s1">function</span><span class="s0">() {</span>
+    <span class="s1">function </span><span class="s0">IPv6(parts, zoneId) {</span>
+      <span class="s1">var </span><span class="s0">i, k, l, len, part, ref;</span>
+      <span class="s1">if </span><span class="s0">(parts.length === </span><span class="s3">16</span><span class="s0">) {</span>
+        <span class="s1">this</span><span class="s0">.parts = [];</span>
+        <span class="s1">for </span><span class="s0">(i = k = </span><span class="s3">0</span><span class="s0">; k &lt;= </span><span class="s3">14</span><span class="s0">; i = k += </span><span class="s3">2</span><span class="s0">) {</span>
+          <span class="s1">this</span><span class="s0">.parts.push((parts[i] &lt;&lt; </span><span class="s3">8</span><span class="s0">) | parts[i + </span><span class="s3">1</span><span class="s0">]);</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s1">else if </span><span class="s0">(parts.length === </span><span class="s3">8</span><span class="s0">) {</span>
+        <span class="s1">this</span><span class="s0">.parts = parts;</span>
+      <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: ipv6 part count should be 8 or 16&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s0">ref = </span><span class="s1">this</span><span class="s0">.parts;</span>
+      <span class="s1">for </span><span class="s0">(l = </span><span class="s3">0</span><span class="s0">, len = ref.length; l &lt; len; l++) {</span>
+        <span class="s0">part = ref[l];</span>
+        <span class="s1">if </span><span class="s0">(!((</span><span class="s3">0 </span><span class="s0">&lt;= part &amp;&amp; part &lt;= </span><span class="s3">0</span><span class="s0">xffff))) {</span>
+          <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: ipv6 part should fit in 16 bits&quot;</span><span class="s0">);</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s1">if </span><span class="s0">(zoneId) {</span>
+        <span class="s1">this</span><span class="s0">.zoneId = zoneId;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">IPv6.prototype.kind = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return </span><span class="s2">'ipv6'</span><span class="s0">;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toString = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return this</span><span class="s0">.toNormalizedString().replace(/((^|:)(</span><span class="s3">0</span><span class="s0">(:|$))+)/, </span><span class="s2">'::'</span><span class="s0">);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toRFC5952String = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">bestMatchIndex, bestMatchLength, match, regex, string;</span>
+      <span class="s0">regex = /((^|:)(</span><span class="s3">0</span><span class="s0">(:|$)){</span><span class="s3">2</span><span class="s0">,})/g;</span>
+      <span class="s0">string = </span><span class="s1">this</span><span class="s0">.toNormalizedString();</span>
+      <span class="s0">bestMatchIndex = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">bestMatchLength = -</span><span class="s3">1</span><span class="s0">;</span>
+      <span class="s1">while </span><span class="s0">((match = regex.exec(string))) {</span>
+        <span class="s1">if </span><span class="s0">(match[</span><span class="s3">0</span><span class="s0">].length &gt; bestMatchLength) {</span>
+          <span class="s0">bestMatchIndex = match.index;</span>
+          <span class="s0">bestMatchLength = match[</span><span class="s3">0</span><span class="s0">].length;</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s1">if </span><span class="s0">(bestMatchLength &lt; </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s1">return </span><span class="s0">string;</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">string.substring(</span><span class="s3">0</span><span class="s0">, bestMatchIndex) + </span><span class="s2">'::' </span><span class="s0">+ string.substring(bestMatchIndex + bestMatchLength);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toByteArray = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">bytes, k, len, part, ref;</span>
+      <span class="s0">bytes = [];</span>
+      <span class="s0">ref = </span><span class="s1">this</span><span class="s0">.parts;</span>
+      <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = ref.length; k &lt; len; k++) {</span>
+        <span class="s0">part = ref[k];</span>
+        <span class="s0">bytes.push(part &gt;&gt; </span><span class="s3">8</span><span class="s0">);</span>
+        <span class="s0">bytes.push(part &amp; </span><span class="s3">0</span><span class="s0">xff);</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">bytes;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toNormalizedString = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">addr, part, suffix;</span>
+      <span class="s0">addr = ((</span><span class="s1">function</span><span class="s0">() {</span>
+        <span class="s1">var </span><span class="s0">k, len, ref, results;</span>
+        <span class="s0">ref = </span><span class="s1">this</span><span class="s0">.parts;</span>
+        <span class="s0">results = [];</span>
+        <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = ref.length; k &lt; len; k++) {</span>
+          <span class="s0">part = ref[k];</span>
+          <span class="s0">results.push(part.toString(</span><span class="s3">16</span><span class="s0">));</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">results;</span>
+      <span class="s0">}).call(</span><span class="s1">this</span><span class="s0">)).join(</span><span class="s2">&quot;:&quot;</span><span class="s0">);</span>
+      <span class="s0">suffix = </span><span class="s2">''</span><span class="s0">;</span>
+      <span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.zoneId) {</span>
+        <span class="s0">suffix = </span><span class="s2">'%' </span><span class="s0">+ </span><span class="s1">this</span><span class="s0">.zoneId;</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">addr + suffix;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toFixedLengthString = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">addr, part, suffix;</span>
+      <span class="s0">addr = ((</span><span class="s1">function</span><span class="s0">() {</span>
+        <span class="s1">var </span><span class="s0">k, len, ref, results;</span>
+        <span class="s0">ref = </span><span class="s1">this</span><span class="s0">.parts;</span>
+        <span class="s0">results = [];</span>
+        <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = ref.length; k &lt; len; k++) {</span>
+          <span class="s0">part = ref[k];</span>
+          <span class="s0">results.push(part.toString(</span><span class="s3">16</span><span class="s0">).padStart(</span><span class="s3">4</span><span class="s0">, </span><span class="s2">'0'</span><span class="s0">));</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">results;</span>
+      <span class="s0">}).call(</span><span class="s1">this</span><span class="s0">)).join(</span><span class="s2">&quot;:&quot;</span><span class="s0">);</span>
+      <span class="s0">suffix = </span><span class="s2">''</span><span class="s0">;</span>
+      <span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.zoneId) {</span>
+        <span class="s0">suffix = </span><span class="s2">'%' </span><span class="s0">+ </span><span class="s1">this</span><span class="s0">.zoneId;</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">addr + suffix;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.match = </span><span class="s1">function</span><span class="s0">(other, cidrRange) {</span>
+      <span class="s1">var </span><span class="s0">ref;</span>
+      <span class="s1">if </span><span class="s0">(cidrRange === </span><span class="s1">void </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s0">ref = other, other = ref[</span><span class="s3">0</span><span class="s0">], cidrRange = ref[</span><span class="s3">1</span><span class="s0">];</span>
+      <span class="s0">}</span>
+      <span class="s1">if </span><span class="s0">(other.kind() !== </span><span class="s2">'ipv6'</span><span class="s0">) {</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: cannot match ipv6 address with non-ipv6 one&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">matchCIDR(</span><span class="s1">this</span><span class="s0">.parts, other.parts, </span><span class="s3">16</span><span class="s0">, cidrRange);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.SpecialRanges = {</span>
+      <span class="s0">unspecified: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">128</span><span class="s0">],</span>
+      <span class="s0">linkLocal: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">xfe80, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">10</span><span class="s0">],</span>
+      <span class="s0">multicast: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">xff00, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">8</span><span class="s0">],</span>
+      <span class="s0">loopback: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">1</span><span class="s0">]), </span><span class="s3">128</span><span class="s0">],</span>
+      <span class="s0">uniqueLocal: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">xfc00, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">7</span><span class="s0">],</span>
+      <span class="s0">ipv4Mapped: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">xffff, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">96</span><span class="s0">],</span>
+      <span class="s0">rfc6145: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">xffff, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">96</span><span class="s0">],</span>
+      <span class="s0">rfc6052: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">x64, </span><span class="s3">0</span><span class="s0">xff9b, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">96</span><span class="s0">],</span>
+      <span class="s2">'6to4'</span><span class="s0">: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">x2002, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">16</span><span class="s0">],</span>
+      <span class="s0">teredo: [</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">x2001, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">32</span><span class="s0">],</span>
+      <span class="s0">reserved: [[</span><span class="s1">new </span><span class="s0">IPv6([</span><span class="s3">0</span><span class="s0">x2001, </span><span class="s3">0</span><span class="s0">xdb8, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">]), </span><span class="s3">32</span><span class="s0">]]</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.range = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return </span><span class="s0">ipaddr.subnetMatch(</span><span class="s1">this</span><span class="s0">, </span><span class="s1">this</span><span class="s0">.SpecialRanges);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.isIPv4MappedAddress = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">return this</span><span class="s0">.range() === </span><span class="s2">'ipv4Mapped'</span><span class="s0">;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.toIPv4Address = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">high, low, ref;</span>
+      <span class="s1">if </span><span class="s0">(!</span><span class="s1">this</span><span class="s0">.isIPv4MappedAddress()) {</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: trying to convert a generic ipv6 address to ipv4&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+      <span class="s0">ref = </span><span class="s1">this</span><span class="s0">.parts.slice(-</span><span class="s3">2</span><span class="s0">), high = ref[</span><span class="s3">0</span><span class="s0">], low = ref[</span><span class="s3">1</span><span class="s0">];</span>
+      <span class="s1">return new </span><span class="s0">ipaddr.IPv4([high &gt;&gt; </span><span class="s3">8</span><span class="s0">, high &amp; </span><span class="s3">0</span><span class="s0">xff, low &gt;&gt; </span><span class="s3">8</span><span class="s0">, low &amp; </span><span class="s3">0</span><span class="s0">xff]);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">IPv6.prototype.prefixLengthFromSubnetMask = </span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">cidr, i, k, part, stop, zeros, zerotable;</span>
+      <span class="s0">zerotable = {</span>
+        <span class="s3">0</span><span class="s0">: </span><span class="s3">16</span><span class="s0">,</span>
+        <span class="s3">32768</span><span class="s0">: </span><span class="s3">15</span><span class="s0">,</span>
+        <span class="s3">49152</span><span class="s0">: </span><span class="s3">14</span><span class="s0">,</span>
+        <span class="s3">57344</span><span class="s0">: </span><span class="s3">13</span><span class="s0">,</span>
+        <span class="s3">61440</span><span class="s0">: </span><span class="s3">12</span><span class="s0">,</span>
+        <span class="s3">63488</span><span class="s0">: </span><span class="s3">11</span><span class="s0">,</span>
+        <span class="s3">64512</span><span class="s0">: </span><span class="s3">10</span><span class="s0">,</span>
+        <span class="s3">65024</span><span class="s0">: </span><span class="s3">9</span><span class="s0">,</span>
+        <span class="s3">65280</span><span class="s0">: </span><span class="s3">8</span><span class="s0">,</span>
+        <span class="s3">65408</span><span class="s0">: </span><span class="s3">7</span><span class="s0">,</span>
+        <span class="s3">65472</span><span class="s0">: </span><span class="s3">6</span><span class="s0">,</span>
+        <span class="s3">65504</span><span class="s0">: </span><span class="s3">5</span><span class="s0">,</span>
+        <span class="s3">65520</span><span class="s0">: </span><span class="s3">4</span><span class="s0">,</span>
+        <span class="s3">65528</span><span class="s0">: </span><span class="s3">3</span><span class="s0">,</span>
+        <span class="s3">65532</span><span class="s0">: </span><span class="s3">2</span><span class="s0">,</span>
+        <span class="s3">65534</span><span class="s0">: </span><span class="s3">1</span><span class="s0">,</span>
+        <span class="s3">65535</span><span class="s0">: </span><span class="s3">0</span>
+      <span class="s0">};</span>
+      <span class="s0">cidr = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">stop = </span><span class="s1">false</span><span class="s0">;</span>
+      <span class="s1">for </span><span class="s0">(i = k = </span><span class="s3">7</span><span class="s0">; k &gt;= </span><span class="s3">0</span><span class="s0">; i = k += -</span><span class="s3">1</span><span class="s0">) {</span>
+        <span class="s0">part = </span><span class="s1">this</span><span class="s0">.parts[i];</span>
+        <span class="s1">if </span><span class="s0">(part </span><span class="s1">in </span><span class="s0">zerotable) {</span>
+          <span class="s0">zeros = zerotable[part];</span>
+          <span class="s1">if </span><span class="s0">(stop &amp;&amp; zeros !== </span><span class="s3">0</span><span class="s0">) {</span>
+            <span class="s1">return null</span><span class="s0">;</span>
+          <span class="s0">}</span>
+          <span class="s1">if </span><span class="s0">(zeros !== </span><span class="s3">16</span><span class="s0">) {</span>
+            <span class="s0">stop = </span><span class="s1">true</span><span class="s0">;</span>
+          <span class="s0">}</span>
+          <span class="s0">cidr += zeros;</span>
+        <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+          <span class="s1">return null</span><span class="s0">;</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s3">128 </span><span class="s0">- cidr;</span>
+    <span class="s0">};</span>
+
+    <span class="s1">return </span><span class="s0">IPv6;</span>
+
+  <span class="s0">})();</span>
+
+  <span class="s0">ipv6Part = </span><span class="s2">&quot;(?:[0-9a-f]+::?)+&quot;</span><span class="s0">;</span>
+
+  <span class="s0">zoneIndex = </span><span class="s2">&quot;%[0-9a-z]{1,}&quot;</span><span class="s0">;</span>
+
+  <span class="s0">ipv6Regexes = {</span>
+    <span class="s0">zoneIndex: </span><span class="s1">new </span><span class="s0">RegExp(zoneIndex, </span><span class="s2">'i'</span><span class="s0">),</span>
+    <span class="s2">&quot;native&quot;</span><span class="s0">: </span><span class="s1">new </span><span class="s0">RegExp(</span><span class="s2">&quot;^(::)?(&quot; </span><span class="s0">+ ipv6Part + </span><span class="s2">&quot;)?([0-9a-f]+)?(::)?(&quot; </span><span class="s0">+ zoneIndex + </span><span class="s2">&quot;)?$&quot;</span><span class="s0">, </span><span class="s2">'i'</span><span class="s0">),</span>
+    <span class="s0">transitional: </span><span class="s1">new </span><span class="s0">RegExp((</span><span class="s2">&quot;^((?:&quot; </span><span class="s0">+ ipv6Part + </span><span class="s2">&quot;)|(?:::)(?:&quot; </span><span class="s0">+ ipv6Part + </span><span class="s2">&quot;)?)&quot;</span><span class="s0">) + (ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part + </span><span class="s2">&quot;</span><span class="s1">\\</span><span class="s2">.&quot; </span><span class="s0">+ ipv4Part) + (</span><span class="s2">&quot;(&quot; </span><span class="s0">+ zoneIndex + </span><span class="s2">&quot;)?$&quot;</span><span class="s0">), </span><span class="s2">'i'</span><span class="s0">)</span>
+  <span class="s0">};</span>
+
+  <span class="s0">expandIPv6 = </span><span class="s1">function</span><span class="s0">(string, parts) {</span>
+    <span class="s1">var </span><span class="s0">colonCount, lastColon, part, replacement, replacementCount, zoneId;</span>
+    <span class="s1">if </span><span class="s0">(string.indexOf(</span><span class="s2">'::'</span><span class="s0">) !== string.lastIndexOf(</span><span class="s2">'::'</span><span class="s0">)) {</span>
+      <span class="s1">return null</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">zoneId = (string.match(ipv6Regexes[</span><span class="s2">'zoneIndex'</span><span class="s0">]) || [])[</span><span class="s3">0</span><span class="s0">];</span>
+    <span class="s1">if </span><span class="s0">(zoneId) {</span>
+      <span class="s0">zoneId = zoneId.substring(</span><span class="s3">1</span><span class="s0">);</span>
+      <span class="s0">string = string.replace(/%.+$/, </span><span class="s2">''</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s0">colonCount = </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s0">lastColon = -</span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s1">while </span><span class="s0">((lastColon = string.indexOf(</span><span class="s2">':'</span><span class="s0">, lastColon + </span><span class="s3">1</span><span class="s0">)) &gt;= </span><span class="s3">0</span><span class="s0">) {</span>
+      <span class="s0">colonCount++;</span>
+    <span class="s0">}</span>
+    <span class="s1">if </span><span class="s0">(string.substr(</span><span class="s3">0</span><span class="s0">, </span><span class="s3">2</span><span class="s0">) === </span><span class="s2">'::'</span><span class="s0">) {</span>
+      <span class="s0">colonCount--;</span>
+    <span class="s0">}</span>
+    <span class="s1">if </span><span class="s0">(string.substr(-</span><span class="s3">2</span><span class="s0">, </span><span class="s3">2</span><span class="s0">) === </span><span class="s2">'::'</span><span class="s0">) {</span>
+      <span class="s0">colonCount--;</span>
+    <span class="s0">}</span>
+    <span class="s1">if </span><span class="s0">(colonCount &gt; parts) {</span>
+      <span class="s1">return null</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">replacementCount = parts - colonCount;</span>
+    <span class="s0">replacement = </span><span class="s2">':'</span><span class="s0">;</span>
+    <span class="s1">while </span><span class="s0">(replacementCount--) {</span>
+      <span class="s0">replacement += </span><span class="s2">'0:'</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">string = string.replace(</span><span class="s2">'::'</span><span class="s0">, replacement);</span>
+    <span class="s1">if </span><span class="s0">(string[</span><span class="s3">0</span><span class="s0">] === </span><span class="s2">':'</span><span class="s0">) {</span>
+      <span class="s0">string = string.slice(</span><span class="s3">1</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s1">if </span><span class="s0">(string[string.length - </span><span class="s3">1</span><span class="s0">] === </span><span class="s2">':'</span><span class="s0">) {</span>
+      <span class="s0">string = string.slice(</span><span class="s3">0</span><span class="s0">, -</span><span class="s3">1</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s0">parts = (</span><span class="s1">function</span><span class="s0">() {</span>
+      <span class="s1">var </span><span class="s0">k, len, ref, results;</span>
+      <span class="s0">ref = string.split(</span><span class="s2">&quot;:&quot;</span><span class="s0">);</span>
+      <span class="s0">results = [];</span>
+      <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = ref.length; k &lt; len; k++) {</span>
+        <span class="s0">part = ref[k];</span>
+        <span class="s0">results.push(parseInt(part, </span><span class="s3">16</span><span class="s0">));</span>
+      <span class="s0">}</span>
+      <span class="s1">return </span><span class="s0">results;</span>
+    <span class="s0">})();</span>
+    <span class="s1">return </span><span class="s0">{</span>
+      <span class="s0">parts: parts,</span>
+      <span class="s0">zoneId: zoneId</span>
+    <span class="s0">};</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv6.parser = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">addr, k, len, match, octet, octets, zoneId;</span>
+    <span class="s1">if </span><span class="s0">(ipv6Regexes[</span><span class="s2">'native'</span><span class="s0">].test(string)) {</span>
+      <span class="s1">return </span><span class="s0">expandIPv6(string, </span><span class="s3">8</span><span class="s0">);</span>
+    <span class="s0">} </span><span class="s1">else if </span><span class="s0">(match = string.match(ipv6Regexes[</span><span class="s2">'transitional'</span><span class="s0">])) {</span>
+      <span class="s0">zoneId = match[</span><span class="s3">6</span><span class="s0">] || </span><span class="s2">''</span><span class="s0">;</span>
+      <span class="s0">addr = expandIPv6(match[</span><span class="s3">1</span><span class="s0">].slice(</span><span class="s3">0</span><span class="s0">, -</span><span class="s3">1</span><span class="s0">) + zoneId, </span><span class="s3">6</span><span class="s0">);</span>
+      <span class="s1">if </span><span class="s0">(addr.parts) {</span>
+        <span class="s0">octets = [parseInt(match[</span><span class="s3">2</span><span class="s0">]), parseInt(match[</span><span class="s3">3</span><span class="s0">]), parseInt(match[</span><span class="s3">4</span><span class="s0">]), parseInt(match[</span><span class="s3">5</span><span class="s0">])];</span>
+        <span class="s1">for </span><span class="s0">(k = </span><span class="s3">0</span><span class="s0">, len = octets.length; k &lt; len; k++) {</span>
+          <span class="s0">octet = octets[k];</span>
+          <span class="s1">if </span><span class="s0">(!((</span><span class="s3">0 </span><span class="s0">&lt;= octet &amp;&amp; octet &lt;= </span><span class="s3">255</span><span class="s0">))) {</span>
+            <span class="s1">return null</span><span class="s0">;</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s0">addr.parts.push(octets[</span><span class="s3">0</span><span class="s0">] &lt;&lt; </span><span class="s3">8 </span><span class="s0">| octets[</span><span class="s3">1</span><span class="s0">]);</span>
+        <span class="s0">addr.parts.push(octets[</span><span class="s3">2</span><span class="s0">] &lt;&lt; </span><span class="s3">8 </span><span class="s0">| octets[</span><span class="s3">3</span><span class="s0">]);</span>
+        <span class="s1">return </span><span class="s0">{</span>
+          <span class="s0">parts: addr.parts,</span>
+          <span class="s0">zoneId: addr.zoneId</span>
+        <span class="s0">};</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s1">return null</span><span class="s0">;</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.isIPv4 = ipaddr.IPv6.isIPv6 = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">return this</span><span class="s0">.parser(string) !== </span><span class="s1">null</span><span class="s0">;</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.isValid = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">e;</span>
+    <span class="s1">try </span><span class="s0">{</span>
+      <span class="s1">new this</span><span class="s0">(</span><span class="s1">this</span><span class="s0">.parser(string));</span>
+      <span class="s1">return true</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+      <span class="s0">e = error1;</span>
+      <span class="s1">return false</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.isValidFourPartDecimal = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">if </span><span class="s0">(ipaddr.IPv4.isValid(string) &amp;&amp; string.match(/^(</span><span class="s3">0</span><span class="s0">|[</span><span class="s3">1</span><span class="s0">-</span><span class="s3">9</span><span class="s0">]\d*)(\.(</span><span class="s3">0</span><span class="s0">|[</span><span class="s3">1</span><span class="s0">-</span><span class="s3">9</span><span class="s0">]\d*)){</span><span class="s3">3</span><span class="s0">}$/)) {</span>
+      <span class="s1">return true</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+      <span class="s1">return false</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv6.isValid = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">addr, e;</span>
+    <span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">string === </span><span class="s2">&quot;string&quot; </span><span class="s0">&amp;&amp; string.indexOf(</span><span class="s2">&quot;:&quot;</span><span class="s0">) === -</span><span class="s3">1</span><span class="s0">) {</span>
+      <span class="s1">return false</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s1">try </span><span class="s0">{</span>
+      <span class="s0">addr = </span><span class="s1">this</span><span class="s0">.parser(string);</span>
+      <span class="s1">new this</span><span class="s0">(addr.parts, addr.zoneId);</span>
+      <span class="s1">return true</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+      <span class="s0">e = error1;</span>
+      <span class="s1">return false</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.parse = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">parts;</span>
+    <span class="s0">parts = </span><span class="s1">this</span><span class="s0">.parser(string);</span>
+    <span class="s1">if </span><span class="s0">(parts === </span><span class="s1">null</span><span class="s0">) {</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: string is not formatted like ip address&quot;</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s1">return new this</span><span class="s0">(parts);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv6.parse = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">addr;</span>
+    <span class="s0">addr = </span><span class="s1">this</span><span class="s0">.parser(string);</span>
+    <span class="s1">if </span><span class="s0">(addr.parts === </span><span class="s1">null</span><span class="s0">) {</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: string is not formatted like ip address&quot;</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s1">return new this</span><span class="s0">(addr.parts, addr.zoneId);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.parseCIDR = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">maskLength, match, parsed;</span>
+    <span class="s1">if </span><span class="s0">(match = string.match(/^(.+)\/(\d+)$/)) {</span>
+      <span class="s0">maskLength = parseInt(match[</span><span class="s3">2</span><span class="s0">]);</span>
+      <span class="s1">if </span><span class="s0">(maskLength &gt;= </span><span class="s3">0 </span><span class="s0">&amp;&amp; maskLength &lt;= </span><span class="s3">32</span><span class="s0">) {</span>
+        <span class="s0">parsed = [</span><span class="s1">this</span><span class="s0">.parse(match[</span><span class="s3">1</span><span class="s0">]), maskLength];</span>
+        <span class="s0">Object.defineProperty(parsed, </span><span class="s2">'toString'</span><span class="s0">, {</span>
+          <span class="s0">value: </span><span class="s1">function</span><span class="s0">() {</span>
+            <span class="s1">return this</span><span class="s0">.join(</span><span class="s2">'/'</span><span class="s0">);</span>
+          <span class="s0">}</span>
+        <span class="s0">});</span>
+        <span class="s1">return </span><span class="s0">parsed;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: string is not formatted like an IPv4 CIDR range&quot;</span><span class="s0">);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.subnetMaskFromPrefixLength = </span><span class="s1">function</span><span class="s0">(prefix) {</span>
+    <span class="s1">var </span><span class="s0">filledOctetCount, j, octets;</span>
+    <span class="s0">prefix = parseInt(prefix);</span>
+    <span class="s1">if </span><span class="s0">(prefix &lt; </span><span class="s3">0 </span><span class="s0">|| prefix &gt; </span><span class="s3">32</span><span class="s0">) {</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'ipaddr: invalid IPv4 prefix length'</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s0">octets = [</span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">, </span><span class="s3">0</span><span class="s0">];</span>
+    <span class="s0">j = </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s0">filledOctetCount = Math.floor(prefix / </span><span class="s3">8</span><span class="s0">);</span>
+    <span class="s1">while </span><span class="s0">(j &lt; filledOctetCount) {</span>
+      <span class="s0">octets[j] = </span><span class="s3">255</span><span class="s0">;</span>
+      <span class="s0">j++;</span>
+    <span class="s0">}</span>
+    <span class="s1">if </span><span class="s0">(filledOctetCount &lt; </span><span class="s3">4</span><span class="s0">) {</span>
+      <span class="s0">octets[filledOctetCount] = Math.pow(</span><span class="s3">2</span><span class="s0">, prefix % </span><span class="s3">8</span><span class="s0">) - </span><span class="s3">1 </span><span class="s0">&lt;&lt; </span><span class="s3">8 </span><span class="s0">- (prefix % </span><span class="s3">8</span><span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s1">return new this</span><span class="s0">(octets);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.broadcastAddressFromCIDR = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">cidr, error, i, ipInterfaceOctets, octets, subnetMaskOctets;</span>
+    <span class="s1">try </span><span class="s0">{</span>
+      <span class="s0">cidr = </span><span class="s1">this</span><span class="s0">.parseCIDR(string);</span>
+      <span class="s0">ipInterfaceOctets = cidr[</span><span class="s3">0</span><span class="s0">].toByteArray();</span>
+      <span class="s0">subnetMaskOctets = </span><span class="s1">this</span><span class="s0">.subnetMaskFromPrefixLength(cidr[</span><span class="s3">1</span><span class="s0">]).toByteArray();</span>
+      <span class="s0">octets = [];</span>
+      <span class="s0">i = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s1">while </span><span class="s0">(i &lt; </span><span class="s3">4</span><span class="s0">) {</span>
+        <span class="s0">octets.push(parseInt(ipInterfaceOctets[i], </span><span class="s3">10</span><span class="s0">) | parseInt(subnetMaskOctets[i], </span><span class="s3">10</span><span class="s0">) ^ </span><span class="s3">255</span><span class="s0">);</span>
+        <span class="s0">i++;</span>
+      <span class="s0">}</span>
+      <span class="s1">return new this</span><span class="s0">(octets);</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+      <span class="s0">error = error1;</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'ipaddr: the address does not have IPv4 CIDR format'</span><span class="s0">);</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv4.networkAddressFromCIDR = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">cidr, error, i, ipInterfaceOctets, octets, subnetMaskOctets;</span>
+    <span class="s1">try </span><span class="s0">{</span>
+      <span class="s0">cidr = </span><span class="s1">this</span><span class="s0">.parseCIDR(string);</span>
+      <span class="s0">ipInterfaceOctets = cidr[</span><span class="s3">0</span><span class="s0">].toByteArray();</span>
+      <span class="s0">subnetMaskOctets = </span><span class="s1">this</span><span class="s0">.subnetMaskFromPrefixLength(cidr[</span><span class="s3">1</span><span class="s0">]).toByteArray();</span>
+      <span class="s0">octets = [];</span>
+      <span class="s0">i = </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s1">while </span><span class="s0">(i &lt; </span><span class="s3">4</span><span class="s0">) {</span>
+        <span class="s0">octets.push(parseInt(ipInterfaceOctets[i], </span><span class="s3">10</span><span class="s0">) &amp; parseInt(subnetMaskOctets[i], </span><span class="s3">10</span><span class="s0">));</span>
+        <span class="s0">i++;</span>
+      <span class="s0">}</span>
+      <span class="s1">return new this</span><span class="s0">(octets);</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+      <span class="s0">error = error1;</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'ipaddr: the address does not have IPv4 CIDR format'</span><span class="s0">);</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.IPv6.parseCIDR = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">maskLength, match, parsed;</span>
+    <span class="s1">if </span><span class="s0">(match = string.match(/^(.+)\/(\d+)$/)) {</span>
+      <span class="s0">maskLength = parseInt(match[</span><span class="s3">2</span><span class="s0">]);</span>
+      <span class="s1">if </span><span class="s0">(maskLength &gt;= </span><span class="s3">0 </span><span class="s0">&amp;&amp; maskLength &lt;= </span><span class="s3">128</span><span class="s0">) {</span>
+        <span class="s0">parsed = [</span><span class="s1">this</span><span class="s0">.parse(match[</span><span class="s3">1</span><span class="s0">]), maskLength];</span>
+        <span class="s0">Object.defineProperty(parsed, </span><span class="s2">'toString'</span><span class="s0">, {</span>
+          <span class="s0">value: </span><span class="s1">function</span><span class="s0">() {</span>
+            <span class="s1">return this</span><span class="s0">.join(</span><span class="s2">'/'</span><span class="s0">);</span>
+          <span class="s0">}</span>
+        <span class="s0">});</span>
+        <span class="s1">return </span><span class="s0">parsed;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: string is not formatted like an IPv6 CIDR range&quot;</span><span class="s0">);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.isValid = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">return </span><span class="s0">ipaddr.IPv6.isValid(string) || ipaddr.IPv4.isValid(string);</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.parse = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">if </span><span class="s0">(ipaddr.IPv6.isValid(string)) {</span>
+      <span class="s1">return </span><span class="s0">ipaddr.IPv6.parse(string);</span>
+    <span class="s0">} </span><span class="s1">else if </span><span class="s0">(ipaddr.IPv4.isValid(string)) {</span>
+      <span class="s1">return </span><span class="s0">ipaddr.IPv4.parse(string);</span>
+    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: the address has neither IPv6 nor IPv4 format&quot;</span><span class="s0">);</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.parseCIDR = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">e;</span>
+    <span class="s1">try </span><span class="s0">{</span>
+      <span class="s1">return </span><span class="s0">ipaddr.IPv6.parseCIDR(string);</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+      <span class="s0">e = error1;</span>
+      <span class="s1">try </span><span class="s0">{</span>
+        <span class="s1">return </span><span class="s0">ipaddr.IPv4.parseCIDR(string);</span>
+      <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error1) {</span>
+        <span class="s0">e = error1;</span>
+        <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: the address has neither IPv6 nor IPv4 CIDR format&quot;</span><span class="s0">);</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.fromByteArray = </span><span class="s1">function</span><span class="s0">(bytes) {</span>
+    <span class="s1">var </span><span class="s0">length;</span>
+    <span class="s0">length = bytes.length;</span>
+    <span class="s1">if </span><span class="s0">(length === </span><span class="s3">4</span><span class="s0">) {</span>
+      <span class="s1">return new </span><span class="s0">ipaddr.IPv4(bytes);</span>
+    <span class="s0">} </span><span class="s1">else if </span><span class="s0">(length === </span><span class="s3">16</span><span class="s0">) {</span>
+      <span class="s1">return new </span><span class="s0">ipaddr.IPv6(bytes);</span>
+    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+      <span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">&quot;ipaddr: the binary input is neither an IPv6 nor IPv4 address&quot;</span><span class="s0">);</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+  <span class="s0">ipaddr.process = </span><span class="s1">function</span><span class="s0">(string) {</span>
+    <span class="s1">var </span><span class="s0">addr;</span>
+    <span class="s0">addr = </span><span class="s1">this</span><span class="s0">.parse(string);</span>
+    <span class="s1">if </span><span class="s0">(addr.kind() === </span><span class="s2">'ipv6' </span><span class="s0">&amp;&amp; addr.isIPv4MappedAddress()) {</span>
+      <span class="s1">return </span><span class="s0">addr.toIPv4Address();</span>
+    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+      <span class="s1">return </span><span class="s0">addr;</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+
+<span class="s0">}).call(</span><span class="s1">this</span><span class="s0">);</span>
+</pre>
+</body>
+</html>

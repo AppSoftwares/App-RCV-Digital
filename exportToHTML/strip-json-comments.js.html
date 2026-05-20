@@ -1,0 +1,198 @@
+<html>
+<head>
+<title>strip-json-comments.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+strip-json-comments.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Natsu @xiaoxiaojx 
+ 
+    This file contains code ported from strip-json-comments: 
+    https://github.com/sindresorhus/strip-json-comments 
+    Original license: MIT 
+    Original author: Sindre Sorhus 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * @typedef {object} StripJsonCommentsOptions 
+ * @property {boolean=} whitespace Replace comments with whitespace 
+ * @property {boolean=} trailingCommas Strip trailing commas 
+ */</span>
+
+<span class="s1">const singleComment = Symbol(</span><span class="s2">&quot;singleComment&quot;</span><span class="s1">);</span>
+<span class="s1">const multiComment = Symbol(</span><span class="s2">&quot;multiComment&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Strip without whitespace (returns empty string) 
+ * @param {string} _string Unused 
+ * @param {number} _start Unused 
+ * @param {number} _end Unused 
+ * @returns {string} Empty string for all input 
+ */</span>
+<span class="s1">const stripWithoutWhitespace = (_string, _start, _end) =&gt; </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * Replace all characters except ASCII spaces, tabs and line endings with regular spaces to ensure valid JSON output. 
+ * @param {string} string String to process 
+ * @param {number} start Start index 
+ * @param {number} end End index 
+ * @returns {string} Processed string with comments replaced by whitespace 
+ */</span>
+<span class="s1">const stripWithWhitespace = (string, start, end) =&gt;</span>
+	<span class="s1">string.slice(start, end).replace(/[^ \t\r\n]/g, </span><span class="s2">&quot; &quot;</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Check if a quote is escaped 
+ * @param {string} jsonString JSON string 
+ * @param {number} quotePosition Position of the quote 
+ * @returns {boolean} True if the quote at the given position is escaped 
+ */</span>
+<span class="s1">const isEscaped = (jsonString, quotePosition) =&gt; {</span>
+	<span class="s1">let index = quotePosition - </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s1">let backslashCount = </span><span class="s3">0</span><span class="s1">;</span>
+
+	<span class="s4">while </span><span class="s1">(jsonString[index] === </span><span class="s2">&quot;</span><span class="s4">\\</span><span class="s2">&quot;</span><span class="s1">) {</span>
+		<span class="s1">index -= </span><span class="s3">1</span><span class="s1">;</span>
+		<span class="s1">backslashCount += </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">Boolean(backslashCount % </span><span class="s3">2</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Strip comments from JSON string 
+ * @param {string} jsonString JSON string with potential comments 
+ * @param {StripJsonCommentsOptions} options Options 
+ * @returns {string} JSON string without comments 
+ */</span>
+<span class="s4">function </span><span class="s1">stripJsonComments(</span>
+	<span class="s1">jsonString,</span>
+	<span class="s1">{ whitespace = </span><span class="s4">true</span><span class="s1">, trailingCommas = </span><span class="s4">false </span><span class="s1">} = {},</span>
+<span class="s1">) {</span>
+	<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">jsonString !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+		<span class="s4">throw new </span><span class="s1">TypeError(</span>
+			<span class="s1">`Expected argument \`jsonString\` to be a \`string\`, got \`${</span><span class="s4">typeof </span><span class="s1">jsonString}\``,</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const strip = whitespace ? stripWithWhitespace : stripWithoutWhitespace;</span>
+
+	<span class="s1">let isInsideString = </span><span class="s4">false</span><span class="s1">;</span>
+	<span class="s0">/** @type {false | typeof singleComment | typeof multiComment} */</span>
+	<span class="s1">let isInsideComment = </span><span class="s4">false</span><span class="s1">;</span>
+	<span class="s1">let offset = </span><span class="s3">0</span><span class="s1">;</span>
+	<span class="s1">let buffer = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+	<span class="s1">let result = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+	<span class="s1">let commaIndex = -</span><span class="s3">1</span><span class="s1">;</span>
+
+	<span class="s4">for </span><span class="s1">(let index = </span><span class="s3">0</span><span class="s1">; index &lt; jsonString.length; index++) {</span>
+		<span class="s1">const currentCharacter = jsonString[index];</span>
+		<span class="s1">const nextCharacter = jsonString[index + </span><span class="s3">1</span><span class="s1">];</span>
+
+		<span class="s4">if </span><span class="s1">(!isInsideComment &amp;&amp; currentCharacter === </span><span class="s2">'&quot;'</span><span class="s1">) {</span>
+			<span class="s0">// Enter or exit string</span>
+			<span class="s1">const escaped = isEscaped(jsonString, index);</span>
+			<span class="s4">if </span><span class="s1">(!escaped) {</span>
+				<span class="s1">isInsideString = !isInsideString;</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s4">if </span><span class="s1">(isInsideString) {</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s4">if </span><span class="s1">(!isInsideComment &amp;&amp; currentCharacter + nextCharacter === </span><span class="s2">&quot;//&quot;</span><span class="s1">) {</span>
+			<span class="s0">// Enter single-line comment</span>
+			<span class="s1">buffer += jsonString.slice(offset, index);</span>
+			<span class="s1">offset = index;</span>
+			<span class="s1">isInsideComment = singleComment;</span>
+			<span class="s1">index++;</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+			<span class="s1">isInsideComment === singleComment &amp;&amp;</span>
+			<span class="s1">currentCharacter + nextCharacter === </span><span class="s2">&quot;</span><span class="s4">\r\n</span><span class="s2">&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s0">// Exit single-line comment via \r\n</span>
+			<span class="s1">index++;</span>
+			<span class="s1">isInsideComment = </span><span class="s4">false</span><span class="s1">;</span>
+			<span class="s1">buffer += strip(jsonString, offset, index);</span>
+			<span class="s1">offset = index;</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(isInsideComment === singleComment &amp;&amp; currentCharacter === </span><span class="s2">&quot;</span><span class="s4">\n</span><span class="s2">&quot;</span><span class="s1">) {</span>
+			<span class="s0">// Exit single-line comment via \n</span>
+			<span class="s1">isInsideComment = </span><span class="s4">false</span><span class="s1">;</span>
+			<span class="s1">buffer += strip(jsonString, offset, index);</span>
+			<span class="s1">offset = index;</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(!isInsideComment &amp;&amp; currentCharacter + nextCharacter === </span><span class="s2">&quot;/*&quot;</span><span class="s1">) {</span>
+			<span class="s0">// Enter multiline comment</span>
+			<span class="s1">buffer += jsonString.slice(offset, index);</span>
+			<span class="s1">offset = index;</span>
+			<span class="s1">isInsideComment = multiComment;</span>
+			<span class="s1">index++;</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+			<span class="s1">isInsideComment === multiComment &amp;&amp;</span>
+			<span class="s1">currentCharacter + nextCharacter === </span><span class="s2">&quot;*/&quot;</span>
+		<span class="s1">) {</span>
+			<span class="s0">// Exit multiline comment</span>
+			<span class="s1">index++;</span>
+			<span class="s1">isInsideComment = </span><span class="s4">false</span><span class="s1">;</span>
+			<span class="s1">buffer += strip(jsonString, offset, index + </span><span class="s3">1</span><span class="s1">);</span>
+			<span class="s1">offset = index + </span><span class="s3">1</span><span class="s1">;</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(trailingCommas &amp;&amp; !isInsideComment) {</span>
+			<span class="s4">if </span><span class="s1">(commaIndex !== -</span><span class="s3">1</span><span class="s1">) {</span>
+				<span class="s4">if </span><span class="s1">(currentCharacter === </span><span class="s2">&quot;}&quot; </span><span class="s1">|| currentCharacter === </span><span class="s2">&quot;]&quot;</span><span class="s1">) {</span>
+					<span class="s0">// Strip trailing comma</span>
+					<span class="s1">buffer += jsonString.slice(offset, index);</span>
+					<span class="s1">result += strip(buffer, </span><span class="s3">0</span><span class="s1">, </span><span class="s3">1</span><span class="s1">) + buffer.slice(</span><span class="s3">1</span><span class="s1">);</span>
+					<span class="s1">buffer = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+					<span class="s1">offset = index;</span>
+					<span class="s1">commaIndex = -</span><span class="s3">1</span><span class="s1">;</span>
+				<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+					<span class="s1">currentCharacter !== </span><span class="s2">&quot; &quot; </span><span class="s1">&amp;&amp;</span>
+					<span class="s1">currentCharacter !== </span><span class="s2">&quot;</span><span class="s4">\t</span><span class="s2">&quot; </span><span class="s1">&amp;&amp;</span>
+					<span class="s1">currentCharacter !== </span><span class="s2">&quot;</span><span class="s4">\r</span><span class="s2">&quot; </span><span class="s1">&amp;&amp;</span>
+					<span class="s1">currentCharacter !== </span><span class="s2">&quot;</span><span class="s4">\n</span><span class="s2">&quot;</span>
+				<span class="s1">) {</span>
+					<span class="s0">// Hit non-whitespace following a comma; comma is not trailing</span>
+					<span class="s1">buffer += jsonString.slice(offset, index);</span>
+					<span class="s1">offset = index;</span>
+					<span class="s1">commaIndex = -</span><span class="s3">1</span><span class="s1">;</span>
+				<span class="s1">}</span>
+			<span class="s1">} </span><span class="s4">else if </span><span class="s1">(currentCharacter === </span><span class="s2">&quot;,&quot;</span><span class="s1">) {</span>
+				<span class="s0">// Flush buffer prior to this point, and save new comma index</span>
+				<span class="s1">result += buffer + jsonString.slice(offset, index);</span>
+				<span class="s1">buffer = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+				<span class="s1">offset = index;</span>
+				<span class="s1">commaIndex = index;</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const remaining =</span>
+		<span class="s1">isInsideComment === singleComment</span>
+			<span class="s1">? strip(jsonString, offset, jsonString.length)</span>
+			<span class="s1">: jsonString.slice(offset);</span>
+
+	<span class="s4">return </span><span class="s1">result + buffer + remaining;</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = stripJsonComments;</span>
+</pre>
+</body>
+</html>

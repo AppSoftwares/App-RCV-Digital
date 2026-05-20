@@ -1,0 +1,381 @@
+<html>
+<head>
+<title>rewrite-live-references.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+rewrite-live-references.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.</span><span class="s2">default </span><span class="s1">= rewriteLiveReferences;</span>
+<span class="s2">var </span><span class="s1">_core = require(</span><span class="s0">&quot;@babel/core&quot;</span><span class="s1">);</span>
+<span class="s2">function </span><span class="s1">isInType(path) {</span>
+  <span class="s2">do </span><span class="s1">{</span>
+    <span class="s2">switch </span><span class="s1">(path.parent.type) {</span>
+      <span class="s2">case </span><span class="s0">&quot;TSTypeAnnotation&quot;</span><span class="s1">:</span>
+      <span class="s2">case </span><span class="s0">&quot;TSTypeAliasDeclaration&quot;</span><span class="s1">:</span>
+      <span class="s2">case </span><span class="s0">&quot;TSTypeReference&quot;</span><span class="s1">:</span>
+      <span class="s2">case </span><span class="s0">&quot;TypeAnnotation&quot;</span><span class="s1">:</span>
+      <span class="s2">case </span><span class="s0">&quot;TypeAlias&quot;</span><span class="s1">:</span>
+        <span class="s2">return true</span><span class="s1">;</span>
+      <span class="s2">case </span><span class="s0">&quot;ExportSpecifier&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">path.parentPath.parent.exportKind === </span><span class="s0">&quot;type&quot;</span><span class="s1">;</span>
+      <span class="s2">default</span><span class="s1">:</span>
+        <span class="s2">if </span><span class="s1">(path.parentPath.isStatement() || path.parentPath.isExpression()) {</span>
+          <span class="s2">return false</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s2">while </span><span class="s1">(path = path.parentPath);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">rewriteLiveReferences(programPath, metadata, wrapReference) {</span>
+  <span class="s1">const imported = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const exported = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const requeueInParent = path =&gt; {</span>
+    <span class="s1">programPath.requeue(path);</span>
+  <span class="s1">};</span>
+  <span class="s2">for </span><span class="s1">(const [source, data] of metadata.source) {</span>
+    <span class="s2">for </span><span class="s1">(const [localName, importName] of data.imports) {</span>
+      <span class="s1">imported.set(localName, [source, importName, </span><span class="s2">null</span><span class="s1">]);</span>
+    <span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">(const localName of data.importsNamespace) {</span>
+      <span class="s1">imported.set(localName, [source, </span><span class="s2">null</span><span class="s1">, localName]);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">for </span><span class="s1">(const [local, data] of metadata.local) {</span>
+    <span class="s1">let exportMeta = exported.get(local);</span>
+    <span class="s2">if </span><span class="s1">(!exportMeta) {</span>
+      <span class="s1">exportMeta = [];</span>
+      <span class="s1">exported.set(local, exportMeta);</span>
+    <span class="s1">}</span>
+    <span class="s1">exportMeta.push(...data.names);</span>
+  <span class="s1">}</span>
+  <span class="s1">const rewriteBindingInitVisitorState = {</span>
+    <span class="s1">metadata,</span>
+    <span class="s1">requeueInParent,</span>
+    <span class="s1">scope: programPath.scope,</span>
+    <span class="s1">exported</span>
+  <span class="s1">};</span>
+  <span class="s1">programPath.traverse(rewriteBindingInitVisitor, rewriteBindingInitVisitorState);</span>
+  <span class="s1">const rewriteReferencesVisitorState = {</span>
+    <span class="s1">seen: </span><span class="s2">new </span><span class="s1">WeakSet(),</span>
+    <span class="s1">metadata,</span>
+    <span class="s1">requeueInParent,</span>
+    <span class="s1">scope: programPath.scope,</span>
+    <span class="s1">imported,</span>
+    <span class="s1">exported,</span>
+    <span class="s1">buildImportReference([source, importName, localName], identNode) {</span>
+      <span class="s1">const meta = metadata.source.get(source);</span>
+      <span class="s1">meta.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s2">if </span><span class="s1">(localName) {</span>
+        <span class="s2">if </span><span class="s1">(meta.wrap) {</span>
+          <span class="s2">var </span><span class="s1">_wrapReference;</span>
+          <span class="s1">identNode = (_wrapReference = wrapReference(identNode, meta.wrap)) != </span><span class="s2">null </span><span class="s1">? _wrapReference : identNode;</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">identNode;</span>
+      <span class="s1">}</span>
+      <span class="s1">let namespace = _core.types.identifier(meta.name);</span>
+      <span class="s2">if </span><span class="s1">(meta.wrap) {</span>
+        <span class="s2">var </span><span class="s1">_wrapReference2;</span>
+        <span class="s1">namespace = (_wrapReference2 = wrapReference(namespace, meta.wrap)) != </span><span class="s2">null </span><span class="s1">? _wrapReference2 : namespace;</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(importName === </span><span class="s0">&quot;default&quot; </span><span class="s1">&amp;&amp; meta.interop === </span><span class="s0">&quot;node-default&quot;</span><span class="s1">) {</span>
+        <span class="s2">return </span><span class="s1">namespace;</span>
+      <span class="s1">}</span>
+      <span class="s1">const computed = metadata.stringSpecifiers.has(importName);</span>
+      <span class="s2">return </span><span class="s1">_core.types.memberExpression(namespace, computed ? _core.types.stringLiteral(importName) : _core.types.identifier(importName), computed);</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+  <span class="s1">programPath.traverse(rewriteReferencesVisitor, rewriteReferencesVisitorState);</span>
+<span class="s1">}</span>
+<span class="s1">const rewriteBindingInitVisitor = {</span>
+  <span class="s1">Scope(path) {</span>
+    <span class="s1">path.skip();</span>
+  <span class="s1">},</span>
+  <span class="s1">ClassDeclaration(path) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">requeueInParent,</span>
+      <span class="s1">exported,</span>
+      <span class="s1">metadata</span>
+    <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s1">const {</span>
+      <span class="s1">id</span>
+    <span class="s1">} = path.node;</span>
+    <span class="s2">if </span><span class="s1">(!id) </span><span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Expected class to have a name&quot;</span><span class="s1">);</span>
+    <span class="s1">const localName = id.name;</span>
+    <span class="s1">const exportNames = exported.get(localName) || [];</span>
+    <span class="s2">if </span><span class="s1">(exportNames.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">const statement = _core.types.expressionStatement(buildBindingExportAssignmentExpression(metadata, exportNames, _core.types.identifier(localName), path.scope));</span>
+      <span class="s1">statement._blockHoist = path.node._blockHoist;</span>
+      <span class="s1">requeueInParent(path.insertAfter(statement)[</span><span class="s3">0</span><span class="s1">]);</span>
+    <span class="s1">}</span>
+  <span class="s1">},</span>
+  <span class="s1">VariableDeclaration(path) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">requeueInParent,</span>
+      <span class="s1">exported,</span>
+      <span class="s1">metadata</span>
+    <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s1">const isVar = path.node.kind === </span><span class="s0">&quot;var&quot;</span><span class="s1">;</span>
+    <span class="s2">for </span><span class="s1">(const decl of path.get(</span><span class="s0">&quot;declarations&quot;</span><span class="s1">)) {</span>
+      <span class="s1">const {</span>
+        <span class="s1">id</span>
+      <span class="s1">} = decl.node;</span>
+      <span class="s1">let {</span>
+        <span class="s1">init</span>
+      <span class="s1">} = decl.node;</span>
+      <span class="s2">if </span><span class="s1">(_core.types.isIdentifier(id) &amp;&amp; exported.has(id.name) &amp;&amp; !_core.types.isArrowFunctionExpression(init) &amp;&amp; (!_core.types.isFunctionExpression(init) || init.id) &amp;&amp; (!_core.types.isClassExpression(init) || init.id)) {</span>
+        <span class="s2">if </span><span class="s1">(!init) {</span>
+          <span class="s2">if </span><span class="s1">(isVar) {</span>
+            <span class="s2">continue</span><span class="s1">;</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">init = path.scope.buildUndefinedNode();</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s1">decl.node.init = buildBindingExportAssignmentExpression(metadata, exported.get(id.name), init, path.scope);</span>
+        <span class="s1">requeueInParent(decl.get(</span><span class="s0">&quot;init&quot;</span><span class="s1">));</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">for </span><span class="s1">(const localName of Object.keys(decl.getOuterBindingIdentifiers())) {</span>
+          <span class="s2">if </span><span class="s1">(exported.has(localName)) {</span>
+            <span class="s1">const statement = _core.types.expressionStatement(buildBindingExportAssignmentExpression(metadata, exported.get(localName), _core.types.identifier(localName), path.scope));</span>
+            <span class="s1">statement._blockHoist = path.node._blockHoist;</span>
+            <span class="s1">requeueInParent(path.insertAfter(statement)[</span><span class="s3">0</span><span class="s1">]);</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+<span class="s1">const buildBindingExportAssignmentExpression = (metadata, exportNames, localExpr, scope) =&gt; {</span>
+  <span class="s1">const exportsObjectName = metadata.exportName;</span>
+  <span class="s2">for </span><span class="s1">(let currentScope = scope; currentScope != </span><span class="s2">null</span><span class="s1">; currentScope = currentScope.parent) {</span>
+    <span class="s2">if </span><span class="s1">(currentScope.hasOwnBinding(exportsObjectName)) {</span>
+      <span class="s1">currentScope.rename(exportsObjectName);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">(exportNames || []).reduce((expr, exportName) =&gt; {</span>
+    <span class="s1">const {</span>
+      <span class="s1">stringSpecifiers</span>
+    <span class="s1">} = metadata;</span>
+    <span class="s1">const computed = stringSpecifiers.has(exportName);</span>
+    <span class="s2">return </span><span class="s1">_core.types.assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, _core.types.memberExpression(_core.types.identifier(exportsObjectName), computed ? _core.types.stringLiteral(exportName) : _core.types.identifier(exportName), computed), expr);</span>
+  <span class="s1">}, localExpr);</span>
+<span class="s1">};</span>
+<span class="s1">const buildImportThrow = localName =&gt; {</span>
+  <span class="s2">return </span><span class="s1">_core.template.expression.ast`</span>
+    <span class="s1">(</span><span class="s2">function</span><span class="s1">() {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">'&quot;' </span><span class="s1">+ </span><span class="s0">'${localName}' </span><span class="s1">+ </span><span class="s0">'&quot; is read-only.'</span><span class="s1">);</span>
+    <span class="s1">})()</span>
+  <span class="s1">`;</span>
+<span class="s1">};</span>
+<span class="s1">const rewriteReferencesVisitor = {</span>
+  <span class="s1">ReferencedIdentifier(path) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">seen,</span>
+      <span class="s1">buildImportReference,</span>
+      <span class="s1">scope,</span>
+      <span class="s1">imported,</span>
+      <span class="s1">requeueInParent</span>
+    <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(seen.has(path.node)) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">seen.add(path.node);</span>
+    <span class="s1">const localName = path.node.name;</span>
+    <span class="s1">const importData = imported.get(localName);</span>
+    <span class="s2">if </span><span class="s1">(importData) {</span>
+      <span class="s2">if </span><span class="s1">(isInType(path)) {</span>
+        <span class="s2">throw </span><span class="s1">path.buildCodeFrameError(`Cannot transform the imported binding </span><span class="s0">&quot;${localName}&quot; </span><span class="s1">since it</span><span class="s0">'s also used in a type annotation. ` + `Please strip type annotations using @babel/preset-typescript or @babel/preset-flow.`);</span>
+      <span class="s1">}</span>
+      <span class="s1">const localBinding = path.scope.getBinding(localName);</span>
+      <span class="s1">const rootBinding = scope.getBinding(localName);</span>
+      <span class="s2">if </span><span class="s1">(rootBinding !== localBinding) </span><span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">const ref = buildImportReference(importData, path.node);</span>
+      <span class="s1">ref.loc = path.node.loc;</span>
+      <span class="s2">if </span><span class="s1">((path.parentPath.isCallExpression({</span>
+        <span class="s1">callee: path.node</span>
+      <span class="s1">}) || path.parentPath.isOptionalCallExpression({</span>
+        <span class="s1">callee: path.node</span>
+      <span class="s1">}) || path.parentPath.isTaggedTemplateExpression({</span>
+        <span class="s1">tag: path.node</span>
+      <span class="s1">})) &amp;&amp; _core.types.isMemberExpression(ref)) {</span>
+        <span class="s1">path.replaceWith(_core.types.sequenceExpression([_core.types.numericLiteral(</span><span class="s3">0</span><span class="s1">), ref]));</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(path.isJSXIdentifier() &amp;&amp; _core.types.isMemberExpression(ref)) {</span>
+        <span class="s1">const {</span>
+          <span class="s1">object,</span>
+          <span class="s1">property</span>
+        <span class="s1">} = ref;</span>
+        <span class="s1">path.replaceWith(_core.types.jsxMemberExpression(_core.types.jsxIdentifier(object.name), _core.types.jsxIdentifier(property.name)));</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">path.replaceWith(ref);</span>
+      <span class="s1">}</span>
+      <span class="s1">requeueInParent(path);</span>
+      <span class="s1">path.skip();</span>
+    <span class="s1">}</span>
+  <span class="s1">},</span>
+  <span class="s1">UpdateExpression(path) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">scope,</span>
+      <span class="s1">seen,</span>
+      <span class="s1">imported,</span>
+      <span class="s1">exported,</span>
+      <span class="s1">requeueInParent,</span>
+      <span class="s1">buildImportReference</span>
+    <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(seen.has(path.node)) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">seen.add(path.node);</span>
+    <span class="s1">const arg = path.get(</span><span class="s0">&quot;argument&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(arg.isMemberExpression()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">const update = path.node;</span>
+    <span class="s2">if </span><span class="s1">(arg.isIdentifier()) {</span>
+      <span class="s1">const localName = arg.node.name;</span>
+      <span class="s2">if </span><span class="s1">(scope.getBinding(localName) !== path.scope.getBinding(localName)) {</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s1">const exportedNames = exported.get(localName);</span>
+      <span class="s1">const importData = imported.get(localName);</span>
+      <span class="s2">if </span><span class="s1">((exportedNames == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: exportedNames.length) &gt; </span><span class="s3">0 </span><span class="s1">|| importData) {</span>
+        <span class="s2">if </span><span class="s1">(importData) {</span>
+          <span class="s1">path.replaceWith(_core.types.assignmentExpression(update.operator[</span><span class="s3">0</span><span class="s1">] + </span><span class="s0">&quot;=&quot;</span><span class="s1">, buildImportReference(importData, arg.node), buildImportThrow(localName)));</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(update.prefix) {</span>
+          <span class="s1">path.replaceWith(buildBindingExportAssignmentExpression(</span><span class="s2">this</span><span class="s1">.metadata, exportedNames, _core.types.cloneNode(update), path.scope));</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">const ref = scope.generateDeclaredUidIdentifier(localName);</span>
+          <span class="s1">path.replaceWith(_core.types.sequenceExpression([_core.types.assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, _core.types.cloneNode(ref), _core.types.cloneNode(update)), buildBindingExportAssignmentExpression(</span><span class="s2">this</span><span class="s1">.metadata, exportedNames, _core.types.identifier(localName), path.scope), _core.types.cloneNode(ref)]));</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">requeueInParent(path);</span>
+    <span class="s1">path.skip();</span>
+  <span class="s1">},</span>
+  <span class="s1">AssignmentExpression: {</span>
+    <span class="s1">exit(path) {</span>
+      <span class="s1">const {</span>
+        <span class="s1">scope,</span>
+        <span class="s1">seen,</span>
+        <span class="s1">imported,</span>
+        <span class="s1">exported,</span>
+        <span class="s1">requeueInParent,</span>
+        <span class="s1">buildImportReference</span>
+      <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+      <span class="s2">if </span><span class="s1">(seen.has(path.node)) </span><span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">seen.add(path.node);</span>
+      <span class="s1">const left = path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(left.isMemberExpression()) </span><span class="s2">return</span><span class="s1">;</span>
+      <span class="s2">if </span><span class="s1">(left.isIdentifier()) {</span>
+        <span class="s1">const localName = left.node.name;</span>
+        <span class="s2">if </span><span class="s1">(scope.getBinding(localName) !== path.scope.getBinding(localName)) {</span>
+          <span class="s2">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">const exportedNames = exported.get(localName);</span>
+        <span class="s1">const importData = imported.get(localName);</span>
+        <span class="s2">if </span><span class="s1">((exportedNames == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: exportedNames.length) &gt; </span><span class="s3">0 </span><span class="s1">|| importData) {</span>
+          <span class="s1">const assignment = path.node;</span>
+          <span class="s2">if </span><span class="s1">(importData) {</span>
+            <span class="s1">assignment.left = buildImportReference(importData, left.node);</span>
+            <span class="s1">assignment.right = _core.types.sequenceExpression([assignment.right, buildImportThrow(localName)]);</span>
+          <span class="s1">}</span>
+          <span class="s1">const {</span>
+            <span class="s1">operator</span>
+          <span class="s1">} = assignment;</span>
+          <span class="s1">let newExpr;</span>
+          <span class="s2">if </span><span class="s1">(operator === </span><span class="s0">&quot;=&quot;</span><span class="s1">) {</span>
+            <span class="s1">newExpr = assignment;</span>
+          <span class="s1">} </span><span class="s2">else if </span><span class="s1">(operator === </span><span class="s0">&quot;&amp;&amp;=&quot; </span><span class="s1">|| operator === </span><span class="s0">&quot;||=&quot; </span><span class="s1">|| operator === </span><span class="s0">&quot;??=&quot;</span><span class="s1">) {</span>
+            <span class="s1">newExpr = _core.types.assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, assignment.left, _core.types.logicalExpression(operator.slice(</span><span class="s3">0</span><span class="s1">, -</span><span class="s3">1</span><span class="s1">), _core.types.cloneNode(assignment.left), assignment.right));</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">newExpr = _core.types.assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, assignment.left, _core.types.binaryExpression(operator.slice(</span><span class="s3">0</span><span class="s1">, -</span><span class="s3">1</span><span class="s1">), _core.types.cloneNode(assignment.left), assignment.right));</span>
+          <span class="s1">}</span>
+          <span class="s1">path.replaceWith(buildBindingExportAssignmentExpression(</span><span class="s2">this</span><span class="s1">.metadata, exportedNames, newExpr, path.scope));</span>
+          <span class="s1">requeueInParent(path);</span>
+          <span class="s1">path.skip();</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">const ids = left.getOuterBindingIdentifiers();</span>
+        <span class="s1">const programScopeIds = Object.keys(ids).filter(localName =&gt; scope.getBinding(localName) === path.scope.getBinding(localName));</span>
+        <span class="s1">const id = programScopeIds.find(localName =&gt; imported.has(localName));</span>
+        <span class="s2">if </span><span class="s1">(id) {</span>
+          <span class="s1">path.node.right = _core.types.sequenceExpression([path.node.right, buildImportThrow(id)]);</span>
+        <span class="s1">}</span>
+        <span class="s1">const items = [];</span>
+        <span class="s1">programScopeIds.forEach(localName =&gt; {</span>
+          <span class="s1">const exportedNames = exported.get(localName) || [];</span>
+          <span class="s2">if </span><span class="s1">(exportedNames.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+            <span class="s1">items.push(buildBindingExportAssignmentExpression(</span><span class="s2">this</span><span class="s1">.metadata, exportedNames, _core.types.identifier(localName), path.scope));</span>
+          <span class="s1">}</span>
+        <span class="s1">});</span>
+        <span class="s2">if </span><span class="s1">(items.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+          <span class="s1">let node = _core.types.sequenceExpression(items);</span>
+          <span class="s2">if </span><span class="s1">(path.parentPath.isExpressionStatement()) {</span>
+            <span class="s1">node = _core.types.expressionStatement(node);</span>
+            <span class="s1">node._blockHoist = path.parentPath.node._blockHoist;</span>
+          <span class="s1">}</span>
+          <span class="s1">const statement = path.insertAfter(node)[</span><span class="s3">0</span><span class="s1">];</span>
+          <span class="s1">requeueInParent(statement);</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">},</span>
+  <span class="s1">ForXStatement(path) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">scope,</span>
+      <span class="s1">node</span>
+    <span class="s1">} = path;</span>
+    <span class="s1">const {</span>
+      <span class="s1">left</span>
+    <span class="s1">} = node;</span>
+    <span class="s1">const {</span>
+      <span class="s1">exported,</span>
+      <span class="s1">imported,</span>
+      <span class="s1">scope: programScope</span>
+    <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!_core.types.isVariableDeclaration(left)) {</span>
+      <span class="s1">let didTransformExport = </span><span class="s2">false</span><span class="s1">,</span>
+        <span class="s1">importConstViolationName;</span>
+      <span class="s1">const loopBodyScope = path.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).scope;</span>
+      <span class="s2">for </span><span class="s1">(const name of Object.keys(_core.types.getOuterBindingIdentifiers(left))) {</span>
+        <span class="s2">if </span><span class="s1">(programScope.getBinding(name) === scope.getBinding(name)) {</span>
+          <span class="s2">if </span><span class="s1">(exported.has(name)) {</span>
+            <span class="s1">didTransformExport = </span><span class="s2">true</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(loopBodyScope.hasOwnBinding(name)) {</span>
+              <span class="s1">loopBodyScope.rename(name);</span>
+            <span class="s1">}</span>
+          <span class="s1">}</span>
+          <span class="s2">if </span><span class="s1">(imported.has(name) &amp;&amp; !importConstViolationName) {</span>
+            <span class="s1">importConstViolationName = name;</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(!didTransformExport &amp;&amp; !importConstViolationName) {</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s1">path.ensureBlock();</span>
+      <span class="s1">const bodyPath = path.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">);</span>
+      <span class="s1">const newLoopId = scope.generateUidIdentifierBasedOnNode(left);</span>
+      <span class="s1">path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">).replaceWith(_core.types.variableDeclaration(</span><span class="s0">&quot;let&quot;</span><span class="s1">, [_core.types.variableDeclarator(_core.types.cloneNode(newLoopId))]));</span>
+      <span class="s1">scope.registerDeclaration(path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">));</span>
+      <span class="s2">if </span><span class="s1">(didTransformExport) {</span>
+        <span class="s1">bodyPath.unshiftContainer(</span><span class="s0">&quot;body&quot;</span><span class="s1">, _core.types.expressionStatement(_core.types.assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, left, newLoopId)));</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(importConstViolationName) {</span>
+        <span class="s1">bodyPath.unshiftContainer(</span><span class="s0">&quot;body&quot;</span><span class="s1">, _core.types.expressionStatement(buildImportThrow(importConstViolationName)));</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s4">//# sourceMappingURL=rewrite-live-references.js.map</span>
+</pre>
+</body>
+</html>

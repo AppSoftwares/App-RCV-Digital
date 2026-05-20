@@ -1,0 +1,1703 @@
+<html>
+<head>
+<title>magic-string.umd.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #cf8e6d;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+magic-string.umd.js</font>
+</center></td></tr></table>
+<pre><span class="s0">(</span><span class="s1">function </span><span class="s0">(global, factory) {</span>
+	<span class="s1">typeof </span><span class="s0">exports === </span><span class="s2">'object' </span><span class="s0">&amp;&amp; </span><span class="s1">typeof </span><span class="s0">module !== </span><span class="s2">'undefined' </span><span class="s0">? module.exports = factory() :</span>
+	<span class="s1">typeof </span><span class="s0">define === </span><span class="s2">'function' </span><span class="s0">&amp;&amp; define.amd ? define(factory) :</span>
+	<span class="s0">(global = </span><span class="s1">typeof </span><span class="s0">globalThis !== </span><span class="s2">'undefined' </span><span class="s0">? globalThis : global || self, global.MagicString = factory());</span>
+<span class="s0">})(</span><span class="s1">this</span><span class="s0">, (</span><span class="s1">function </span><span class="s0">() { </span><span class="s2">'use strict'</span><span class="s0">;</span>
+
+	<span class="s0">class BitSet {</span>
+		<span class="s0">constructor(arg) {</span>
+			<span class="s1">this</span><span class="s0">.bits = arg </span><span class="s1">instanceof </span><span class="s0">BitSet ? arg.bits.slice() : [];</span>
+		<span class="s0">}</span>
+
+		<span class="s0">add(n) {</span>
+			<span class="s1">this</span><span class="s0">.bits[n &gt;&gt; </span><span class="s3">5</span><span class="s0">] |= </span><span class="s3">1 </span><span class="s0">&lt;&lt; (n &amp; </span><span class="s3">31</span><span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">has(n) {</span>
+			<span class="s1">return </span><span class="s0">!!(</span><span class="s1">this</span><span class="s0">.bits[n &gt;&gt; </span><span class="s3">5</span><span class="s0">] &amp; (</span><span class="s3">1 </span><span class="s0">&lt;&lt; (n &amp; </span><span class="s3">31</span><span class="s0">)));</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">class Chunk {</span>
+		<span class="s0">constructor(start, end, content) {</span>
+			<span class="s1">this</span><span class="s0">.start = start;</span>
+			<span class="s1">this</span><span class="s0">.end = end;</span>
+			<span class="s1">this</span><span class="s0">.original = content;</span>
+
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s2">''</span><span class="s0">;</span>
+
+			<span class="s1">this</span><span class="s0">.content = content;</span>
+			<span class="s1">this</span><span class="s0">.storeName = </span><span class="s1">false</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.edited = </span><span class="s1">false</span><span class="s0">;</span>
+
+			<span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.previous = </span><span class="s1">null</span><span class="s0">;</span>
+				<span class="s1">this</span><span class="s0">.next = </span><span class="s1">null</span><span class="s0">;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">appendLeft(content) {</span>
+			<span class="s1">this</span><span class="s0">.outro += content;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">appendRight(content) {</span>
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro + content;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">clone() {</span>
+			<span class="s0">const chunk = </span><span class="s1">new </span><span class="s0">Chunk(</span><span class="s1">this</span><span class="s0">.start, </span><span class="s1">this</span><span class="s0">.end, </span><span class="s1">this</span><span class="s0">.original);</span>
+
+			<span class="s0">chunk.intro = </span><span class="s1">this</span><span class="s0">.intro;</span>
+			<span class="s0">chunk.outro = </span><span class="s1">this</span><span class="s0">.outro;</span>
+			<span class="s0">chunk.content = </span><span class="s1">this</span><span class="s0">.content;</span>
+			<span class="s0">chunk.storeName = </span><span class="s1">this</span><span class="s0">.storeName;</span>
+			<span class="s0">chunk.edited = </span><span class="s1">this</span><span class="s0">.edited;</span>
+
+			<span class="s1">return </span><span class="s0">chunk;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">contains(index) {</span>
+			<span class="s1">return this</span><span class="s0">.start &lt; index &amp;&amp; index &lt; </span><span class="s1">this</span><span class="s0">.end;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">eachNext(fn) {</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">;</span>
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">fn(chunk);</span>
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">eachPrevious(fn) {</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">;</span>
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">fn(chunk);</span>
+				<span class="s0">chunk = chunk.previous;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">edit(content, storeName, contentOnly) {</span>
+			<span class="s1">this</span><span class="s0">.content = content;</span>
+			<span class="s1">if </span><span class="s0">(!contentOnly) {</span>
+				<span class="s1">this</span><span class="s0">.intro = </span><span class="s2">''</span><span class="s0">;</span>
+				<span class="s1">this</span><span class="s0">.outro = </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s0">}</span>
+			<span class="s1">this</span><span class="s0">.storeName = storeName;</span>
+
+			<span class="s1">this</span><span class="s0">.edited = </span><span class="s1">true</span><span class="s0">;</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prependLeft(content) {</span>
+			<span class="s1">this</span><span class="s0">.outro = content + </span><span class="s1">this</span><span class="s0">.outro;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prependRight(content) {</span>
+			<span class="s1">this</span><span class="s0">.intro = content + </span><span class="s1">this</span><span class="s0">.intro;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">reset() {</span>
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.edited) {</span>
+				<span class="s1">this</span><span class="s0">.content = </span><span class="s1">this</span><span class="s0">.original;</span>
+				<span class="s1">this</span><span class="s0">.storeName = </span><span class="s1">false</span><span class="s0">;</span>
+				<span class="s1">this</span><span class="s0">.edited = </span><span class="s1">false</span><span class="s0">;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">split(index) {</span>
+			<span class="s0">const sliceIndex = index - </span><span class="s1">this</span><span class="s0">.start;</span>
+
+			<span class="s0">const originalBefore = </span><span class="s1">this</span><span class="s0">.original.slice(</span><span class="s3">0</span><span class="s0">, sliceIndex);</span>
+			<span class="s0">const originalAfter = </span><span class="s1">this</span><span class="s0">.original.slice(sliceIndex);</span>
+
+			<span class="s1">this</span><span class="s0">.original = originalBefore;</span>
+
+			<span class="s0">const newChunk = </span><span class="s1">new </span><span class="s0">Chunk(index, </span><span class="s1">this</span><span class="s0">.end, originalAfter);</span>
+			<span class="s0">newChunk.outro = </span><span class="s1">this</span><span class="s0">.outro;</span>
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s2">''</span><span class="s0">;</span>
+
+			<span class="s1">this</span><span class="s0">.end = index;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.edited) {</span>
+				<span class="s4">// after split we should save the edit content record into the correct chunk</span>
+				<span class="s4">// to make sure sourcemap correct</span>
+				<span class="s4">// For example:</span>
+				<span class="s4">// '  test'.trim()</span>
+				<span class="s4">//     split   -&gt; '  ' + 'test'</span>
+				<span class="s4">//   ✔️ edit    -&gt; '' + 'test'</span>
+				<span class="s4">//   ✖️ edit    -&gt; 'test' + ''</span>
+				<span class="s4">// TODO is this block necessary?...</span>
+				<span class="s0">newChunk.edit(</span><span class="s2">''</span><span class="s0">, </span><span class="s1">false</span><span class="s0">);</span>
+				<span class="s1">this</span><span class="s0">.content = </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.content = originalBefore;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">newChunk.next = </span><span class="s1">this</span><span class="s0">.next;</span>
+			<span class="s1">if </span><span class="s0">(newChunk.next) newChunk.next.previous = newChunk;</span>
+			<span class="s0">newChunk.previous = </span><span class="s1">this</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.next = newChunk;</span>
+
+			<span class="s1">return </span><span class="s0">newChunk;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">toString() {</span>
+			<span class="s1">return this</span><span class="s0">.intro + </span><span class="s1">this</span><span class="s0">.content + </span><span class="s1">this</span><span class="s0">.outro;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimEnd(rx) {</span>
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s1">this</span><span class="s0">.outro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.outro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+
+			<span class="s0">const trimmed = </span><span class="s1">this</span><span class="s0">.content.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+
+			<span class="s1">if </span><span class="s0">(trimmed.length) {</span>
+				<span class="s1">if </span><span class="s0">(trimmed !== </span><span class="s1">this</span><span class="s0">.content) {</span>
+					<span class="s1">this</span><span class="s0">.split(</span><span class="s1">this</span><span class="s0">.start + trimmed.length).edit(</span><span class="s2">''</span><span class="s0">, undefined, </span><span class="s1">true</span><span class="s0">);</span>
+					<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.edited) {</span>
+						<span class="s4">// save the change, if it has been edited</span>
+						<span class="s1">this</span><span class="s0">.edit(trimmed, </span><span class="s1">this</span><span class="s0">.storeName, </span><span class="s1">true</span><span class="s0">);</span>
+					<span class="s0">}</span>
+				<span class="s0">}</span>
+				<span class="s1">return true</span><span class="s0">;</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.edit(</span><span class="s2">''</span><span class="s0">, undefined, </span><span class="s1">true</span><span class="s0">);</span>
+
+				<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+				<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimStart(rx) {</span>
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+
+			<span class="s0">const trimmed = </span><span class="s1">this</span><span class="s0">.content.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+
+			<span class="s1">if </span><span class="s0">(trimmed.length) {</span>
+				<span class="s1">if </span><span class="s0">(trimmed !== </span><span class="s1">this</span><span class="s0">.content) {</span>
+					<span class="s0">const newChunk = </span><span class="s1">this</span><span class="s0">.split(</span><span class="s1">this</span><span class="s0">.end - trimmed.length);</span>
+					<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.edited) {</span>
+						<span class="s4">// save the change, if it has been edited</span>
+						<span class="s0">newChunk.edit(trimmed, </span><span class="s1">this</span><span class="s0">.storeName, </span><span class="s1">true</span><span class="s0">);</span>
+					<span class="s0">}</span>
+					<span class="s1">this</span><span class="s0">.edit(</span><span class="s2">''</span><span class="s0">, undefined, </span><span class="s1">true</span><span class="s0">);</span>
+				<span class="s0">}</span>
+				<span class="s1">return true</span><span class="s0">;</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.edit(</span><span class="s2">''</span><span class="s0">, undefined, </span><span class="s1">true</span><span class="s0">);</span>
+
+				<span class="s1">this</span><span class="s0">.outro = </span><span class="s1">this</span><span class="s0">.outro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+				<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.outro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s4">// src/vlq.ts</span>
+	<span class="s1">var </span><span class="s0">comma = </span><span class="s2">&quot;,&quot;</span><span class="s0">.charCodeAt(</span><span class="s3">0</span><span class="s0">);</span>
+	<span class="s1">var </span><span class="s0">semicolon = </span><span class="s2">&quot;;&quot;</span><span class="s0">.charCodeAt(</span><span class="s3">0</span><span class="s0">);</span>
+	<span class="s1">var </span><span class="s0">chars = </span><span class="s2">&quot;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/&quot;</span><span class="s0">;</span>
+	<span class="s1">var </span><span class="s0">intToChar = </span><span class="s1">new </span><span class="s0">Uint8Array(</span><span class="s3">64</span><span class="s0">);</span>
+	<span class="s1">var </span><span class="s0">charToInt = </span><span class="s1">new </span><span class="s0">Uint8Array(</span><span class="s3">128</span><span class="s0">);</span>
+	<span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; chars.length; i++) {</span>
+	  <span class="s0">const c = chars.charCodeAt(i);</span>
+	  <span class="s0">intToChar[i] = c;</span>
+	  <span class="s0">charToInt[c] = i;</span>
+	<span class="s0">}</span>
+	<span class="s1">function </span><span class="s0">encodeInteger(builder, num, relative) {</span>
+	  <span class="s0">let delta = num - relative;</span>
+	  <span class="s0">delta = delta &lt; </span><span class="s3">0 </span><span class="s0">? -delta &lt;&lt; </span><span class="s3">1 </span><span class="s0">| </span><span class="s3">1 </span><span class="s0">: delta &lt;&lt; </span><span class="s3">1</span><span class="s0">;</span>
+	  <span class="s1">do </span><span class="s0">{</span>
+	    <span class="s0">let clamped = delta &amp; </span><span class="s3">31</span><span class="s0">;</span>
+	    <span class="s0">delta &gt;&gt;&gt;= </span><span class="s3">5</span><span class="s0">;</span>
+	    <span class="s1">if </span><span class="s0">(delta &gt; </span><span class="s3">0</span><span class="s0">) clamped |= </span><span class="s3">32</span><span class="s0">;</span>
+	    <span class="s0">builder.write(intToChar[clamped]);</span>
+	  <span class="s0">} </span><span class="s1">while </span><span class="s0">(delta &gt; </span><span class="s3">0</span><span class="s0">);</span>
+	  <span class="s1">return </span><span class="s0">num;</span>
+	<span class="s0">}</span>
+
+	<span class="s4">// src/strings.ts</span>
+	<span class="s1">var </span><span class="s0">bufLength = </span><span class="s3">1024 </span><span class="s0">* </span><span class="s3">16</span><span class="s0">;</span>
+	<span class="s1">var </span><span class="s0">td = </span><span class="s1">typeof </span><span class="s0">TextDecoder !== </span><span class="s2">&quot;undefined&quot; </span><span class="s0">? </span><span class="s4">/* @__PURE__ */ </span><span class="s1">new </span><span class="s0">TextDecoder() : </span><span class="s1">typeof </span><span class="s0">Buffer !== </span><span class="s2">&quot;undefined&quot; </span><span class="s0">? {</span>
+	  <span class="s0">decode(buf) {</span>
+	    <span class="s0">const out = Buffer.from(buf.buffer, buf.byteOffset, buf.byteLength);</span>
+	    <span class="s1">return </span><span class="s0">out.toString();</span>
+	  <span class="s0">}</span>
+	<span class="s0">} : {</span>
+	  <span class="s0">decode(buf) {</span>
+	    <span class="s0">let out = </span><span class="s2">&quot;&quot;</span><span class="s0">;</span>
+	    <span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; buf.length; i++) {</span>
+	      <span class="s0">out += String.fromCharCode(buf[i]);</span>
+	    <span class="s0">}</span>
+	    <span class="s1">return </span><span class="s0">out;</span>
+	  <span class="s0">}</span>
+	<span class="s0">};</span>
+	<span class="s1">var </span><span class="s0">StringWriter = class {</span>
+	  <span class="s0">constructor() {</span>
+	    <span class="s1">this</span><span class="s0">.pos = </span><span class="s3">0</span><span class="s0">;</span>
+	    <span class="s1">this</span><span class="s0">.out = </span><span class="s2">&quot;&quot;</span><span class="s0">;</span>
+	    <span class="s1">this</span><span class="s0">.buffer = </span><span class="s1">new </span><span class="s0">Uint8Array(bufLength);</span>
+	  <span class="s0">}</span>
+	  <span class="s0">write(v) {</span>
+	    <span class="s0">const { buffer } = </span><span class="s1">this</span><span class="s0">;</span>
+	    <span class="s0">buffer[</span><span class="s1">this</span><span class="s0">.pos++] = v;</span>
+	    <span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.pos === bufLength) {</span>
+	      <span class="s1">this</span><span class="s0">.out += td.decode(buffer);</span>
+	      <span class="s1">this</span><span class="s0">.pos = </span><span class="s3">0</span><span class="s0">;</span>
+	    <span class="s0">}</span>
+	  <span class="s0">}</span>
+	  <span class="s0">flush() {</span>
+	    <span class="s0">const { buffer, out, pos } = </span><span class="s1">this</span><span class="s0">;</span>
+	    <span class="s1">return </span><span class="s0">pos &gt; </span><span class="s3">0 </span><span class="s0">? out + td.decode(buffer.subarray(</span><span class="s3">0</span><span class="s0">, pos)) : out;</span>
+	  <span class="s0">}</span>
+	<span class="s0">};</span>
+	<span class="s1">function </span><span class="s0">encode(decoded) {</span>
+	  <span class="s0">const writer = </span><span class="s1">new </span><span class="s0">StringWriter();</span>
+	  <span class="s0">let sourcesIndex = </span><span class="s3">0</span><span class="s0">;</span>
+	  <span class="s0">let sourceLine = </span><span class="s3">0</span><span class="s0">;</span>
+	  <span class="s0">let sourceColumn = </span><span class="s3">0</span><span class="s0">;</span>
+	  <span class="s0">let namesIndex = </span><span class="s3">0</span><span class="s0">;</span>
+	  <span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; decoded.length; i++) {</span>
+	    <span class="s0">const line = decoded[i];</span>
+	    <span class="s1">if </span><span class="s0">(i &gt; </span><span class="s3">0</span><span class="s0">) writer.write(semicolon);</span>
+	    <span class="s1">if </span><span class="s0">(line.length === </span><span class="s3">0</span><span class="s0">) </span><span class="s1">continue</span><span class="s0">;</span>
+	    <span class="s0">let genColumn = </span><span class="s3">0</span><span class="s0">;</span>
+	    <span class="s1">for </span><span class="s0">(let j = </span><span class="s3">0</span><span class="s0">; j &lt; line.length; j++) {</span>
+	      <span class="s0">const segment = line[j];</span>
+	      <span class="s1">if </span><span class="s0">(j &gt; </span><span class="s3">0</span><span class="s0">) writer.write(comma);</span>
+	      <span class="s0">genColumn = encodeInteger(writer, segment[</span><span class="s3">0</span><span class="s0">], genColumn);</span>
+	      <span class="s1">if </span><span class="s0">(segment.length === </span><span class="s3">1</span><span class="s0">) </span><span class="s1">continue</span><span class="s0">;</span>
+	      <span class="s0">sourcesIndex = encodeInteger(writer, segment[</span><span class="s3">1</span><span class="s0">], sourcesIndex);</span>
+	      <span class="s0">sourceLine = encodeInteger(writer, segment[</span><span class="s3">2</span><span class="s0">], sourceLine);</span>
+	      <span class="s0">sourceColumn = encodeInteger(writer, segment[</span><span class="s3">3</span><span class="s0">], sourceColumn);</span>
+	      <span class="s1">if </span><span class="s0">(segment.length === </span><span class="s3">4</span><span class="s0">) </span><span class="s1">continue</span><span class="s0">;</span>
+	      <span class="s0">namesIndex = encodeInteger(writer, segment[</span><span class="s3">4</span><span class="s0">], namesIndex);</span>
+	    <span class="s0">}</span>
+	  <span class="s0">}</span>
+	  <span class="s1">return </span><span class="s0">writer.flush();</span>
+	<span class="s0">}</span>
+
+	<span class="s1">function </span><span class="s0">getBtoa() {</span>
+		<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">globalThis !== </span><span class="s2">'undefined' </span><span class="s0">&amp;&amp; </span><span class="s1">typeof </span><span class="s0">globalThis.btoa === </span><span class="s2">'function'</span><span class="s0">) {</span>
+			<span class="s1">return </span><span class="s0">(str) =&gt; globalThis.btoa(unescape(encodeURIComponent(str)));</span>
+		<span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">Buffer === </span><span class="s2">'function'</span><span class="s0">) {</span>
+			<span class="s1">return </span><span class="s0">(str) =&gt; Buffer.from(str, </span><span class="s2">'utf-8'</span><span class="s0">).toString(</span><span class="s2">'base64'</span><span class="s0">);</span>
+		<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+			<span class="s1">return </span><span class="s0">() =&gt; {</span>
+				<span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'Unsupported environment: `window.btoa` or `Buffer` should be supported.'</span><span class="s0">);</span>
+			<span class="s0">};</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const btoa = </span><span class="s4">/*#__PURE__*/ </span><span class="s0">getBtoa();</span>
+
+	<span class="s0">class SourceMap {</span>
+		<span class="s0">constructor(properties) {</span>
+			<span class="s1">this</span><span class="s0">.version = </span><span class="s3">3</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.file = properties.file;</span>
+			<span class="s1">this</span><span class="s0">.sources = properties.sources;</span>
+			<span class="s1">this</span><span class="s0">.sourcesContent = properties.sourcesContent;</span>
+			<span class="s1">this</span><span class="s0">.names = properties.names;</span>
+			<span class="s1">this</span><span class="s0">.mappings = encode(properties.mappings);</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">properties.x_google_ignoreList !== </span><span class="s2">'undefined'</span><span class="s0">) {</span>
+				<span class="s1">this</span><span class="s0">.x_google_ignoreList = properties.x_google_ignoreList;</span>
+			<span class="s0">}</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">properties.debugId !== </span><span class="s2">'undefined'</span><span class="s0">) {</span>
+				<span class="s1">this</span><span class="s0">.debugId = properties.debugId;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">toString() {</span>
+			<span class="s1">return </span><span class="s0">JSON.stringify(</span><span class="s1">this</span><span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">toUrl() {</span>
+			<span class="s1">return </span><span class="s2">'data:application/json;charset=utf-8;base64,' </span><span class="s0">+ btoa(</span><span class="s1">this</span><span class="s0">.toString());</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s1">function </span><span class="s0">guessIndent(code) {</span>
+		<span class="s0">const lines = code.split(</span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">);</span>
+
+		<span class="s0">const tabbed = lines.filter((line) =&gt; /^\t+/.test(line));</span>
+		<span class="s0">const spaced = lines.filter((line) =&gt; /^ {</span><span class="s3">2</span><span class="s0">,}/.test(line));</span>
+
+		<span class="s1">if </span><span class="s0">(tabbed.length === </span><span class="s3">0 </span><span class="s0">&amp;&amp; spaced.length === </span><span class="s3">0</span><span class="s0">) {</span>
+			<span class="s1">return null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s4">// More lines tabbed than spaced? Assume tabs, and</span>
+		<span class="s4">// default to tabs in the case of a tie (or nothing</span>
+		<span class="s4">// to go on)</span>
+		<span class="s1">if </span><span class="s0">(tabbed.length &gt;= spaced.length) {</span>
+			<span class="s1">return </span><span class="s2">'</span><span class="s1">\t</span><span class="s2">'</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s4">// Otherwise, we need to guess the multiple</span>
+		<span class="s0">const min = spaced.reduce((previous, current) =&gt; {</span>
+			<span class="s0">const numSpaces = /^ +/.exec(current)[</span><span class="s3">0</span><span class="s0">].length;</span>
+			<span class="s1">return </span><span class="s0">Math.min(numSpaces, previous);</span>
+		<span class="s0">}, Infinity);</span>
+
+		<span class="s1">return new </span><span class="s0">Array(min + </span><span class="s3">1</span><span class="s0">).join(</span><span class="s2">' '</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">function </span><span class="s0">getRelativePath(from, to) {</span>
+		<span class="s0">const fromParts = from.split(/[/\\]/);</span>
+		<span class="s0">const toParts = to.split(/[/\\]/);</span>
+
+		<span class="s0">fromParts.pop(); </span><span class="s4">// get dirname</span>
+
+		<span class="s1">while </span><span class="s0">(fromParts[</span><span class="s3">0</span><span class="s0">] === toParts[</span><span class="s3">0</span><span class="s0">]) {</span>
+			<span class="s0">fromParts.shift();</span>
+			<span class="s0">toParts.shift();</span>
+		<span class="s0">}</span>
+
+		<span class="s1">if </span><span class="s0">(fromParts.length) {</span>
+			<span class="s0">let i = fromParts.length;</span>
+			<span class="s1">while </span><span class="s0">(i--) fromParts[i] = </span><span class="s2">'..'</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s1">return </span><span class="s0">fromParts.concat(toParts).join(</span><span class="s2">'/'</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const toString = Object.prototype.toString;</span>
+
+	<span class="s1">function </span><span class="s0">isObject(thing) {</span>
+		<span class="s1">return </span><span class="s0">toString.call(thing) === </span><span class="s2">'[object Object]'</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">function </span><span class="s0">getLocator(source) {</span>
+		<span class="s0">const originalLines = source.split(</span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">);</span>
+		<span class="s0">const lineOffsets = [];</span>
+
+		<span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">, pos = </span><span class="s3">0</span><span class="s0">; i &lt; originalLines.length; i++) {</span>
+			<span class="s0">lineOffsets.push(pos);</span>
+			<span class="s0">pos += originalLines[i].length + </span><span class="s3">1</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s1">return function </span><span class="s0">locate(index) {</span>
+			<span class="s0">let i = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s0">let j = lineOffsets.length;</span>
+			<span class="s1">while </span><span class="s0">(i &lt; j) {</span>
+				<span class="s0">const m = (i + j) &gt;&gt; </span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s1">if </span><span class="s0">(index &lt; lineOffsets[m]) {</span>
+					<span class="s0">j = m;</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s0">i = m + </span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s0">}</span>
+			<span class="s0">}</span>
+			<span class="s0">const line = i - </span><span class="s3">1</span><span class="s0">;</span>
+			<span class="s0">const column = index - lineOffsets[line];</span>
+			<span class="s1">return </span><span class="s0">{ line, column };</span>
+		<span class="s0">};</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const wordRegex = /\w/;</span>
+
+	<span class="s0">class Mappings {</span>
+		<span class="s0">constructor(hires) {</span>
+			<span class="s1">this</span><span class="s0">.hires = hires;</span>
+			<span class="s1">this</span><span class="s0">.generatedCodeLine = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.generatedCodeColumn = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.raw = [];</span>
+			<span class="s1">this</span><span class="s0">.rawSegments = </span><span class="s1">this</span><span class="s0">.raw[</span><span class="s1">this</span><span class="s0">.generatedCodeLine] = [];</span>
+			<span class="s1">this</span><span class="s0">.pending = </span><span class="s1">null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">addEdit(sourceIndex, content, loc, nameIndex) {</span>
+			<span class="s1">if </span><span class="s0">(content.length) {</span>
+				<span class="s0">const contentLengthMinusOne = content.length - </span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s0">let contentLineEnd = content.indexOf(</span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">, </span><span class="s3">0</span><span class="s0">);</span>
+				<span class="s0">let previousContentLineEnd = -</span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s4">// Loop through each line in the content and add a segment, but stop if the last line is empty,</span>
+				<span class="s4">// else code afterwards would fill one line too many</span>
+				<span class="s1">while </span><span class="s0">(contentLineEnd &gt;= </span><span class="s3">0 </span><span class="s0">&amp;&amp; contentLengthMinusOne &gt; contentLineEnd) {</span>
+					<span class="s0">const segment = [</span><span class="s1">this</span><span class="s0">.generatedCodeColumn, sourceIndex, loc.line, loc.column];</span>
+					<span class="s1">if </span><span class="s0">(nameIndex &gt;= </span><span class="s3">0</span><span class="s0">) {</span>
+						<span class="s0">segment.push(nameIndex);</span>
+					<span class="s0">}</span>
+					<span class="s1">this</span><span class="s0">.rawSegments.push(segment);</span>
+
+					<span class="s1">this</span><span class="s0">.generatedCodeLine += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s1">this</span><span class="s0">.raw[</span><span class="s1">this</span><span class="s0">.generatedCodeLine] = </span><span class="s1">this</span><span class="s0">.rawSegments = [];</span>
+					<span class="s1">this</span><span class="s0">.generatedCodeColumn = </span><span class="s3">0</span><span class="s0">;</span>
+
+					<span class="s0">previousContentLineEnd = contentLineEnd;</span>
+					<span class="s0">contentLineEnd = content.indexOf(</span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">, contentLineEnd + </span><span class="s3">1</span><span class="s0">);</span>
+				<span class="s0">}</span>
+
+				<span class="s0">const segment = [</span><span class="s1">this</span><span class="s0">.generatedCodeColumn, sourceIndex, loc.line, loc.column];</span>
+				<span class="s1">if </span><span class="s0">(nameIndex &gt;= </span><span class="s3">0</span><span class="s0">) {</span>
+					<span class="s0">segment.push(nameIndex);</span>
+				<span class="s0">}</span>
+				<span class="s1">this</span><span class="s0">.rawSegments.push(segment);</span>
+
+				<span class="s1">this</span><span class="s0">.advance(content.slice(previousContentLineEnd + </span><span class="s3">1</span><span class="s0">));</span>
+			<span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.pending) {</span>
+				<span class="s1">this</span><span class="s0">.rawSegments.push(</span><span class="s1">this</span><span class="s0">.pending);</span>
+				<span class="s1">this</span><span class="s0">.advance(content);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.pending = </span><span class="s1">null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">addUneditedChunk(sourceIndex, chunk, original, loc, sourcemapLocations) {</span>
+			<span class="s0">let originalCharIndex = chunk.start;</span>
+			<span class="s0">let first = </span><span class="s1">true</span><span class="s0">;</span>
+			<span class="s4">// when iterating each char, check if it's in a word boundary</span>
+			<span class="s0">let charInHiresBoundary = </span><span class="s1">false</span><span class="s0">;</span>
+
+			<span class="s1">while </span><span class="s0">(originalCharIndex &lt; chunk.end) {</span>
+				<span class="s1">if </span><span class="s0">(original[originalCharIndex] === </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">) {</span>
+					<span class="s0">loc.line += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s0">loc.column = </span><span class="s3">0</span><span class="s0">;</span>
+					<span class="s1">this</span><span class="s0">.generatedCodeLine += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s1">this</span><span class="s0">.raw[</span><span class="s1">this</span><span class="s0">.generatedCodeLine] = </span><span class="s1">this</span><span class="s0">.rawSegments = [];</span>
+					<span class="s1">this</span><span class="s0">.generatedCodeColumn = </span><span class="s3">0</span><span class="s0">;</span>
+					<span class="s0">first = </span><span class="s1">true</span><span class="s0">;</span>
+					<span class="s0">charInHiresBoundary = </span><span class="s1">false</span><span class="s0">;</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.hires || first || sourcemapLocations.has(originalCharIndex)) {</span>
+						<span class="s0">const segment = [</span><span class="s1">this</span><span class="s0">.generatedCodeColumn, sourceIndex, loc.line, loc.column];</span>
+
+						<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.hires === </span><span class="s2">'boundary'</span><span class="s0">) {</span>
+							<span class="s4">// in hires &quot;boundary&quot;, group segments per word boundary than per char</span>
+							<span class="s1">if </span><span class="s0">(wordRegex.test(original[originalCharIndex])) {</span>
+								<span class="s4">// for first char in the boundary found, start the boundary by pushing a segment</span>
+								<span class="s1">if </span><span class="s0">(!charInHiresBoundary) {</span>
+									<span class="s1">this</span><span class="s0">.rawSegments.push(segment);</span>
+									<span class="s0">charInHiresBoundary = </span><span class="s1">true</span><span class="s0">;</span>
+								<span class="s0">}</span>
+							<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+								<span class="s4">// for non-word char, end the boundary by pushing a segment</span>
+								<span class="s1">this</span><span class="s0">.rawSegments.push(segment);</span>
+								<span class="s0">charInHiresBoundary = </span><span class="s1">false</span><span class="s0">;</span>
+							<span class="s0">}</span>
+						<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+							<span class="s1">this</span><span class="s0">.rawSegments.push(segment);</span>
+						<span class="s0">}</span>
+					<span class="s0">}</span>
+
+					<span class="s0">loc.column += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s1">this</span><span class="s0">.generatedCodeColumn += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s0">first = </span><span class="s1">false</span><span class="s0">;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">originalCharIndex += </span><span class="s3">1</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.pending = </span><span class="s1">null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">advance(str) {</span>
+			<span class="s1">if </span><span class="s0">(!str) </span><span class="s1">return</span><span class="s0">;</span>
+
+			<span class="s0">const lines = str.split(</span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">);</span>
+
+			<span class="s1">if </span><span class="s0">(lines.length &gt; </span><span class="s3">1</span><span class="s0">) {</span>
+				<span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; lines.length - </span><span class="s3">1</span><span class="s0">; i++) {</span>
+					<span class="s1">this</span><span class="s0">.generatedCodeLine++;</span>
+					<span class="s1">this</span><span class="s0">.raw[</span><span class="s1">this</span><span class="s0">.generatedCodeLine] = </span><span class="s1">this</span><span class="s0">.rawSegments = [];</span>
+				<span class="s0">}</span>
+				<span class="s1">this</span><span class="s0">.generatedCodeColumn = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.generatedCodeColumn += lines[lines.length - </span><span class="s3">1</span><span class="s0">].length;</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const n = </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">;</span>
+
+	<span class="s0">const warned = {</span>
+		<span class="s0">insertLeft: </span><span class="s1">false</span><span class="s0">,</span>
+		<span class="s0">insertRight: </span><span class="s1">false</span><span class="s0">,</span>
+		<span class="s0">storeName: </span><span class="s1">false</span><span class="s0">,</span>
+	<span class="s0">};</span>
+
+	<span class="s0">class MagicString {</span>
+		<span class="s0">constructor(string, options = {}) {</span>
+			<span class="s0">const chunk = </span><span class="s1">new </span><span class="s0">Chunk(</span><span class="s3">0</span><span class="s0">, string.length, string);</span>
+
+			<span class="s0">Object.defineProperties(</span><span class="s1">this</span><span class="s0">, {</span>
+				<span class="s0">original: { writable: </span><span class="s1">true</span><span class="s0">, value: string },</span>
+				<span class="s0">outro: { writable: </span><span class="s1">true</span><span class="s0">, value: </span><span class="s2">'' </span><span class="s0">},</span>
+				<span class="s0">intro: { writable: </span><span class="s1">true</span><span class="s0">, value: </span><span class="s2">'' </span><span class="s0">},</span>
+				<span class="s0">firstChunk: { writable: </span><span class="s1">true</span><span class="s0">, value: chunk },</span>
+				<span class="s0">lastChunk: { writable: </span><span class="s1">true</span><span class="s0">, value: chunk },</span>
+				<span class="s0">lastSearchedChunk: { writable: </span><span class="s1">true</span><span class="s0">, value: chunk },</span>
+				<span class="s0">byStart: { writable: </span><span class="s1">true</span><span class="s0">, value: {} },</span>
+				<span class="s0">byEnd: { writable: </span><span class="s1">true</span><span class="s0">, value: {} },</span>
+				<span class="s0">filename: { writable: </span><span class="s1">true</span><span class="s0">, value: options.filename },</span>
+				<span class="s0">indentExclusionRanges: { writable: </span><span class="s1">true</span><span class="s0">, value: options.indentExclusionRanges },</span>
+				<span class="s0">sourcemapLocations: { writable: </span><span class="s1">true</span><span class="s0">, value: </span><span class="s1">new </span><span class="s0">BitSet() },</span>
+				<span class="s0">storedNames: { writable: </span><span class="s1">true</span><span class="s0">, value: {} },</span>
+				<span class="s0">indentStr: { writable: </span><span class="s1">true</span><span class="s0">, value: undefined },</span>
+				<span class="s0">ignoreList: { writable: </span><span class="s1">true</span><span class="s0">, value: options.ignoreList },</span>
+				<span class="s0">offset: { writable: </span><span class="s1">true</span><span class="s0">, value: options.offset || </span><span class="s3">0 </span><span class="s0">},</span>
+			<span class="s0">});</span>
+
+			<span class="s1">this</span><span class="s0">.byStart[</span><span class="s3">0</span><span class="s0">] = chunk;</span>
+			<span class="s1">this</span><span class="s0">.byEnd[string.length] = chunk;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">addSourcemapLocation(char) {</span>
+			<span class="s1">this</span><span class="s0">.sourcemapLocations.add(char);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">append(content) {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'outro content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">.outro += content;</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">appendLeft(index, content) {</span>
+			<span class="s0">index = index + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'inserted content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(index);</span>
+
+			<span class="s0">const chunk = </span><span class="s1">this</span><span class="s0">.byEnd[index];</span>
+
+			<span class="s1">if </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.appendLeft(content);</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.intro += content;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">appendRight(index, content) {</span>
+			<span class="s0">index = index + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'inserted content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(index);</span>
+
+			<span class="s0">const chunk = </span><span class="s1">this</span><span class="s0">.byStart[index];</span>
+
+			<span class="s1">if </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.appendRight(content);</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.outro += content;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">clone() {</span>
+			<span class="s0">const cloned = </span><span class="s1">new </span><span class="s0">MagicString(</span><span class="s1">this</span><span class="s0">.original, { filename: </span><span class="s1">this</span><span class="s0">.filename, offset: </span><span class="s1">this</span><span class="s0">.offset });</span>
+
+			<span class="s0">let originalChunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+			<span class="s0">let clonedChunk = (cloned.firstChunk = cloned.lastSearchedChunk = originalChunk.clone());</span>
+
+			<span class="s1">while </span><span class="s0">(originalChunk) {</span>
+				<span class="s0">cloned.byStart[clonedChunk.start] = clonedChunk;</span>
+				<span class="s0">cloned.byEnd[clonedChunk.end] = clonedChunk;</span>
+
+				<span class="s0">const nextOriginalChunk = originalChunk.next;</span>
+				<span class="s0">const nextClonedChunk = nextOriginalChunk &amp;&amp; nextOriginalChunk.clone();</span>
+
+				<span class="s1">if </span><span class="s0">(nextClonedChunk) {</span>
+					<span class="s0">clonedChunk.next = nextClonedChunk;</span>
+					<span class="s0">nextClonedChunk.previous = clonedChunk;</span>
+
+					<span class="s0">clonedChunk = nextClonedChunk;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">originalChunk = nextOriginalChunk;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">cloned.lastChunk = clonedChunk;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.indentExclusionRanges) {</span>
+				<span class="s0">cloned.indentExclusionRanges = </span><span class="s1">this</span><span class="s0">.indentExclusionRanges.slice();</span>
+			<span class="s0">}</span>
+
+			<span class="s0">cloned.sourcemapLocations = </span><span class="s1">new </span><span class="s0">BitSet(</span><span class="s1">this</span><span class="s0">.sourcemapLocations);</span>
+
+			<span class="s0">cloned.intro = </span><span class="s1">this</span><span class="s0">.intro;</span>
+			<span class="s0">cloned.outro = </span><span class="s1">this</span><span class="s0">.outro;</span>
+
+			<span class="s1">return </span><span class="s0">cloned;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">generateDecodedMap(options) {</span>
+			<span class="s0">options = options || {};</span>
+
+			<span class="s0">const sourceIndex = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s0">const names = Object.keys(</span><span class="s1">this</span><span class="s0">.storedNames);</span>
+			<span class="s0">const mappings = </span><span class="s1">new </span><span class="s0">Mappings(options.hires);</span>
+
+			<span class="s0">const locate = getLocator(</span><span class="s1">this</span><span class="s0">.original);</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro) {</span>
+				<span class="s0">mappings.advance(</span><span class="s1">this</span><span class="s0">.intro);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.firstChunk.eachNext((chunk) =&gt; {</span>
+				<span class="s0">const loc = locate(chunk.start);</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.intro.length) mappings.advance(chunk.intro);</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.edited) {</span>
+					<span class="s0">mappings.addEdit(</span>
+						<span class="s0">sourceIndex,</span>
+						<span class="s0">chunk.content,</span>
+						<span class="s0">loc,</span>
+						<span class="s0">chunk.storeName ? names.indexOf(chunk.original) : -</span><span class="s3">1</span><span class="s0">,</span>
+					<span class="s0">);</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s0">mappings.addUneditedChunk(sourceIndex, chunk, </span><span class="s1">this</span><span class="s0">.original, loc, </span><span class="s1">this</span><span class="s0">.sourcemapLocations);</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.outro.length) mappings.advance(chunk.outro);</span>
+			<span class="s0">});</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.outro) {</span>
+				<span class="s0">mappings.advance(</span><span class="s1">this</span><span class="s0">.outro);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return </span><span class="s0">{</span>
+				<span class="s0">file: options.file ? options.file.split(/[/\\]/).pop() : undefined,</span>
+				<span class="s0">sources: [</span>
+					<span class="s0">options.source ? getRelativePath(options.file || </span><span class="s2">''</span><span class="s0">, options.source) : options.file || </span><span class="s2">''</span><span class="s0">,</span>
+				<span class="s0">],</span>
+				<span class="s0">sourcesContent: options.includeContent ? [</span><span class="s1">this</span><span class="s0">.original] : undefined,</span>
+				<span class="s0">names,</span>
+				<span class="s0">mappings: mappings.raw,</span>
+				<span class="s0">x_google_ignoreList: </span><span class="s1">this</span><span class="s0">.ignoreList ? [sourceIndex] : undefined,</span>
+			<span class="s0">};</span>
+		<span class="s0">}</span>
+
+		<span class="s0">generateMap(options) {</span>
+			<span class="s1">return new </span><span class="s0">SourceMap(</span><span class="s1">this</span><span class="s0">.generateDecodedMap(options));</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_ensureindentStr() {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.indentStr === undefined) {</span>
+				<span class="s1">this</span><span class="s0">.indentStr = guessIndent(</span><span class="s1">this</span><span class="s0">.original);</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_getRawIndentString() {</span>
+			<span class="s1">this</span><span class="s0">._ensureindentStr();</span>
+			<span class="s1">return this</span><span class="s0">.indentStr;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">getIndentString() {</span>
+			<span class="s1">this</span><span class="s0">._ensureindentStr();</span>
+			<span class="s1">return this</span><span class="s0">.indentStr === </span><span class="s1">null </span><span class="s0">? </span><span class="s2">'</span><span class="s1">\t</span><span class="s2">' </span><span class="s0">: </span><span class="s1">this</span><span class="s0">.indentStr;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">indent(indentStr, options) {</span>
+			<span class="s0">const pattern = /^[^\r\n]/gm;</span>
+
+			<span class="s1">if </span><span class="s0">(isObject(indentStr)) {</span>
+				<span class="s0">options = indentStr;</span>
+				<span class="s0">indentStr = undefined;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(indentStr === undefined) {</span>
+				<span class="s1">this</span><span class="s0">._ensureindentStr();</span>
+				<span class="s0">indentStr = </span><span class="s1">this</span><span class="s0">.indentStr || </span><span class="s2">'</span><span class="s1">\t</span><span class="s2">'</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(indentStr === </span><span class="s2">''</span><span class="s0">) </span><span class="s1">return this</span><span class="s0">; </span><span class="s4">// noop</span>
+
+			<span class="s0">options = options || {};</span>
+
+			<span class="s4">// Process exclusion ranges</span>
+			<span class="s0">const isExcluded = {};</span>
+
+			<span class="s1">if </span><span class="s0">(options.exclude) {</span>
+				<span class="s0">const exclusions =</span>
+					<span class="s1">typeof </span><span class="s0">options.exclude[</span><span class="s3">0</span><span class="s0">] === </span><span class="s2">'number' </span><span class="s0">? [options.exclude] : options.exclude;</span>
+				<span class="s0">exclusions.forEach((exclusion) =&gt; {</span>
+					<span class="s1">for </span><span class="s0">(let i = exclusion[</span><span class="s3">0</span><span class="s0">]; i &lt; exclusion[</span><span class="s3">1</span><span class="s0">]; i += </span><span class="s3">1</span><span class="s0">) {</span>
+						<span class="s0">isExcluded[i] = </span><span class="s1">true</span><span class="s0">;</span>
+					<span class="s0">}</span>
+				<span class="s0">});</span>
+			<span class="s0">}</span>
+
+			<span class="s0">let shouldIndentNextCharacter = options.indentStart !== </span><span class="s1">false</span><span class="s0">;</span>
+			<span class="s0">const replacer = (match) =&gt; {</span>
+				<span class="s1">if </span><span class="s0">(shouldIndentNextCharacter) </span><span class="s1">return </span><span class="s0">`${indentStr}${match}`;</span>
+				<span class="s0">shouldIndentNextCharacter = </span><span class="s1">true</span><span class="s0">;</span>
+				<span class="s1">return </span><span class="s0">match;</span>
+			<span class="s0">};</span>
+
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(pattern, replacer);</span>
+
+			<span class="s0">let charIndex = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">const end = chunk.end;</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.edited) {</span>
+					<span class="s1">if </span><span class="s0">(!isExcluded[charIndex]) {</span>
+						<span class="s0">chunk.content = chunk.content.replace(pattern, replacer);</span>
+
+						<span class="s1">if </span><span class="s0">(chunk.content.length) {</span>
+							<span class="s0">shouldIndentNextCharacter = chunk.content[chunk.content.length - </span><span class="s3">1</span><span class="s0">] === </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">;</span>
+						<span class="s0">}</span>
+					<span class="s0">}</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s0">charIndex = chunk.start;</span>
+
+					<span class="s1">while </span><span class="s0">(charIndex &lt; end) {</span>
+						<span class="s1">if </span><span class="s0">(!isExcluded[charIndex]) {</span>
+							<span class="s0">const char = </span><span class="s1">this</span><span class="s0">.original[charIndex];</span>
+
+							<span class="s1">if </span><span class="s0">(char === </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">) {</span>
+								<span class="s0">shouldIndentNextCharacter = </span><span class="s1">true</span><span class="s0">;</span>
+							<span class="s0">} </span><span class="s1">else if </span><span class="s0">(char !== </span><span class="s2">'</span><span class="s1">\r</span><span class="s2">' </span><span class="s0">&amp;&amp; shouldIndentNextCharacter) {</span>
+								<span class="s0">shouldIndentNextCharacter = </span><span class="s1">false</span><span class="s0">;</span>
+
+								<span class="s1">if </span><span class="s0">(charIndex === chunk.start) {</span>
+									<span class="s0">chunk.prependRight(indentStr);</span>
+								<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+									<span class="s1">this</span><span class="s0">._splitChunk(chunk, charIndex);</span>
+									<span class="s0">chunk = chunk.next;</span>
+									<span class="s0">chunk.prependRight(indentStr);</span>
+								<span class="s0">}</span>
+							<span class="s0">}</span>
+						<span class="s0">}</span>
+
+						<span class="s0">charIndex += </span><span class="s3">1</span><span class="s0">;</span>
+					<span class="s0">}</span>
+				<span class="s0">}</span>
+
+				<span class="s0">charIndex = chunk.end;</span>
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s1">this</span><span class="s0">.outro.replace(pattern, replacer);</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">insert() {</span>
+			<span class="s1">throw new </span><span class="s0">Error(</span>
+				<span class="s2">'magicString.insert(...) is deprecated. Use prependRight(...) or appendLeft(...)'</span><span class="s0">,</span>
+			<span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">insertLeft(index, content) {</span>
+			<span class="s1">if </span><span class="s0">(!warned.insertLeft) {</span>
+				<span class="s0">console.warn(</span>
+					<span class="s2">'magicString.insertLeft(...) is deprecated. Use magicString.appendLeft(...) instead'</span><span class="s0">,</span>
+				<span class="s0">);</span>
+				<span class="s0">warned.insertLeft = </span><span class="s1">true</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">.appendLeft(index, content);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">insertRight(index, content) {</span>
+			<span class="s1">if </span><span class="s0">(!warned.insertRight) {</span>
+				<span class="s0">console.warn(</span>
+					<span class="s2">'magicString.insertRight(...) is deprecated. Use magicString.prependRight(...) instead'</span><span class="s0">,</span>
+				<span class="s0">);</span>
+				<span class="s0">warned.insertRight = </span><span class="s1">true</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">.prependRight(index, content);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">move(start, end, index) {</span>
+			<span class="s0">start = start + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">end = end + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">index = index + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(index &gt;= start &amp;&amp; index &lt;= end) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'Cannot move a selection inside itself'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(start);</span>
+			<span class="s1">this</span><span class="s0">._split(end);</span>
+			<span class="s1">this</span><span class="s0">._split(index);</span>
+
+			<span class="s0">const first = </span><span class="s1">this</span><span class="s0">.byStart[start];</span>
+			<span class="s0">const last = </span><span class="s1">this</span><span class="s0">.byEnd[end];</span>
+
+			<span class="s0">const oldLeft = first.previous;</span>
+			<span class="s0">const oldRight = last.next;</span>
+
+			<span class="s0">const newRight = </span><span class="s1">this</span><span class="s0">.byStart[index];</span>
+			<span class="s1">if </span><span class="s0">(!newRight &amp;&amp; last === </span><span class="s1">this</span><span class="s0">.lastChunk) </span><span class="s1">return this</span><span class="s0">;</span>
+			<span class="s0">const newLeft = newRight ? newRight.previous : </span><span class="s1">this</span><span class="s0">.lastChunk;</span>
+
+			<span class="s1">if </span><span class="s0">(oldLeft) oldLeft.next = oldRight;</span>
+			<span class="s1">if </span><span class="s0">(oldRight) oldRight.previous = oldLeft;</span>
+
+			<span class="s1">if </span><span class="s0">(newLeft) newLeft.next = first;</span>
+			<span class="s1">if </span><span class="s0">(newRight) newRight.previous = last;</span>
+
+			<span class="s1">if </span><span class="s0">(!first.previous) </span><span class="s1">this</span><span class="s0">.firstChunk = last.next;</span>
+			<span class="s1">if </span><span class="s0">(!last.next) {</span>
+				<span class="s1">this</span><span class="s0">.lastChunk = first.previous;</span>
+				<span class="s1">this</span><span class="s0">.lastChunk.next = </span><span class="s1">null</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">first.previous = newLeft;</span>
+			<span class="s0">last.next = newRight || </span><span class="s1">null</span><span class="s0">;</span>
+
+			<span class="s1">if </span><span class="s0">(!newLeft) </span><span class="s1">this</span><span class="s0">.firstChunk = first;</span>
+			<span class="s1">if </span><span class="s0">(!newRight) </span><span class="s1">this</span><span class="s0">.lastChunk = last;</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">overwrite(start, end, content, options) {</span>
+			<span class="s0">options = options || {};</span>
+			<span class="s1">return this</span><span class="s0">.update(start, end, content, { ...options, overwrite: !options.contentOnly });</span>
+		<span class="s0">}</span>
+
+		<span class="s0">update(start, end, content, options) {</span>
+			<span class="s0">start = start + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">end = end + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'replacement content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.original.length !== </span><span class="s3">0</span><span class="s0">) {</span>
+				<span class="s1">while </span><span class="s0">(start &lt; </span><span class="s3">0</span><span class="s0">) start += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+				<span class="s1">while </span><span class="s0">(end &lt; </span><span class="s3">0</span><span class="s0">) end += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(end &gt; </span><span class="s1">this</span><span class="s0">.original.length) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'end is out of bounds'</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(start === end)</span>
+				<span class="s1">throw new </span><span class="s0">Error(</span>
+					<span class="s2">'Cannot overwrite a zero-length range – use appendLeft or prependRight instead'</span><span class="s0">,</span>
+				<span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(start);</span>
+			<span class="s1">this</span><span class="s0">._split(end);</span>
+
+			<span class="s1">if </span><span class="s0">(options === </span><span class="s1">true</span><span class="s0">) {</span>
+				<span class="s1">if </span><span class="s0">(!warned.storeName) {</span>
+					<span class="s0">console.warn(</span>
+						<span class="s2">'The final argument to magicString.overwrite(...) should be an options object. See https://github.com/rich-harris/magic-string'</span><span class="s0">,</span>
+					<span class="s0">);</span>
+					<span class="s0">warned.storeName = </span><span class="s1">true</span><span class="s0">;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">options = { storeName: </span><span class="s1">true </span><span class="s0">};</span>
+			<span class="s0">}</span>
+			<span class="s0">const storeName = options !== undefined ? options.storeName : </span><span class="s1">false</span><span class="s0">;</span>
+			<span class="s0">const overwrite = options !== undefined ? options.overwrite : </span><span class="s1">false</span><span class="s0">;</span>
+
+			<span class="s1">if </span><span class="s0">(storeName) {</span>
+				<span class="s0">const original = </span><span class="s1">this</span><span class="s0">.original.slice(start, end);</span>
+				<span class="s0">Object.defineProperty(</span><span class="s1">this</span><span class="s0">.storedNames, original, {</span>
+					<span class="s0">writable: </span><span class="s1">true</span><span class="s0">,</span>
+					<span class="s0">value: </span><span class="s1">true</span><span class="s0">,</span>
+					<span class="s0">enumerable: </span><span class="s1">true</span><span class="s0">,</span>
+				<span class="s0">});</span>
+			<span class="s0">}</span>
+
+			<span class="s0">const first = </span><span class="s1">this</span><span class="s0">.byStart[start];</span>
+			<span class="s0">const last = </span><span class="s1">this</span><span class="s0">.byEnd[end];</span>
+
+			<span class="s1">if </span><span class="s0">(first) {</span>
+				<span class="s0">let chunk = first;</span>
+				<span class="s1">while </span><span class="s0">(chunk !== last) {</span>
+					<span class="s1">if </span><span class="s0">(chunk.next !== </span><span class="s1">this</span><span class="s0">.byStart[chunk.end]) {</span>
+						<span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'Cannot overwrite across a split point'</span><span class="s0">);</span>
+					<span class="s0">}</span>
+					<span class="s0">chunk = chunk.next;</span>
+					<span class="s0">chunk.edit(</span><span class="s2">''</span><span class="s0">, </span><span class="s1">false</span><span class="s0">);</span>
+				<span class="s0">}</span>
+
+				<span class="s0">first.edit(content, storeName, !overwrite);</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s4">// must be inserting at the end</span>
+				<span class="s0">const newChunk = </span><span class="s1">new </span><span class="s0">Chunk(start, end, </span><span class="s2">''</span><span class="s0">).edit(content, storeName);</span>
+
+				<span class="s4">// TODO last chunk in the array may not be the last chunk, if it's moved...</span>
+				<span class="s0">last.next = newChunk;</span>
+				<span class="s0">newChunk.previous = last;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prepend(content) {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'outro content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">.intro = content + </span><span class="s1">this</span><span class="s0">.intro;</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prependLeft(index, content) {</span>
+			<span class="s0">index = index + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'inserted content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(index);</span>
+
+			<span class="s0">const chunk = </span><span class="s1">this</span><span class="s0">.byEnd[index];</span>
+
+			<span class="s1">if </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.prependLeft(content);</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.intro = content + </span><span class="s1">this</span><span class="s0">.intro;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prependRight(index, content) {</span>
+			<span class="s0">index = index + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">content !== </span><span class="s2">'string'</span><span class="s0">) </span><span class="s1">throw new </span><span class="s0">TypeError(</span><span class="s2">'inserted content must be a string'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(index);</span>
+
+			<span class="s0">const chunk = </span><span class="s1">this</span><span class="s0">.byStart[index];</span>
+
+			<span class="s1">if </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.prependRight(content);</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s1">this</span><span class="s0">.outro = content + </span><span class="s1">this</span><span class="s0">.outro;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">remove(start, end) {</span>
+			<span class="s0">start = start + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">end = end + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.original.length !== </span><span class="s3">0</span><span class="s0">) {</span>
+				<span class="s1">while </span><span class="s0">(start &lt; </span><span class="s3">0</span><span class="s0">) start += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+				<span class="s1">while </span><span class="s0">(end &lt; </span><span class="s3">0</span><span class="s0">) end += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(start === end) </span><span class="s1">return this</span><span class="s0">;</span>
+
+			<span class="s1">if </span><span class="s0">(start &lt; </span><span class="s3">0 </span><span class="s0">|| end &gt; </span><span class="s1">this</span><span class="s0">.original.length) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'Character is out of bounds'</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(start &gt; end) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'end must be greater than start'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(start);</span>
+			<span class="s1">this</span><span class="s0">._split(end);</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.byStart[start];</span>
+
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.intro = </span><span class="s2">''</span><span class="s0">;</span>
+				<span class="s0">chunk.outro = </span><span class="s2">''</span><span class="s0">;</span>
+				<span class="s0">chunk.edit(</span><span class="s2">''</span><span class="s0">);</span>
+
+				<span class="s0">chunk = end &gt; chunk.end ? </span><span class="s1">this</span><span class="s0">.byStart[chunk.end] : </span><span class="s1">null</span><span class="s0">;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">reset(start, end) {</span>
+			<span class="s0">start = start + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">end = end + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.original.length !== </span><span class="s3">0</span><span class="s0">) {</span>
+				<span class="s1">while </span><span class="s0">(start &lt; </span><span class="s3">0</span><span class="s0">) start += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+				<span class="s1">while </span><span class="s0">(end &lt; </span><span class="s3">0</span><span class="s0">) end += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(start === end) </span><span class="s1">return this</span><span class="s0">;</span>
+
+			<span class="s1">if </span><span class="s0">(start &lt; </span><span class="s3">0 </span><span class="s0">|| end &gt; </span><span class="s1">this</span><span class="s0">.original.length) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'Character is out of bounds'</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(start &gt; end) </span><span class="s1">throw new </span><span class="s0">Error(</span><span class="s2">'end must be greater than start'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">._split(start);</span>
+			<span class="s1">this</span><span class="s0">._split(end);</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.byStart[start];</span>
+
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">chunk.reset();</span>
+
+				<span class="s0">chunk = end &gt; chunk.end ? </span><span class="s1">this</span><span class="s0">.byStart[chunk.end] : </span><span class="s1">null</span><span class="s0">;</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">lastChar() {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.outro.length) </span><span class="s1">return this</span><span class="s0">.outro[</span><span class="s1">this</span><span class="s0">.outro.length - </span><span class="s3">1</span><span class="s0">];</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.lastChunk;</span>
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s1">if </span><span class="s0">(chunk.outro.length) </span><span class="s1">return </span><span class="s0">chunk.outro[chunk.outro.length - </span><span class="s3">1</span><span class="s0">];</span>
+				<span class="s1">if </span><span class="s0">(chunk.content.length) </span><span class="s1">return </span><span class="s0">chunk.content[chunk.content.length - </span><span class="s3">1</span><span class="s0">];</span>
+				<span class="s1">if </span><span class="s0">(chunk.intro.length) </span><span class="s1">return </span><span class="s0">chunk.intro[chunk.intro.length - </span><span class="s3">1</span><span class="s0">];</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">((chunk = chunk.previous));</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro.length) </span><span class="s1">return this</span><span class="s0">.intro[</span><span class="s1">this</span><span class="s0">.intro.length - </span><span class="s3">1</span><span class="s0">];</span>
+			<span class="s1">return </span><span class="s2">''</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">lastLine() {</span>
+			<span class="s0">let lineIndex = </span><span class="s1">this</span><span class="s0">.outro.lastIndexOf(n);</span>
+			<span class="s1">if </span><span class="s0">(lineIndex !== -</span><span class="s3">1</span><span class="s0">) </span><span class="s1">return this</span><span class="s0">.outro.substr(lineIndex + </span><span class="s3">1</span><span class="s0">);</span>
+			<span class="s0">let lineStr = </span><span class="s1">this</span><span class="s0">.outro;</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.lastChunk;</span>
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s1">if </span><span class="s0">(chunk.outro.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+					<span class="s0">lineIndex = chunk.outro.lastIndexOf(n);</span>
+					<span class="s1">if </span><span class="s0">(lineIndex !== -</span><span class="s3">1</span><span class="s0">) </span><span class="s1">return </span><span class="s0">chunk.outro.substr(lineIndex + </span><span class="s3">1</span><span class="s0">) + lineStr;</span>
+					<span class="s0">lineStr = chunk.outro + lineStr;</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.content.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+					<span class="s0">lineIndex = chunk.content.lastIndexOf(n);</span>
+					<span class="s1">if </span><span class="s0">(lineIndex !== -</span><span class="s3">1</span><span class="s0">) </span><span class="s1">return </span><span class="s0">chunk.content.substr(lineIndex + </span><span class="s3">1</span><span class="s0">) + lineStr;</span>
+					<span class="s0">lineStr = chunk.content + lineStr;</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.intro.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+					<span class="s0">lineIndex = chunk.intro.lastIndexOf(n);</span>
+					<span class="s1">if </span><span class="s0">(lineIndex !== -</span><span class="s3">1</span><span class="s0">) </span><span class="s1">return </span><span class="s0">chunk.intro.substr(lineIndex + </span><span class="s3">1</span><span class="s0">) + lineStr;</span>
+					<span class="s0">lineStr = chunk.intro + lineStr;</span>
+				<span class="s0">}</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">((chunk = chunk.previous));</span>
+			<span class="s0">lineIndex = </span><span class="s1">this</span><span class="s0">.intro.lastIndexOf(n);</span>
+			<span class="s1">if </span><span class="s0">(lineIndex !== -</span><span class="s3">1</span><span class="s0">) </span><span class="s1">return this</span><span class="s0">.intro.substr(lineIndex + </span><span class="s3">1</span><span class="s0">) + lineStr;</span>
+			<span class="s1">return this</span><span class="s0">.intro + lineStr;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">slice(start = </span><span class="s3">0</span><span class="s0">, end = </span><span class="s1">this</span><span class="s0">.original.length - </span><span class="s1">this</span><span class="s0">.offset) {</span>
+			<span class="s0">start = start + </span><span class="s1">this</span><span class="s0">.offset;</span>
+			<span class="s0">end = end + </span><span class="s1">this</span><span class="s0">.offset;</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.original.length !== </span><span class="s3">0</span><span class="s0">) {</span>
+				<span class="s1">while </span><span class="s0">(start &lt; </span><span class="s3">0</span><span class="s0">) start += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+				<span class="s1">while </span><span class="s0">(end &lt; </span><span class="s3">0</span><span class="s0">) end += </span><span class="s1">this</span><span class="s0">.original.length;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">let result = </span><span class="s2">''</span><span class="s0">;</span>
+
+			<span class="s4">// find start chunk</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+			<span class="s1">while </span><span class="s0">(chunk &amp;&amp; (chunk.start &gt; start || chunk.end &lt;= start)) {</span>
+				<span class="s4">// found end chunk before start</span>
+				<span class="s1">if </span><span class="s0">(chunk.start &lt; end &amp;&amp; chunk.end &gt;= end) {</span>
+					<span class="s1">return </span><span class="s0">result;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(chunk &amp;&amp; chunk.edited &amp;&amp; chunk.start !== start)</span>
+				<span class="s1">throw new </span><span class="s0">Error(`Cannot use replaced character ${start} as slice start anchor.`);</span>
+
+			<span class="s0">const startChunk = chunk;</span>
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s1">if </span><span class="s0">(chunk.intro &amp;&amp; (startChunk !== chunk || chunk.start === start)) {</span>
+					<span class="s0">result += chunk.intro;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">const containsEnd = chunk.start &lt; end &amp;&amp; chunk.end &gt;= end;</span>
+				<span class="s1">if </span><span class="s0">(containsEnd &amp;&amp; chunk.edited &amp;&amp; chunk.end !== end)</span>
+					<span class="s1">throw new </span><span class="s0">Error(`Cannot use replaced character ${end} as slice end anchor.`);</span>
+
+				<span class="s0">const sliceStart = startChunk === chunk ? start - chunk.start : </span><span class="s3">0</span><span class="s0">;</span>
+				<span class="s0">const sliceEnd = containsEnd ? chunk.content.length + end - chunk.end : chunk.content.length;</span>
+
+				<span class="s0">result += chunk.content.slice(sliceStart, sliceEnd);</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.outro &amp;&amp; (!containsEnd || chunk.end === end)) {</span>
+					<span class="s0">result += chunk.outro;</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(containsEnd) {</span>
+					<span class="s1">break</span><span class="s0">;</span>
+				<span class="s0">}</span>
+
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return </span><span class="s0">result;</span>
+		<span class="s0">}</span>
+
+		<span class="s4">// TODO deprecate this? not really very useful</span>
+		<span class="s0">snip(start, end) {</span>
+			<span class="s0">const clone = </span><span class="s1">this</span><span class="s0">.clone();</span>
+			<span class="s0">clone.remove(</span><span class="s3">0</span><span class="s0">, start);</span>
+			<span class="s0">clone.remove(end, clone.original.length);</span>
+
+			<span class="s1">return </span><span class="s0">clone;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_split(index) {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.byStart[index] || </span><span class="s1">this</span><span class="s0">.byEnd[index]) </span><span class="s1">return</span><span class="s0">;</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.lastSearchedChunk;</span>
+			<span class="s0">let previousChunk = chunk;</span>
+			<span class="s0">const searchForward = index &gt; chunk.end;</span>
+
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s1">if </span><span class="s0">(chunk.contains(index)) </span><span class="s1">return this</span><span class="s0">._splitChunk(chunk, index);</span>
+
+				<span class="s0">chunk = searchForward ? </span><span class="s1">this</span><span class="s0">.byStart[chunk.end] : </span><span class="s1">this</span><span class="s0">.byEnd[chunk.start];</span>
+
+				<span class="s4">// Prevent infinite loop (e.g. via empty chunks, where start === end)</span>
+				<span class="s1">if </span><span class="s0">(chunk === previousChunk) </span><span class="s1">return</span><span class="s0">;</span>
+
+				<span class="s0">previousChunk = chunk;</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_splitChunk(chunk, index) {</span>
+			<span class="s1">if </span><span class="s0">(chunk.edited &amp;&amp; chunk.content.length) {</span>
+				<span class="s4">// zero-length edited chunks are a special case (overlapping replacements)</span>
+				<span class="s0">const loc = getLocator(</span><span class="s1">this</span><span class="s0">.original)(index);</span>
+				<span class="s1">throw new </span><span class="s0">Error(</span>
+					<span class="s0">`Cannot split a chunk that has already been edited (${loc.line}:${loc.column} – </span><span class="s2">&quot;${chunk.original}&quot;</span><span class="s0">)`,</span>
+				<span class="s0">);</span>
+			<span class="s0">}</span>
+
+			<span class="s0">const newChunk = chunk.split(index);</span>
+
+			<span class="s1">this</span><span class="s0">.byEnd[index] = chunk;</span>
+			<span class="s1">this</span><span class="s0">.byStart[index] = newChunk;</span>
+			<span class="s1">this</span><span class="s0">.byEnd[newChunk.end] = newChunk;</span>
+
+			<span class="s1">if </span><span class="s0">(chunk === </span><span class="s1">this</span><span class="s0">.lastChunk) </span><span class="s1">this</span><span class="s0">.lastChunk = newChunk;</span>
+
+			<span class="s1">this</span><span class="s0">.lastSearchedChunk = chunk;</span>
+			<span class="s1">return true</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">toString() {</span>
+			<span class="s0">let str = </span><span class="s1">this</span><span class="s0">.intro;</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+			<span class="s1">while </span><span class="s0">(chunk) {</span>
+				<span class="s0">str += chunk.toString();</span>
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return </span><span class="s0">str + </span><span class="s1">this</span><span class="s0">.outro;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">isEmpty() {</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s1">if </span><span class="s0">(</span>
+					<span class="s0">(chunk.intro.length &amp;&amp; chunk.intro.trim()) ||</span>
+					<span class="s0">(chunk.content.length &amp;&amp; chunk.content.trim()) ||</span>
+					<span class="s0">(chunk.outro.length &amp;&amp; chunk.outro.trim())</span>
+				<span class="s0">)</span>
+					<span class="s1">return false</span><span class="s0">;</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">((chunk = chunk.next));</span>
+			<span class="s1">return true</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">length() {</span>
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+			<span class="s0">let length = </span><span class="s3">0</span><span class="s0">;</span>
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s0">length += chunk.intro.length + chunk.content.length + chunk.outro.length;</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">((chunk = chunk.next));</span>
+			<span class="s1">return </span><span class="s0">length;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimLines() {</span>
+			<span class="s1">return this</span><span class="s0">.trim(</span><span class="s2">'[</span><span class="s1">\\</span><span class="s2">r</span><span class="s1">\\</span><span class="s2">n]'</span><span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trim(charType) {</span>
+			<span class="s1">return this</span><span class="s0">.trimStart(charType).trimEnd(charType);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimEndAborted(charType) {</span>
+			<span class="s0">const rx = </span><span class="s1">new </span><span class="s0">RegExp((charType || </span><span class="s2">'</span><span class="s1">\\</span><span class="s2">s'</span><span class="s0">) + </span><span class="s2">'+$'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">.outro = </span><span class="s1">this</span><span class="s0">.outro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.outro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.lastChunk;</span>
+
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s0">const end = chunk.end;</span>
+				<span class="s0">const aborted = chunk.trimEnd(rx);</span>
+
+				<span class="s4">// if chunk was trimmed, we have a new lastChunk</span>
+				<span class="s1">if </span><span class="s0">(chunk.end !== end) {</span>
+					<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.lastChunk === chunk) {</span>
+						<span class="s1">this</span><span class="s0">.lastChunk = chunk.next;</span>
+					<span class="s0">}</span>
+
+					<span class="s1">this</span><span class="s0">.byEnd[chunk.end] = chunk;</span>
+					<span class="s1">this</span><span class="s0">.byStart[chunk.next.start] = chunk.next;</span>
+					<span class="s1">this</span><span class="s0">.byEnd[chunk.next.end] = chunk.next;</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(aborted) </span><span class="s1">return true</span><span class="s0">;</span>
+				<span class="s0">chunk = chunk.previous;</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">(chunk);</span>
+
+			<span class="s1">return false</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimEnd(charType) {</span>
+			<span class="s1">this</span><span class="s0">.trimEndAborted(charType);</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+		<span class="s0">trimStartAborted(charType) {</span>
+			<span class="s0">const rx = </span><span class="s1">new </span><span class="s0">RegExp(</span><span class="s2">'^' </span><span class="s0">+ (charType || </span><span class="s2">'</span><span class="s1">\\</span><span class="s2">s'</span><span class="s0">) + </span><span class="s2">'+'</span><span class="s0">);</span>
+
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro.length) </span><span class="s1">return true</span><span class="s0">;</span>
+
+			<span class="s0">let chunk = </span><span class="s1">this</span><span class="s0">.firstChunk;</span>
+
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s0">const end = chunk.end;</span>
+				<span class="s0">const aborted = chunk.trimStart(rx);</span>
+
+				<span class="s1">if </span><span class="s0">(chunk.end !== end) {</span>
+					<span class="s4">// special case...</span>
+					<span class="s1">if </span><span class="s0">(chunk === </span><span class="s1">this</span><span class="s0">.lastChunk) </span><span class="s1">this</span><span class="s0">.lastChunk = chunk.next;</span>
+
+					<span class="s1">this</span><span class="s0">.byEnd[chunk.end] = chunk;</span>
+					<span class="s1">this</span><span class="s0">.byStart[chunk.next.start] = chunk.next;</span>
+					<span class="s1">this</span><span class="s0">.byEnd[chunk.next.end] = chunk.next;</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(aborted) </span><span class="s1">return true</span><span class="s0">;</span>
+				<span class="s0">chunk = chunk.next;</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">(chunk);</span>
+
+			<span class="s1">return false</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimStart(charType) {</span>
+			<span class="s1">this</span><span class="s0">.trimStartAborted(charType);</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">hasChanged() {</span>
+			<span class="s1">return this</span><span class="s0">.original !== </span><span class="s1">this</span><span class="s0">.toString();</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_replaceRegexp(searchValue, replacement) {</span>
+			<span class="s1">function </span><span class="s0">getReplacement(match, str) {</span>
+				<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">replacement === </span><span class="s2">'string'</span><span class="s0">) {</span>
+					<span class="s1">return </span><span class="s0">replacement.replace(/\$(\$|&amp;|\d+)/g, (_, i) =&gt; {</span>
+						<span class="s4">// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#specifying_a_string_as_a_parameter</span>
+						<span class="s1">if </span><span class="s0">(i === </span><span class="s2">'$'</span><span class="s0">) </span><span class="s1">return </span><span class="s2">'$'</span><span class="s0">;</span>
+						<span class="s1">if </span><span class="s0">(i === </span><span class="s2">'&amp;'</span><span class="s0">) </span><span class="s1">return </span><span class="s0">match[</span><span class="s3">0</span><span class="s0">];</span>
+						<span class="s0">const num = +i;</span>
+						<span class="s1">if </span><span class="s0">(num &lt; match.length) </span><span class="s1">return </span><span class="s0">match[+i];</span>
+						<span class="s1">return </span><span class="s0">`$${i}`;</span>
+					<span class="s0">});</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s1">return </span><span class="s0">replacement(...match, match.index, str, match.groups);</span>
+				<span class="s0">}</span>
+			<span class="s0">}</span>
+			<span class="s1">function </span><span class="s0">matchAll(re, str) {</span>
+				<span class="s0">let match;</span>
+				<span class="s0">const matches = [];</span>
+				<span class="s1">while </span><span class="s0">((match = re.exec(str))) {</span>
+					<span class="s0">matches.push(match);</span>
+				<span class="s0">}</span>
+				<span class="s1">return </span><span class="s0">matches;</span>
+			<span class="s0">}</span>
+			<span class="s1">if </span><span class="s0">(searchValue.global) {</span>
+				<span class="s0">const matches = matchAll(searchValue, </span><span class="s1">this</span><span class="s0">.original);</span>
+				<span class="s0">matches.forEach((match) =&gt; {</span>
+					<span class="s1">if </span><span class="s0">(match.index != </span><span class="s1">null</span><span class="s0">) {</span>
+						<span class="s0">const replacement = getReplacement(match, </span><span class="s1">this</span><span class="s0">.original);</span>
+						<span class="s1">if </span><span class="s0">(replacement !== match[</span><span class="s3">0</span><span class="s0">]) {</span>
+							<span class="s1">this</span><span class="s0">.overwrite(match.index, match.index + match[</span><span class="s3">0</span><span class="s0">].length, replacement);</span>
+						<span class="s0">}</span>
+					<span class="s0">}</span>
+				<span class="s0">});</span>
+			<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+				<span class="s0">const match = </span><span class="s1">this</span><span class="s0">.original.match(searchValue);</span>
+				<span class="s1">if </span><span class="s0">(match &amp;&amp; match.index != </span><span class="s1">null</span><span class="s0">) {</span>
+					<span class="s0">const replacement = getReplacement(match, </span><span class="s1">this</span><span class="s0">.original);</span>
+					<span class="s1">if </span><span class="s0">(replacement !== match[</span><span class="s3">0</span><span class="s0">]) {</span>
+						<span class="s1">this</span><span class="s0">.overwrite(match.index, match.index + match[</span><span class="s3">0</span><span class="s0">].length, replacement);</span>
+					<span class="s0">}</span>
+				<span class="s0">}</span>
+			<span class="s0">}</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_replaceString(string, replacement) {</span>
+			<span class="s0">const { original } = </span><span class="s1">this</span><span class="s0">;</span>
+			<span class="s0">const index = original.indexOf(string);</span>
+
+			<span class="s1">if </span><span class="s0">(index !== -</span><span class="s3">1</span><span class="s0">) {</span>
+				<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">replacement === </span><span class="s2">'function'</span><span class="s0">) {</span>
+					<span class="s0">replacement = replacement(string, index, original);</span>
+				<span class="s0">}</span>
+				<span class="s1">if </span><span class="s0">(string !== replacement) {</span>
+					<span class="s1">this</span><span class="s0">.overwrite(index, index + string.length, replacement);</span>
+				<span class="s0">}</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">replace(searchValue, replacement) {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">searchValue === </span><span class="s2">'string'</span><span class="s0">) {</span>
+				<span class="s1">return this</span><span class="s0">._replaceString(searchValue, replacement);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">._replaceRegexp(searchValue, replacement);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">_replaceAllString(string, replacement) {</span>
+			<span class="s0">const { original } = </span><span class="s1">this</span><span class="s0">;</span>
+			<span class="s0">const stringLength = string.length;</span>
+			<span class="s1">for </span><span class="s0">(</span>
+				<span class="s0">let index = original.indexOf(string);</span>
+				<span class="s0">index !== -</span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s0">index = original.indexOf(string, index + stringLength)</span>
+			<span class="s0">) {</span>
+				<span class="s0">const previous = original.slice(index, index + stringLength);</span>
+				<span class="s0">let _replacement = replacement;</span>
+				<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">replacement === </span><span class="s2">'function'</span><span class="s0">) {</span>
+					<span class="s0">_replacement = replacement(previous, index, original);</span>
+				<span class="s0">}</span>
+				<span class="s1">if </span><span class="s0">(previous !== _replacement) </span><span class="s1">this</span><span class="s0">.overwrite(index, index + stringLength, _replacement);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">replaceAll(searchValue, replacement) {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">typeof </span><span class="s0">searchValue === </span><span class="s2">'string'</span><span class="s0">) {</span>
+				<span class="s1">return this</span><span class="s0">._replaceAllString(searchValue, replacement);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(!searchValue.global) {</span>
+				<span class="s1">throw new </span><span class="s0">TypeError(</span>
+					<span class="s2">'MagicString.prototype.replaceAll called with a non-global RegExp argument'</span><span class="s0">,</span>
+				<span class="s0">);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">._replaceRegexp(searchValue, replacement);</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const hasOwnProp = Object.prototype.hasOwnProperty;</span>
+
+	<span class="s0">class Bundle {</span>
+		<span class="s0">constructor(options = {}) {</span>
+			<span class="s1">this</span><span class="s0">.intro = options.intro || </span><span class="s2">''</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.separator = options.separator !== undefined ? options.separator : </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">;</span>
+			<span class="s1">this</span><span class="s0">.sources = [];</span>
+			<span class="s1">this</span><span class="s0">.uniqueSources = [];</span>
+			<span class="s1">this</span><span class="s0">.uniqueSourceIndexByFilename = {};</span>
+		<span class="s0">}</span>
+
+		<span class="s0">addSource(source) {</span>
+			<span class="s1">if </span><span class="s0">(source </span><span class="s1">instanceof </span><span class="s0">MagicString) {</span>
+				<span class="s1">return this</span><span class="s0">.addSource({</span>
+					<span class="s0">content: source,</span>
+					<span class="s0">filename: source.filename,</span>
+					<span class="s0">separator: </span><span class="s1">this</span><span class="s0">.separator,</span>
+				<span class="s0">});</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(!isObject(source) || !source.content) {</span>
+				<span class="s1">throw new </span><span class="s0">Error(</span>
+					<span class="s2">'bundle.addSource() takes an object with a `content` property, which should be an instance of MagicString, and an optional `filename`'</span><span class="s0">,</span>
+				<span class="s0">);</span>
+			<span class="s0">}</span>
+
+			<span class="s0">[</span><span class="s2">'filename'</span><span class="s0">, </span><span class="s2">'ignoreList'</span><span class="s0">, </span><span class="s2">'indentExclusionRanges'</span><span class="s0">, </span><span class="s2">'separator'</span><span class="s0">].forEach((option) =&gt; {</span>
+				<span class="s1">if </span><span class="s0">(!hasOwnProp.call(source, option)) source[option] = source.content[option];</span>
+			<span class="s0">});</span>
+
+			<span class="s1">if </span><span class="s0">(source.separator === undefined) {</span>
+				<span class="s4">// TODO there's a bunch of this sort of thing, needs cleaning up</span>
+				<span class="s0">source.separator = </span><span class="s1">this</span><span class="s0">.separator;</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(source.filename) {</span>
+				<span class="s1">if </span><span class="s0">(!hasOwnProp.call(</span><span class="s1">this</span><span class="s0">.uniqueSourceIndexByFilename, source.filename)) {</span>
+					<span class="s1">this</span><span class="s0">.uniqueSourceIndexByFilename[source.filename] = </span><span class="s1">this</span><span class="s0">.uniqueSources.length;</span>
+					<span class="s1">this</span><span class="s0">.uniqueSources.push({ filename: source.filename, content: source.content.original });</span>
+				<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+					<span class="s0">const uniqueSource = </span><span class="s1">this</span><span class="s0">.uniqueSources[</span><span class="s1">this</span><span class="s0">.uniqueSourceIndexByFilename[source.filename]];</span>
+					<span class="s1">if </span><span class="s0">(source.content.original !== uniqueSource.content) {</span>
+						<span class="s1">throw new </span><span class="s0">Error(`Illegal source: same filename (${source.filename}), different contents`);</span>
+					<span class="s0">}</span>
+				<span class="s0">}</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.sources.push(source);</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">append(str, options) {</span>
+			<span class="s1">this</span><span class="s0">.addSource({</span>
+				<span class="s0">content: </span><span class="s1">new </span><span class="s0">MagicString(str),</span>
+				<span class="s0">separator: (options &amp;&amp; options.separator) || </span><span class="s2">''</span><span class="s0">,</span>
+			<span class="s0">});</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">clone() {</span>
+			<span class="s0">const bundle = </span><span class="s1">new </span><span class="s0">Bundle({</span>
+				<span class="s0">intro: </span><span class="s1">this</span><span class="s0">.intro,</span>
+				<span class="s0">separator: </span><span class="s1">this</span><span class="s0">.separator,</span>
+			<span class="s0">});</span>
+
+			<span class="s1">this</span><span class="s0">.sources.forEach((source) =&gt; {</span>
+				<span class="s0">bundle.addSource({</span>
+					<span class="s0">filename: source.filename,</span>
+					<span class="s0">content: source.content.clone(),</span>
+					<span class="s0">separator: source.separator,</span>
+				<span class="s0">});</span>
+			<span class="s0">});</span>
+
+			<span class="s1">return </span><span class="s0">bundle;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">generateDecodedMap(options = {}) {</span>
+			<span class="s0">const names = [];</span>
+			<span class="s0">let x_google_ignoreList = undefined;</span>
+			<span class="s1">this</span><span class="s0">.sources.forEach((source) =&gt; {</span>
+				<span class="s0">Object.keys(source.content.storedNames).forEach((name) =&gt; {</span>
+					<span class="s1">if </span><span class="s0">(!~names.indexOf(name)) names.push(name);</span>
+				<span class="s0">});</span>
+			<span class="s0">});</span>
+
+			<span class="s0">const mappings = </span><span class="s1">new </span><span class="s0">Mappings(options.hires);</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro) {</span>
+				<span class="s0">mappings.advance(</span><span class="s1">this</span><span class="s0">.intro);</span>
+			<span class="s0">}</span>
+
+			<span class="s1">this</span><span class="s0">.sources.forEach((source, i) =&gt; {</span>
+				<span class="s1">if </span><span class="s0">(i &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+					<span class="s0">mappings.advance(</span><span class="s1">this</span><span class="s0">.separator);</span>
+				<span class="s0">}</span>
+
+				<span class="s0">const sourceIndex = source.filename ? </span><span class="s1">this</span><span class="s0">.uniqueSourceIndexByFilename[source.filename] : -</span><span class="s3">1</span><span class="s0">;</span>
+				<span class="s0">const magicString = source.content;</span>
+				<span class="s0">const locate = getLocator(magicString.original);</span>
+
+				<span class="s1">if </span><span class="s0">(magicString.intro) {</span>
+					<span class="s0">mappings.advance(magicString.intro);</span>
+				<span class="s0">}</span>
+
+				<span class="s0">magicString.firstChunk.eachNext((chunk) =&gt; {</span>
+					<span class="s0">const loc = locate(chunk.start);</span>
+
+					<span class="s1">if </span><span class="s0">(chunk.intro.length) mappings.advance(chunk.intro);</span>
+
+					<span class="s1">if </span><span class="s0">(source.filename) {</span>
+						<span class="s1">if </span><span class="s0">(chunk.edited) {</span>
+							<span class="s0">mappings.addEdit(</span>
+								<span class="s0">sourceIndex,</span>
+								<span class="s0">chunk.content,</span>
+								<span class="s0">loc,</span>
+								<span class="s0">chunk.storeName ? names.indexOf(chunk.original) : -</span><span class="s3">1</span><span class="s0">,</span>
+							<span class="s0">);</span>
+						<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+							<span class="s0">mappings.addUneditedChunk(</span>
+								<span class="s0">sourceIndex,</span>
+								<span class="s0">chunk,</span>
+								<span class="s0">magicString.original,</span>
+								<span class="s0">loc,</span>
+								<span class="s0">magicString.sourcemapLocations,</span>
+							<span class="s0">);</span>
+						<span class="s0">}</span>
+					<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+						<span class="s0">mappings.advance(chunk.content);</span>
+					<span class="s0">}</span>
+
+					<span class="s1">if </span><span class="s0">(chunk.outro.length) mappings.advance(chunk.outro);</span>
+				<span class="s0">});</span>
+
+				<span class="s1">if </span><span class="s0">(magicString.outro) {</span>
+					<span class="s0">mappings.advance(magicString.outro);</span>
+				<span class="s0">}</span>
+
+				<span class="s1">if </span><span class="s0">(source.ignoreList &amp;&amp; sourceIndex !== -</span><span class="s3">1</span><span class="s0">) {</span>
+					<span class="s1">if </span><span class="s0">(x_google_ignoreList === undefined) {</span>
+						<span class="s0">x_google_ignoreList = [];</span>
+					<span class="s0">}</span>
+					<span class="s0">x_google_ignoreList.push(sourceIndex);</span>
+				<span class="s0">}</span>
+			<span class="s0">});</span>
+
+			<span class="s1">return </span><span class="s0">{</span>
+				<span class="s0">file: options.file ? options.file.split(/[/\\]/).pop() : undefined,</span>
+				<span class="s0">sources: </span><span class="s1">this</span><span class="s0">.uniqueSources.map((source) =&gt; {</span>
+					<span class="s1">return </span><span class="s0">options.file ? getRelativePath(options.file, source.filename) : source.filename;</span>
+				<span class="s0">}),</span>
+				<span class="s0">sourcesContent: </span><span class="s1">this</span><span class="s0">.uniqueSources.map((source) =&gt; {</span>
+					<span class="s1">return </span><span class="s0">options.includeContent ? source.content : </span><span class="s1">null</span><span class="s0">;</span>
+				<span class="s0">}),</span>
+				<span class="s0">names,</span>
+				<span class="s0">mappings: mappings.raw,</span>
+				<span class="s0">x_google_ignoreList,</span>
+			<span class="s0">};</span>
+		<span class="s0">}</span>
+
+		<span class="s0">generateMap(options) {</span>
+			<span class="s1">return new </span><span class="s0">SourceMap(</span><span class="s1">this</span><span class="s0">.generateDecodedMap(options));</span>
+		<span class="s0">}</span>
+
+		<span class="s0">getIndentString() {</span>
+			<span class="s0">const indentStringCounts = {};</span>
+
+			<span class="s1">this</span><span class="s0">.sources.forEach((source) =&gt; {</span>
+				<span class="s0">const indentStr = source.content._getRawIndentString();</span>
+
+				<span class="s1">if </span><span class="s0">(indentStr === </span><span class="s1">null</span><span class="s0">) </span><span class="s1">return</span><span class="s0">;</span>
+
+				<span class="s1">if </span><span class="s0">(!indentStringCounts[indentStr]) indentStringCounts[indentStr] = </span><span class="s3">0</span><span class="s0">;</span>
+				<span class="s0">indentStringCounts[indentStr] += </span><span class="s3">1</span><span class="s0">;</span>
+			<span class="s0">});</span>
+
+			<span class="s1">return </span><span class="s0">(</span>
+				<span class="s0">Object.keys(indentStringCounts).sort((a, b) =&gt; {</span>
+					<span class="s1">return </span><span class="s0">indentStringCounts[a] - indentStringCounts[b];</span>
+				<span class="s0">})[</span><span class="s3">0</span><span class="s0">] || </span><span class="s2">'</span><span class="s1">\t</span><span class="s2">'</span>
+			<span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">indent(indentStr) {</span>
+			<span class="s1">if </span><span class="s0">(!arguments.length) {</span>
+				<span class="s0">indentStr = </span><span class="s1">this</span><span class="s0">.getIndentString();</span>
+			<span class="s0">}</span>
+
+			<span class="s1">if </span><span class="s0">(indentStr === </span><span class="s2">''</span><span class="s0">) </span><span class="s1">return this</span><span class="s0">; </span><span class="s4">// noop</span>
+
+			<span class="s0">let trailingNewline = !</span><span class="s1">this</span><span class="s0">.intro || </span><span class="s1">this</span><span class="s0">.intro.slice(-</span><span class="s3">1</span><span class="s0">) === </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">;</span>
+
+			<span class="s1">this</span><span class="s0">.sources.forEach((source, i) =&gt; {</span>
+				<span class="s0">const separator = source.separator !== undefined ? source.separator : </span><span class="s1">this</span><span class="s0">.separator;</span>
+				<span class="s0">const indentStart = trailingNewline || (i &gt; </span><span class="s3">0 </span><span class="s0">&amp;&amp; /\r?\n$/.test(separator));</span>
+
+				<span class="s0">source.content.indent(indentStr, {</span>
+					<span class="s0">exclude: source.indentExclusionRanges,</span>
+					<span class="s0">indentStart, </span><span class="s4">//: trailingNewline || /\r?\n$/.test( separator )  //true///\r?\n/.test( separator )</span>
+				<span class="s0">});</span>
+
+				<span class="s0">trailingNewline = source.content.lastChar() === </span><span class="s2">'</span><span class="s1">\n</span><span class="s2">'</span><span class="s0">;</span>
+			<span class="s0">});</span>
+
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro) {</span>
+				<span class="s1">this</span><span class="s0">.intro =</span>
+					<span class="s0">indentStr +</span>
+					<span class="s1">this</span><span class="s0">.intro.replace(/^[^\n]/gm, (match, index) =&gt; {</span>
+						<span class="s1">return </span><span class="s0">index &gt; </span><span class="s3">0 </span><span class="s0">? indentStr + match : match;</span>
+					<span class="s0">});</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">prepend(str) {</span>
+			<span class="s1">this</span><span class="s0">.intro = str + </span><span class="s1">this</span><span class="s0">.intro;</span>
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">toString() {</span>
+			<span class="s0">const body = </span><span class="s1">this</span><span class="s0">.sources</span>
+				<span class="s0">.map((source, i) =&gt; {</span>
+					<span class="s0">const separator = source.separator !== undefined ? source.separator : </span><span class="s1">this</span><span class="s0">.separator;</span>
+					<span class="s0">const str = (i &gt; </span><span class="s3">0 </span><span class="s0">? separator : </span><span class="s2">''</span><span class="s0">) + source.content.toString();</span>
+
+					<span class="s1">return </span><span class="s0">str;</span>
+				<span class="s0">})</span>
+				<span class="s0">.join(</span><span class="s2">''</span><span class="s0">);</span>
+
+			<span class="s1">return this</span><span class="s0">.intro + body;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">isEmpty() {</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.intro.length &amp;&amp; </span><span class="s1">this</span><span class="s0">.intro.trim()) </span><span class="s1">return false</span><span class="s0">;</span>
+			<span class="s1">if </span><span class="s0">(</span><span class="s1">this</span><span class="s0">.sources.some((source) =&gt; !source.content.isEmpty())) </span><span class="s1">return false</span><span class="s0">;</span>
+			<span class="s1">return true</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">length() {</span>
+			<span class="s1">return this</span><span class="s0">.sources.reduce(</span>
+				<span class="s0">(length, source) =&gt; length + source.content.length(),</span>
+				<span class="s1">this</span><span class="s0">.intro.length,</span>
+			<span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimLines() {</span>
+			<span class="s1">return this</span><span class="s0">.trim(</span><span class="s2">'[</span><span class="s1">\\</span><span class="s2">r</span><span class="s1">\\</span><span class="s2">n]'</span><span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trim(charType) {</span>
+			<span class="s1">return this</span><span class="s0">.trimStart(charType).trimEnd(charType);</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimStart(charType) {</span>
+			<span class="s0">const rx = </span><span class="s1">new </span><span class="s0">RegExp(</span><span class="s2">'^' </span><span class="s0">+ (charType || </span><span class="s2">'</span><span class="s1">\\</span><span class="s2">s'</span><span class="s0">) + </span><span class="s2">'+'</span><span class="s0">);</span>
+			<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+
+			<span class="s1">if </span><span class="s0">(!</span><span class="s1">this</span><span class="s0">.intro) {</span>
+				<span class="s0">let source;</span>
+				<span class="s0">let i = </span><span class="s3">0</span><span class="s0">;</span>
+
+				<span class="s1">do </span><span class="s0">{</span>
+					<span class="s0">source = </span><span class="s1">this</span><span class="s0">.sources[i++];</span>
+					<span class="s1">if </span><span class="s0">(!source) {</span>
+						<span class="s1">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+				<span class="s0">} </span><span class="s1">while </span><span class="s0">(!source.content.trimStartAborted(charType));</span>
+			<span class="s0">}</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">trimEnd(charType) {</span>
+			<span class="s0">const rx = </span><span class="s1">new </span><span class="s0">RegExp((charType || </span><span class="s2">'</span><span class="s1">\\</span><span class="s2">s'</span><span class="s0">) + </span><span class="s2">'+$'</span><span class="s0">);</span>
+
+			<span class="s0">let source;</span>
+			<span class="s0">let i = </span><span class="s1">this</span><span class="s0">.sources.length - </span><span class="s3">1</span><span class="s0">;</span>
+
+			<span class="s1">do </span><span class="s0">{</span>
+				<span class="s0">source = </span><span class="s1">this</span><span class="s0">.sources[i--];</span>
+				<span class="s1">if </span><span class="s0">(!source) {</span>
+					<span class="s1">this</span><span class="s0">.intro = </span><span class="s1">this</span><span class="s0">.intro.replace(rx, </span><span class="s2">''</span><span class="s0">);</span>
+					<span class="s1">break</span><span class="s0">;</span>
+				<span class="s0">}</span>
+			<span class="s0">} </span><span class="s1">while </span><span class="s0">(!source.content.trimEndAborted(charType));</span>
+
+			<span class="s1">return this</span><span class="s0">;</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">MagicString.Bundle = Bundle;</span>
+	<span class="s0">MagicString.SourceMap = SourceMap;</span>
+	<span class="s0">MagicString.</span><span class="s1">default </span><span class="s0">= MagicString; </span><span class="s4">// work around TypeScript bug https://github.com/Rich-Harris/magic-string/pull/121</span>
+
+	<span class="s1">return </span><span class="s0">MagicString;</span>
+
+<span class="s0">}));</span>
+<span class="s4">//# sourceMappingURL=magic-string.umd.js.map</span>
+</pre>
+</body>
+</html>

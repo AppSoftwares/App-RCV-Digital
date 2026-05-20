@@ -1,0 +1,394 @@
+<html>
+<head>
+<title>evaluation.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+evaluation.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.evaluate = evaluate;</span>
+<span class="s1">exports.evaluateTruthy = evaluateTruthy;</span>
+<span class="s1">const VALID_OBJECT_CALLEES = [</span><span class="s0">&quot;Number&quot;</span><span class="s1">, </span><span class="s0">&quot;String&quot;</span><span class="s1">, </span><span class="s0">&quot;Math&quot;</span><span class="s1">];</span>
+<span class="s1">const VALID_IDENTIFIER_CALLEES = [</span><span class="s0">&quot;isFinite&quot;</span><span class="s1">, </span><span class="s0">&quot;isNaN&quot;</span><span class="s1">, </span><span class="s0">&quot;parseFloat&quot;</span><span class="s1">, </span><span class="s0">&quot;parseInt&quot;</span><span class="s1">, </span><span class="s0">&quot;decodeURI&quot;</span><span class="s1">, </span><span class="s0">&quot;decodeURIComponent&quot;</span><span class="s1">, </span><span class="s0">&quot;encodeURI&quot;</span><span class="s1">, </span><span class="s0">&quot;encodeURIComponent&quot;</span><span class="s1">, </span><span class="s2">null</span><span class="s1">, </span><span class="s2">null</span><span class="s1">];</span>
+<span class="s1">const INVALID_METHODS = [</span><span class="s0">&quot;random&quot;</span><span class="s1">];</span>
+<span class="s2">function </span><span class="s1">isValidObjectCallee(val) {</span>
+  <span class="s2">return </span><span class="s1">VALID_OBJECT_CALLEES.includes(val);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">isValidIdentifierCallee(val) {</span>
+  <span class="s2">return </span><span class="s1">VALID_IDENTIFIER_CALLEES.includes(val);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">isInvalidMethod(val) {</span>
+  <span class="s2">return </span><span class="s1">INVALID_METHODS.includes(val);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">evaluateTruthy() {</span>
+  <span class="s1">const res = </span><span class="s2">this</span><span class="s1">.evaluate();</span>
+  <span class="s2">if </span><span class="s1">(res.confident) </span><span class="s2">return </span><span class="s1">!!res.value;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">deopt(path, state) {</span>
+  <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">state.deoptPath = path;</span>
+  <span class="s1">state.confident = </span><span class="s2">false</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s1">const Globals = </span><span class="s2">new </span><span class="s1">Map([[</span><span class="s0">&quot;undefined&quot;</span><span class="s1">, undefined], [</span><span class="s0">&quot;Infinity&quot;</span><span class="s1">, Infinity], [</span><span class="s0">&quot;NaN&quot;</span><span class="s1">, NaN]]);</span>
+<span class="s2">function </span><span class="s1">evaluateCached(path, state) {</span>
+  <span class="s1">const {</span>
+    <span class="s1">node</span>
+  <span class="s1">} = path;</span>
+  <span class="s1">const {</span>
+    <span class="s1">seen</span>
+  <span class="s1">} = state;</span>
+  <span class="s2">if </span><span class="s1">(seen.has(node)) {</span>
+    <span class="s1">const existing = seen.get(node);</span>
+    <span class="s2">if </span><span class="s1">(existing.resolved) {</span>
+      <span class="s2">return </span><span class="s1">existing.value;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">deopt(path, state);</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">const item = {</span>
+      <span class="s1">resolved: </span><span class="s2">false</span>
+    <span class="s1">};</span>
+    <span class="s1">seen.set(node, item);</span>
+    <span class="s1">const val = _evaluate(path, state);</span>
+    <span class="s2">if </span><span class="s1">(state.confident) {</span>
+      <span class="s1">item.resolved = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">item.value = val;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">val;</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">_evaluate(path, state) {</span>
+  <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(path.isSequenceExpression()) {</span>
+    <span class="s1">const exprs = path.get(</span><span class="s0">&quot;expressions&quot;</span><span class="s1">);</span>
+    <span class="s2">return </span><span class="s1">evaluateCached(exprs[exprs.length - </span><span class="s3">1</span><span class="s1">], state);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isStringLiteral() || path.isNumericLiteral() || path.isBooleanLiteral()) {</span>
+    <span class="s2">return </span><span class="s1">path.node.value;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isNullLiteral()) {</span>
+    <span class="s2">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isTemplateLiteral()) {</span>
+    <span class="s2">return </span><span class="s1">evaluateQuasis(path, path.node.quasis, state);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isTaggedTemplateExpression() &amp;&amp; path.get(</span><span class="s0">&quot;tag&quot;</span><span class="s1">).isMemberExpression()) {</span>
+    <span class="s1">const object = path.get(</span><span class="s0">&quot;tag.object&quot;</span><span class="s1">);</span>
+    <span class="s1">const {</span>
+      <span class="s1">node: {</span>
+        <span class="s1">name</span>
+      <span class="s1">}</span>
+    <span class="s1">} = object;</span>
+    <span class="s1">const property = path.get(</span><span class="s0">&quot;tag.property&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(object.isIdentifier() &amp;&amp; name === </span><span class="s0">&quot;String&quot; </span><span class="s1">&amp;&amp; !path.scope.getBinding(name) &amp;&amp; property.isIdentifier() &amp;&amp; property.node.name === </span><span class="s0">&quot;raw&quot;</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">evaluateQuasis(path, path.node.quasi.quasis, state, </span><span class="s2">true</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isConditionalExpression()) {</span>
+    <span class="s1">const testResult = evaluateCached(path.get(</span><span class="s0">&quot;test&quot;</span><span class="s1">), state);</span>
+    <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(testResult) {</span>
+      <span class="s2">return </span><span class="s1">evaluateCached(path.get(</span><span class="s0">&quot;consequent&quot;</span><span class="s1">), state);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s1">evaluateCached(path.get(</span><span class="s0">&quot;alternate&quot;</span><span class="s1">), state);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isExpressionWrapper()) {</span>
+    <span class="s2">return </span><span class="s1">evaluateCached(path.get(</span><span class="s0">&quot;expression&quot;</span><span class="s1">), state);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isMemberExpression() &amp;&amp; !path.parentPath.isCallExpression({</span>
+    <span class="s1">callee: path.node</span>
+  <span class="s1">})) {</span>
+    <span class="s1">const property = path.get(</span><span class="s0">&quot;property&quot;</span><span class="s1">);</span>
+    <span class="s1">const object = path.get(</span><span class="s0">&quot;object&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(object.isLiteral()) {</span>
+      <span class="s1">const value = object.node.value;</span>
+      <span class="s1">const type = </span><span class="s2">typeof </span><span class="s1">value;</span>
+      <span class="s1">let key = </span><span class="s2">null</span><span class="s1">;</span>
+      <span class="s2">if </span><span class="s1">(path.node.computed) {</span>
+        <span class="s1">key = evaluateCached(property, state);</span>
+        <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(property.isIdentifier()) {</span>
+        <span class="s1">key = property.node.name;</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">((type === </span><span class="s0">&quot;number&quot; </span><span class="s1">|| type === </span><span class="s0">&quot;string&quot;</span><span class="s1">) &amp;&amp; key != </span><span class="s2">null </span><span class="s1">&amp;&amp; (</span><span class="s2">typeof </span><span class="s1">key === </span><span class="s0">&quot;number&quot; </span><span class="s1">|| </span><span class="s2">typeof </span><span class="s1">key === </span><span class="s0">&quot;string&quot;</span><span class="s1">)) {</span>
+        <span class="s2">return </span><span class="s1">value[key];</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isReferencedIdentifier()) {</span>
+    <span class="s1">const binding = path.scope.getBinding(path.node.name);</span>
+    <span class="s2">if </span><span class="s1">(binding) {</span>
+      <span class="s2">if </span><span class="s1">(binding.constantViolations.length &gt; </span><span class="s3">0 </span><span class="s1">|| path.node.start &lt; binding.path.node.end) {</span>
+        <span class="s1">deopt(binding.path, state);</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s1">const bindingPathScope = binding.path.scope;</span>
+      <span class="s2">if </span><span class="s1">(binding.kind === </span><span class="s0">&quot;var&quot; </span><span class="s1">&amp;&amp; bindingPathScope !== binding.scope) {</span>
+        <span class="s1">let hasUnsafeBlock = !bindingPathScope.path.parentPath.isBlockStatement();</span>
+        <span class="s2">for </span><span class="s1">(let scope = bindingPathScope.parent; scope; scope = scope.parent) {</span>
+          <span class="s2">var </span><span class="s1">_scope$path$parentPat;</span>
+          <span class="s2">if </span><span class="s1">(scope === path.scope) {</span>
+            <span class="s2">if </span><span class="s1">(hasUnsafeBlock) {</span>
+              <span class="s1">deopt(binding.path, state);</span>
+              <span class="s2">return</span><span class="s1">;</span>
+            <span class="s1">}</span>
+            <span class="s2">break</span><span class="s1">;</span>
+          <span class="s1">}</span>
+          <span class="s2">if </span><span class="s1">((_scope$path$parentPat = scope.path.parentPath) != </span><span class="s2">null </span><span class="s1">&amp;&amp; _scope$path$parentPat.isBlockStatement()) {</span>
+            <span class="s1">hasUnsafeBlock = </span><span class="s2">true</span><span class="s1">;</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(binding.hasValue) {</span>
+        <span class="s2">return </span><span class="s1">binding.value;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">const name = path.node.name;</span>
+    <span class="s2">if </span><span class="s1">(Globals.has(name)) {</span>
+      <span class="s2">if </span><span class="s1">(!binding) {</span>
+        <span class="s2">return </span><span class="s1">Globals.get(name);</span>
+      <span class="s1">}</span>
+      <span class="s1">deopt(binding.path, state);</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(!binding) {</span>
+      <span class="s1">deopt(path, state);</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">const bindingPath = binding.path;</span>
+    <span class="s2">if </span><span class="s1">(!bindingPath.isVariableDeclarator()) {</span>
+      <span class="s1">deopt(bindingPath, state);</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">const initPath = bindingPath.get(</span><span class="s0">&quot;init&quot;</span><span class="s1">);</span>
+    <span class="s1">const value = evaluateCached(initPath, state);</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">value === </span><span class="s0">&quot;object&quot; </span><span class="s1">&amp;&amp; value !== </span><span class="s2">null </span><span class="s1">&amp;&amp; binding.references &gt; </span><span class="s3">1</span><span class="s1">) {</span>
+      <span class="s1">deopt(initPath, state);</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">value;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isUnaryExpression({</span>
+    <span class="s1">prefix: </span><span class="s2">true</span>
+  <span class="s1">})) {</span>
+    <span class="s2">if </span><span class="s1">(path.node.operator === </span><span class="s0">&quot;void&quot;</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">undefined;</span>
+    <span class="s1">}</span>
+    <span class="s1">const argument = path.get(</span><span class="s0">&quot;argument&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(path.node.operator === </span><span class="s0">&quot;typeof&quot; </span><span class="s1">&amp;&amp; (argument.isFunction() || argument.isClass())) {</span>
+      <span class="s2">return </span><span class="s0">&quot;function&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">const arg = evaluateCached(argument, state);</span>
+    <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">switch </span><span class="s1">(path.node.operator) {</span>
+      <span class="s2">case </span><span class="s0">&quot;!&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">!arg;</span>
+      <span class="s2">case </span><span class="s0">&quot;+&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">+arg;</span>
+      <span class="s2">case </span><span class="s0">&quot;-&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">-arg;</span>
+      <span class="s2">case </span><span class="s0">&quot;~&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">~arg;</span>
+      <span class="s2">case </span><span class="s0">&quot;typeof&quot;</span><span class="s1">:</span>
+        <span class="s2">return typeof </span><span class="s1">arg;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isArrayExpression()) {</span>
+    <span class="s1">const arr = [];</span>
+    <span class="s1">const elems = path.get(</span><span class="s0">&quot;elements&quot;</span><span class="s1">);</span>
+    <span class="s2">for </span><span class="s1">(const elem of elems) {</span>
+      <span class="s1">const elemValue = elem.evaluate();</span>
+      <span class="s2">if </span><span class="s1">(elemValue.confident) {</span>
+        <span class="s1">arr.push(elemValue.value);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">deopt(elemValue.deopt, state);</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">arr;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isObjectExpression()) {</span>
+    <span class="s1">const obj = {};</span>
+    <span class="s1">const props = path.get(</span><span class="s0">&quot;properties&quot;</span><span class="s1">);</span>
+    <span class="s2">for </span><span class="s1">(const prop of props) {</span>
+      <span class="s2">if </span><span class="s1">(prop.isObjectMethod() || prop.isSpreadElement()) {</span>
+        <span class="s1">deopt(prop, state);</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s1">const keyPath = prop.get(</span><span class="s0">&quot;key&quot;</span><span class="s1">);</span>
+      <span class="s1">let key;</span>
+      <span class="s2">if </span><span class="s1">(prop.node.computed) {</span>
+        <span class="s1">key = keyPath.evaluate();</span>
+        <span class="s2">if </span><span class="s1">(!key.confident) {</span>
+          <span class="s1">deopt(key.deopt, state);</span>
+          <span class="s2">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">key = key.value;</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(keyPath.isIdentifier()) {</span>
+        <span class="s1">key = keyPath.node.name;</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">key = keyPath.node.value;</span>
+      <span class="s1">}</span>
+      <span class="s1">const valuePath = prop.get(</span><span class="s0">&quot;value&quot;</span><span class="s1">);</span>
+      <span class="s1">let value = valuePath.evaluate();</span>
+      <span class="s2">if </span><span class="s1">(!value.confident) {</span>
+        <span class="s1">deopt(value.deopt, state);</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s1">value = value.value;</span>
+      <span class="s1">obj[key] = value;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">obj;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isLogicalExpression()) {</span>
+    <span class="s1">const wasConfident = state.confident;</span>
+    <span class="s1">const left = evaluateCached(path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">), state);</span>
+    <span class="s1">const leftConfident = state.confident;</span>
+    <span class="s1">state.confident = wasConfident;</span>
+    <span class="s1">const right = evaluateCached(path.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">), state);</span>
+    <span class="s1">const rightConfident = state.confident;</span>
+    <span class="s2">switch </span><span class="s1">(path.node.operator) {</span>
+      <span class="s2">case </span><span class="s0">&quot;||&quot;</span><span class="s1">:</span>
+        <span class="s1">state.confident = leftConfident &amp;&amp; (!!left || rightConfident);</span>
+        <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">left || right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&amp;&amp;&quot;</span><span class="s1">:</span>
+        <span class="s1">state.confident = leftConfident &amp;&amp; (!left || rightConfident);</span>
+        <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">left &amp;&amp; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;??&quot;</span><span class="s1">:</span>
+        <span class="s1">state.confident = leftConfident &amp;&amp; (left != </span><span class="s2">null </span><span class="s1">|| rightConfident);</span>
+        <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">left != </span><span class="s2">null </span><span class="s1">? left : right;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isBinaryExpression()) {</span>
+    <span class="s1">const left = evaluateCached(path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">), state);</span>
+    <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">const right = evaluateCached(path.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">), state);</span>
+    <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">switch </span><span class="s1">(path.node.operator) {</span>
+      <span class="s2">case </span><span class="s0">&quot;-&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left - right;</span>
+      <span class="s2">case </span><span class="s0">&quot;+&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left + right;</span>
+      <span class="s2">case </span><span class="s0">&quot;/&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left / right;</span>
+      <span class="s2">case </span><span class="s0">&quot;*&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left * right;</span>
+      <span class="s2">case </span><span class="s0">&quot;%&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left % right;</span>
+      <span class="s2">case </span><span class="s0">&quot;**&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">Math.pow(left, right);</span>
+      <span class="s2">case </span><span class="s0">&quot;&lt;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &lt; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&gt;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &gt; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&lt;=&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &lt;= right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&gt;=&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &gt;= right;</span>
+      <span class="s2">case </span><span class="s0">&quot;==&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left == right;</span>
+      <span class="s2">case </span><span class="s0">&quot;!=&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left != right;</span>
+      <span class="s2">case </span><span class="s0">&quot;===&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left === right;</span>
+      <span class="s2">case </span><span class="s0">&quot;!==&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left !== right;</span>
+      <span class="s2">case </span><span class="s0">&quot;|&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left | right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&amp;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &amp; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;^&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left ^ right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&lt;&lt;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &lt;&lt; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&gt;&gt;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &gt;&gt; right;</span>
+      <span class="s2">case </span><span class="s0">&quot;&gt;&gt;&gt;&quot;</span><span class="s1">:</span>
+        <span class="s2">return </span><span class="s1">left &gt;&gt;&gt; right;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(path.isCallExpression()) {</span>
+    <span class="s1">const callee = path.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">);</span>
+    <span class="s1">let context;</span>
+    <span class="s1">let func;</span>
+    <span class="s2">if </span><span class="s1">(callee.isIdentifier() &amp;&amp; !path.scope.getBinding(callee.node.name) &amp;&amp; (isValidObjectCallee(callee.node.name) || isValidIdentifierCallee(callee.node.name))) {</span>
+      <span class="s1">func = global[callee.node.name];</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(callee.isMemberExpression()) {</span>
+      <span class="s1">const object = callee.get(</span><span class="s0">&quot;object&quot;</span><span class="s1">);</span>
+      <span class="s1">const property = callee.get(</span><span class="s0">&quot;property&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(object.isIdentifier() &amp;&amp; property.isIdentifier() &amp;&amp; isValidObjectCallee(object.node.name) &amp;&amp; !isInvalidMethod(property.node.name)) {</span>
+        <span class="s1">context = global[object.node.name];</span>
+        <span class="s1">const key = property.node.name;</span>
+        <span class="s2">if </span><span class="s1">(hasOwnProperty.call(context, key)) {</span>
+          <span class="s1">func = context[key];</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(object.isLiteral() &amp;&amp; property.isIdentifier()) {</span>
+        <span class="s1">const type = </span><span class="s2">typeof </span><span class="s1">object.node.value;</span>
+        <span class="s2">if </span><span class="s1">(type === </span><span class="s0">&quot;string&quot; </span><span class="s1">|| type === </span><span class="s0">&quot;number&quot;</span><span class="s1">) {</span>
+          <span class="s1">context = object.node.value;</span>
+          <span class="s1">func = context[property.node.name];</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(func) {</span>
+      <span class="s1">const args = path.get(</span><span class="s0">&quot;arguments&quot;</span><span class="s1">).map(arg =&gt; evaluateCached(arg, state));</span>
+      <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+      <span class="s2">return </span><span class="s1">func.apply(context, args);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s1">deopt(path, state);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">evaluateQuasis(path, quasis, state, raw = </span><span class="s2">false</span><span class="s1">) {</span>
+  <span class="s1">let str = </span><span class="s0">&quot;&quot;</span><span class="s1">;</span>
+  <span class="s1">let i = </span><span class="s3">0</span><span class="s1">;</span>
+  <span class="s1">const exprs = path.isTemplateLiteral() ? path.get(</span><span class="s0">&quot;expressions&quot;</span><span class="s1">) : path.get(</span><span class="s0">&quot;quasi.expressions&quot;</span><span class="s1">);</span>
+  <span class="s2">for </span><span class="s1">(const elem of quasis) {</span>
+    <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">break</span><span class="s1">;</span>
+    <span class="s1">str += raw ? elem.value.raw : elem.value.cooked;</span>
+    <span class="s1">const expr = exprs[i++];</span>
+    <span class="s2">if </span><span class="s1">(expr) str += String(evaluateCached(expr, state));</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!state.confident) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">return </span><span class="s1">str;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">evaluate() {</span>
+  <span class="s1">const state = {</span>
+    <span class="s1">confident: </span><span class="s2">true</span><span class="s1">,</span>
+    <span class="s1">deoptPath: </span><span class="s2">null</span><span class="s1">,</span>
+    <span class="s1">seen: </span><span class="s2">new </span><span class="s1">Map()</span>
+  <span class="s1">};</span>
+  <span class="s1">let value = evaluateCached(</span><span class="s2">this</span><span class="s1">, state);</span>
+  <span class="s2">if </span><span class="s1">(!state.confident) value = undefined;</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">confident: state.confident,</span>
+    <span class="s1">deopt: state.deoptPath,</span>
+    <span class="s1">value: value</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=evaluation.js.map</span>
+</pre>
+</body>
+</html>

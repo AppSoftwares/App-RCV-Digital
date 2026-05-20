@@ -1,0 +1,206 @@
+<html>
+<head>
+<title>browser.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+browser.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * This is the web browser implementation of `debug()`. 
+ * 
+ * Expose `debug()` as the module. 
+ */</span>
+
+<span class="s1">exports = module.exports = require(</span><span class="s2">'./debug'</span><span class="s1">);</span>
+<span class="s1">exports.log = log;</span>
+<span class="s1">exports.formatArgs = formatArgs;</span>
+<span class="s1">exports.save = save;</span>
+<span class="s1">exports.load = load;</span>
+<span class="s1">exports.useColors = useColors;</span>
+<span class="s1">exports.storage = </span><span class="s2">'undefined' </span><span class="s1">!= </span><span class="s3">typeof </span><span class="s1">chrome</span>
+               <span class="s1">&amp;&amp; </span><span class="s2">'undefined' </span><span class="s1">!= </span><span class="s3">typeof </span><span class="s1">chrome.storage</span>
+                  <span class="s1">? chrome.storage.local</span>
+                  <span class="s1">: localstorage();</span>
+
+<span class="s0">/** 
+ * Colors. 
+ */</span>
+
+<span class="s1">exports.colors = [</span>
+  <span class="s2">'lightseagreen'</span><span class="s1">,</span>
+  <span class="s2">'forestgreen'</span><span class="s1">,</span>
+  <span class="s2">'goldenrod'</span><span class="s1">,</span>
+  <span class="s2">'dodgerblue'</span><span class="s1">,</span>
+  <span class="s2">'darkorchid'</span><span class="s1">,</span>
+  <span class="s2">'crimson'</span>
+<span class="s1">];</span>
+
+<span class="s0">/** 
+ * Currently only WebKit-based Web Inspectors, Firefox &gt;= v31, 
+ * and the Firebug extension (any Firefox version) are known 
+ * to support &quot;%c&quot; CSS customizations. 
+ * 
+ * TODO: add a `localStorage` variable to explicitly enable/disable colors 
+ */</span>
+
+<span class="s3">function </span><span class="s1">useColors() {</span>
+  <span class="s0">// NB: In an Electron preload script, document will be defined but not fully</span>
+  <span class="s0">// initialized. Since we know we're in Chrome, we'll just detect this case</span>
+  <span class="s0">// explicitly</span>
+  <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">window !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; window.process &amp;&amp; window.process.type === </span><span class="s2">'renderer'</span><span class="s1">) {</span>
+    <span class="s3">return true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// is webkit? http://stackoverflow.com/a/16459606/376773</span>
+  <span class="s0">// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632</span>
+  <span class="s3">return </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">document !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; document.documentElement &amp;&amp; document.documentElement.style &amp;&amp; document.documentElement.style.WebkitAppearance) ||</span>
+    <span class="s0">// is firebug? http://stackoverflow.com/a/398120/376773</span>
+    <span class="s1">(</span><span class="s3">typeof </span><span class="s1">window !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; window.console &amp;&amp; (window.console.firebug || (window.console.exception &amp;&amp; window.console.table))) ||</span>
+    <span class="s0">// is firefox &gt;= v31?</span>
+    <span class="s0">// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages</span>
+    <span class="s1">(</span><span class="s3">typeof </span><span class="s1">navigator !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; navigator.userAgent &amp;&amp; navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/) &amp;&amp; parseInt(RegExp.$1, </span><span class="s4">10</span><span class="s1">) &gt;= </span><span class="s4">31</span><span class="s1">) ||</span>
+    <span class="s0">// double check webkit in userAgent just in case we are in a worker</span>
+    <span class="s1">(</span><span class="s3">typeof </span><span class="s1">navigator !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; navigator.userAgent &amp;&amp; navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default. 
+ */</span>
+
+<span class="s1">exports.formatters.j = </span><span class="s3">function</span><span class="s1">(v) {</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s3">return </span><span class="s1">JSON.stringify(v);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+    <span class="s3">return </span><span class="s2">'[UnexpectedJSONParseError]: ' </span><span class="s1">+ err.message;</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+
+<span class="s0">/** 
+ * Colorize log arguments if enabled. 
+ * 
+ * @api public 
+ */</span>
+
+<span class="s3">function </span><span class="s1">formatArgs(args) {</span>
+  <span class="s3">var </span><span class="s1">useColors = </span><span class="s3">this</span><span class="s1">.useColors;</span>
+
+  <span class="s1">args[</span><span class="s4">0</span><span class="s1">] = (useColors ? </span><span class="s2">'%c' </span><span class="s1">: </span><span class="s2">''</span><span class="s1">)</span>
+    <span class="s1">+ </span><span class="s3">this</span><span class="s1">.namespace</span>
+    <span class="s1">+ (useColors ? </span><span class="s2">' %c' </span><span class="s1">: </span><span class="s2">' '</span><span class="s1">)</span>
+    <span class="s1">+ args[</span><span class="s4">0</span><span class="s1">]</span>
+    <span class="s1">+ (useColors ? </span><span class="s2">'%c ' </span><span class="s1">: </span><span class="s2">' '</span><span class="s1">)</span>
+    <span class="s1">+ </span><span class="s2">'+' </span><span class="s1">+ exports.humanize(</span><span class="s3">this</span><span class="s1">.diff);</span>
+
+  <span class="s3">if </span><span class="s1">(!useColors) </span><span class="s3">return</span><span class="s1">;</span>
+
+  <span class="s3">var </span><span class="s1">c = </span><span class="s2">'color: ' </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">.color;</span>
+  <span class="s1">args.splice(</span><span class="s4">1</span><span class="s1">, </span><span class="s4">0</span><span class="s1">, c, </span><span class="s2">'color: inherit'</span><span class="s1">)</span>
+
+  <span class="s0">// the final &quot;%c&quot; is somewhat tricky, because there could be other</span>
+  <span class="s0">// arguments passed either before or after the %c, so we need to</span>
+  <span class="s0">// figure out the correct index to insert the CSS into</span>
+  <span class="s3">var </span><span class="s1">index = </span><span class="s4">0</span><span class="s1">;</span>
+  <span class="s3">var </span><span class="s1">lastC = </span><span class="s4">0</span><span class="s1">;</span>
+  <span class="s1">args[</span><span class="s4">0</span><span class="s1">].replace(/%[a-zA-Z%]/g, </span><span class="s3">function</span><span class="s1">(match) {</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s2">'%%' </span><span class="s1">=== match) </span><span class="s3">return</span><span class="s1">;</span>
+    <span class="s1">index++;</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s2">'%c' </span><span class="s1">=== match) {</span>
+      <span class="s0">// we only are interested in the *last* %c</span>
+      <span class="s0">// (the user may have provided their own)</span>
+      <span class="s1">lastC = index;</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+
+  <span class="s1">args.splice(lastC, </span><span class="s4">0</span><span class="s1">, c);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Invokes `console.log()` when available. 
+ * No-op when `console.log` is not a &quot;function&quot;. 
+ * 
+ * @api public 
+ */</span>
+
+<span class="s3">function </span><span class="s1">log() {</span>
+  <span class="s0">// this hackery is required for IE8/9, where</span>
+  <span class="s0">// the `console.log` function doesn't have 'apply'</span>
+  <span class="s3">return </span><span class="s2">'object' </span><span class="s1">=== </span><span class="s3">typeof </span><span class="s1">console</span>
+    <span class="s1">&amp;&amp; console.log</span>
+    <span class="s1">&amp;&amp; Function.prototype.apply.call(console.log, console, arguments);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Save `namespaces`. 
+ * 
+ * @param {String} namespaces 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">save(namespaces) {</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">null </span><span class="s1">== namespaces) {</span>
+      <span class="s1">exports.storage.removeItem(</span><span class="s2">'debug'</span><span class="s1">);</span>
+    <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+      <span class="s1">exports.storage.debug = namespaces;</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s3">catch</span><span class="s1">(e) {}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Load `namespaces`. 
+ * 
+ * @return {String} returns the previously persisted debug modes 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">load() {</span>
+  <span class="s3">var </span><span class="s1">r;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">r = exports.storage.debug;</span>
+  <span class="s1">} </span><span class="s3">catch</span><span class="s1">(e) {}</span>
+
+  <span class="s0">// If debug isn't set in LS, and we're in Electron, try to load $DEBUG</span>
+  <span class="s3">if </span><span class="s1">(!r &amp;&amp; </span><span class="s3">typeof </span><span class="s1">process !== </span><span class="s2">'undefined' </span><span class="s1">&amp;&amp; </span><span class="s2">'env' </span><span class="s3">in </span><span class="s1">process) {</span>
+    <span class="s1">r = process.env.DEBUG;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return </span><span class="s1">r;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Enable namespaces listed in `localStorage.debug` initially. 
+ */</span>
+
+<span class="s1">exports.enable(load());</span>
+
+<span class="s0">/** 
+ * Localstorage attempts to return the localstorage. 
+ * 
+ * This is necessary because safari throws 
+ * when a user disables cookies/localstorage 
+ * and you attempt to access it. 
+ * 
+ * @return {LocalStorage} 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">localstorage() {</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s3">return </span><span class="s1">window.localStorage;</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

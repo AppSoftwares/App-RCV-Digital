@@ -1,0 +1,143 @@
+<html>
+<head>
+<title>test.install.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test.install.js</font>
+</center></td></tr></table>
+<pre><span class="s0">// Copyright 2019 Google LLC</span>
+<span class="s0">//</span>
+<span class="s0">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s0">// you may not use this file except in compliance with the License.</span>
+<span class="s0">// You may obtain a copy of the License at</span>
+<span class="s0">//</span>
+<span class="s0">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s0">//</span>
+<span class="s0">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s0">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s0">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s0">// See the License for the specific language governing permissions and</span>
+<span class="s0">// limitations under the License.</span>
+<span class="s1">import assert from </span><span class="s2">'assert'</span><span class="s1">;</span>
+<span class="s1">import { execFile } from </span><span class="s2">'child_process'</span><span class="s1">;</span>
+<span class="s1">import fs from </span><span class="s2">'fs'</span><span class="s1">;</span>
+<span class="s1">import mv from </span><span class="s2">'mv'</span><span class="s1">;</span>
+<span class="s1">import ncp from </span><span class="s2">'ncp'</span><span class="s1">;</span>
+<span class="s1">import path from </span><span class="s2">'path'</span><span class="s1">;</span>
+<span class="s1">import tmp from </span><span class="s2">'tmp'</span><span class="s1">;</span>
+<span class="s1">import { promisify } from </span><span class="s2">'util'</span><span class="s1">;</span>
+<span class="s1">import { describe, it, before, after } from </span><span class="s2">'mocha'</span><span class="s1">;</span>
+<span class="s1">import { packNTest } from </span><span class="s2">'pack-n-play'</span><span class="s1">;</span>
+<span class="s1">import { createServer } from </span><span class="s2">'node:http'</span><span class="s1">;</span>
+<span class="s1">import util from </span><span class="s2">'../src/util.cjs'</span><span class="s1">;</span>
+<span class="s0">/** 
+ * Optionally keep the staging directory between tests. 
+ */</span>
+<span class="s1">const KEEP_STAGING_DIRECTORY = </span><span class="s3">false</span><span class="s1">;</span>
+<span class="s1">const mvp = promisify(mv);</span>
+<span class="s1">const ncpp = promisify(ncp);</span>
+<span class="s1">const pkg = util.pkg;</span>
+<span class="s1">const exec = promisify(execFile);</span>
+<span class="s1">describe(</span><span class="s2">'📦 pack and install'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">let stagingDir;</span>
+    <span class="s1">let stagingPath;</span>
+    <span class="s1">before(() =&gt; {</span>
+        <span class="s1">stagingDir = tmp.dirSync({</span>
+            <span class="s1">keep: KEEP_STAGING_DIRECTORY,</span>
+            <span class="s1">unsafeCleanup: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s1">stagingPath = stagingDir.name;</span>
+    <span class="s1">});</span>
+    <span class="s1">after(</span><span class="s2">'cleanup staging'</span><span class="s1">, () =&gt; {</span>
+        <span class="s3">if </span><span class="s1">(!KEEP_STAGING_DIRECTORY) {</span>
+            <span class="s1">stagingDir.removeCallback();</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'pack-n-play'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">let server;</span>
+        <span class="s1">let url;</span>
+        <span class="s1">before(async () =&gt; {</span>
+            <span class="s1">server = createServer((req, res) =&gt; {</span>
+                <span class="s1">res.writeHead(</span><span class="s4">200</span><span class="s1">, { </span><span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'text/plain' </span><span class="s1">});</span>
+                <span class="s1">res.end(`Hello, ${req.headers[</span><span class="s2">'user-agent'</span><span class="s1">] || </span><span class="s2">'World'</span><span class="s1">}`);</span>
+            <span class="s1">});</span>
+            <span class="s1">await </span><span class="s3">new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+                <span class="s1">server.on(</span><span class="s2">'error'</span><span class="s1">, reject);</span>
+                <span class="s1">server.listen(</span><span class="s4">0</span><span class="s1">, resolve);</span>
+            <span class="s1">});</span>
+            <span class="s1">const address = server.address();</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">address === </span><span class="s2">'string'</span><span class="s1">) {</span>
+                <span class="s1">url = address;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s1">const base = </span><span class="s3">new </span><span class="s1">URL(</span><span class="s2">'http://localhost'</span><span class="s1">);</span>
+                <span class="s1">base.host = address.address;</span>
+                <span class="s1">base.port = address.port.toString();</span>
+                <span class="s1">url = base.toString();</span>
+            <span class="s1">}</span>
+        <span class="s1">});</span>
+        <span class="s1">after(() =&gt; {</span>
+            <span class="s1">server.close();</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'supports ESM'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">await packNTest({</span>
+                <span class="s1">sample: {</span>
+                    <span class="s1">description: </span><span class="s2">'import as ESM'</span><span class="s1">,</span>
+                    <span class="s1">esm: `</span>
+          <span class="s1">import {Gaxios} from </span><span class="s2">'gaxios'</span><span class="s1">;</span>
+
+          <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+          <span class="s1">await gaxios.request({url: </span><span class="s2">'${url}'</span><span class="s1">});</span>
+          <span class="s1">`,</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'supports CJS'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">await packNTest({</span>
+                <span class="s1">sample: {</span>
+                    <span class="s1">description: </span><span class="s2">'require as CJS'</span><span class="s1">,</span>
+                    <span class="s1">cjs: `</span>
+          <span class="s1">const {Gaxios} = require(</span><span class="s2">'gaxios'</span><span class="s1">);</span>
+
+          <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+          <span class="s1">gaxios.request({url: </span><span class="s2">'${url}'</span><span class="s1">}).then(console.log);</span>
+          <span class="s1">`,</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'webpack'</span><span class="s1">, () =&gt; {</span>
+        <span class="s0">/** 
+         * Create a staging directory with temp fixtures used to test on a fresh 
+         * application. 
+         */</span>
+        <span class="s1">before(</span><span class="s2">'pack and install'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">await exec(</span><span class="s2">'npm'</span><span class="s1">, [</span><span class="s2">'pack'</span><span class="s1">]);</span>
+            <span class="s1">const tarball = `${pkg.name}-${pkg.version}.tgz`;</span>
+            <span class="s1">await mvp(tarball, `${stagingPath}/gaxios.tgz`);</span>
+            <span class="s1">await ncpp(</span><span class="s2">'system-test/fixtures/sample'</span><span class="s1">, `${stagingPath}/`);</span>
+            <span class="s1">await exec(</span><span class="s2">'npm'</span><span class="s1">, [</span><span class="s2">'install'</span><span class="s1">], { cwd: `${stagingPath}/` });</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should be able to webpack the library'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s0">// we expect npm install is executed in the before hook</span>
+            <span class="s1">await exec(</span><span class="s2">'npx'</span><span class="s1">, [</span><span class="s2">'webpack'</span><span class="s1">], { cwd: `${stagingPath}/` });</span>
+            <span class="s1">const bundle = path.join(stagingPath, </span><span class="s2">'dist'</span><span class="s1">, </span><span class="s2">'bundle.min.js'</span><span class="s1">);</span>
+            <span class="s1">const stat = fs.statSync(bundle);</span>
+            <span class="s1">assert(stat.size &lt; </span><span class="s4">256 </span><span class="s1">* </span><span class="s4">1024</span><span class="s1">);</span>
+        <span class="s1">}).timeout(</span><span class="s4">20000</span><span class="s1">);</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s0">//# sourceMappingURL=test.install.js.map</span></pre>
+</body>
+</html>

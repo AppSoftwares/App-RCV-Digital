@@ -1,0 +1,138 @@
+<html>
+<head>
+<title>track.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #c77dbb; font-style: italic;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+track.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ resize, frame, cancelFrame, frameData } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-dom</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ noop } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createScrollInfo } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./info.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createOnScrollHandler } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./on-scroll-handler.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">scrollListeners = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">resizeListeners = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">onScrollHandlers = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">scrollSize = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">dimensionCheckProcesses = new </span><span class="s4">WeakMap</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s4">getEventTarget </span><span class="s2">= (element) </span><span class="s0">=&gt; </span><span class="s2">element === document.scrollingElement ? window : element;</span>
+<span class="s0">function </span><span class="s4">scrollInfo</span><span class="s2">(onScroll, { container = document.scrollingElement, trackContentSize = </span><span class="s5">false</span><span class="s2">, ...options } = {}) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!container</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s2">noop;</span>
+    <span class="s0">let </span><span class="s2">containerHandlers = onScrollHandlers.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Get the onScroll handlers for this container. 
+     * If one isn't found, create a new one. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!containerHandlers</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">containerHandlers = new </span><span class="s4">Set</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">onScrollHandlers.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">container, containerHandlers</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Create a new onScroll handler for the provided callback. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">info = </span><span class="s4">createScrollInfo</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">containerHandler = </span><span class="s4">createOnScrollHandler</span><span class="s1">(</span><span class="s2">container, onScroll, info, options</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">containerHandlers.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">containerHandler</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Check if there's a scroll event listener for this container. 
+     * If not, create one. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!scrollListeners.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s4">measureAll </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">handler of containerHandlers</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">handler.</span><span class="s4">measure</span><span class="s1">(</span><span class="s2">frameData.timestamp</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">frame.</span><span class="s4">preUpdate</span><span class="s1">(</span><span class="s2">notifyAll</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s0">const </span><span class="s4">notifyAll </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">handler of containerHandlers</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">handler.</span><span class="s4">notify</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">};</span>
+        <span class="s0">const </span><span class="s4">listener </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">frame.</span><span class="s4">read</span><span class="s1">(</span><span class="s2">measureAll</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">scrollListeners.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">container, listener</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">target = </span><span class="s4">getEventTarget</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">window.</span><span class="s4">addEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">resize</span><span class="s2">&quot;, listener</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">container !== document.documentElement</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">resizeListeners.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">container, </span><span class="s4">resize</span><span class="s1">(</span><span class="s2">container, listener</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">target.</span><span class="s4">addEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, listener</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s4">listener</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Enable content size tracking if requested and not already enabled. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">trackContentSize &amp;&amp; !dimensionCheckProcesses.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">listener = scrollListeners.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s6">Store initial scroll dimensions (object is reused to avoid allocation)</span>
+        <span class="s0">const </span><span class="s2">size = {</span>
+            <span class="s1">width</span><span class="s2">: container.scrollWidth,</span>
+            <span class="s1">height</span><span class="s2">: container.scrollHeight,</span>
+        <span class="s2">};</span>
+        <span class="s2">scrollSize.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">container, size</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s6">Add frame-based scroll dimension checking to detect content changes</span>
+        <span class="s0">const </span><span class="s4">checkScrollDimensions </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">newWidth = container.scrollWidth;</span>
+            <span class="s0">const </span><span class="s2">newHeight = container.scrollHeight;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">size.width !== newWidth || size.height !== newHeight</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s4">listener</span><span class="s1">()</span><span class="s2">;</span>
+                <span class="s2">size.width = newWidth;</span>
+                <span class="s2">size.height = newHeight;</span>
+            <span class="s2">}</span>
+        <span class="s2">};</span>
+        <span class="s2">// </span><span class="s6">Schedule with keepAlive=true to run every frame</span>
+        <span class="s0">const </span><span class="s2">dimensionCheckProcess = frame.</span><span class="s4">read</span><span class="s1">(</span><span class="s2">checkScrollDimensions, </span><span class="s5">true</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">dimensionCheckProcesses.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">container, dimensionCheckProcess</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">listener = scrollListeners.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">frame.</span><span class="s4">read</span><span class="s1">(</span><span class="s2">listener, </span><span class="s5">false</span><span class="s2">, </span><span class="s5">true</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s4">cancelFrame</span><span class="s1">(</span><span class="s2">listener</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* Check if we even have any handlers for this container. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">currentHandlers = onScrollHandlers.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!currentHandlers</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">currentHandlers.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">containerHandler</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">currentHandlers.size</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* If no more handlers, remove the scroll listener too. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">scrollListener = scrollListeners.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">scrollListeners.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">scrollListener</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s4">getEventTarget</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">.</span><span class="s4">removeEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, scrollListener</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">resizeListeners.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">window.</span><span class="s4">removeEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">resize</span><span class="s2">&quot;, scrollListener</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s6">Clean up scroll dimension checking</span>
+        <span class="s0">const </span><span class="s2">dimensionCheckProcess = dimensionCheckProcesses.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">dimensionCheckProcess</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s4">cancelFrame</span><span class="s1">(</span><span class="s2">dimensionCheckProcess</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">dimensionCheckProcesses.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">scrollSize.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">container</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ scrollInfo };</span>
+<span class="s2">//</span><span class="s6"># sourceMappingURL=track.mjs.map</span>
+</pre>
+</body>
+</html>

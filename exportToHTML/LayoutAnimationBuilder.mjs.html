@@ -1,0 +1,293 @@
+<html>
+<head>
+<title>LayoutAnimationBuilder.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #c77dbb; font-style: italic;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+LayoutAnimationBuilder.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ GroupAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animation/GroupAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ copyBoxInto } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../projection/geometry/copy.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createBox } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../projection/geometry/models.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ HTMLProjectionNode } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../projection/node/HTMLProjectionNode.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ HTMLVisualElement } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../render/html/HTMLVisualElement.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ visualElementStore } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../render/store.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ resolveElements } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/resolve-elements.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/frame.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">layoutSelector = &quot;</span><span class="s3">[data-layout], [data-layout-id]</span><span class="s2">&quot;;</span>
+<span class="s0">const </span><span class="s4">noop </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{ };</span>
+<span class="s0">function </span><span class="s4">snapshotFromTarget</span><span class="s2">(projection) {</span>
+    <span class="s0">const </span><span class="s2">target = projection.targetWithTransforms || projection.target;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!target</span><span class="s1">)</span>
+        <span class="s0">return </span><span class="s5">undefined</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">measuredBox = </span><span class="s4">createBox</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">layoutBox = </span><span class="s4">createBox</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s4">copyBoxInto</span><span class="s1">(</span><span class="s2">measuredBox, target</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s4">copyBoxInto</span><span class="s1">(</span><span class="s2">layoutBox, target</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">animationId</span><span class="s2">: projection.root?.animationId ?? </span><span class="s6">0</span><span class="s2">,</span>
+        <span class="s2">measuredBox,</span>
+        <span class="s2">layoutBox,</span>
+        <span class="s1">latestValues</span><span class="s2">: projection.animationValues || projection.latestValues || {},</span>
+        <span class="s1">source</span><span class="s2">: projection.id,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">class </span><span class="s2">LayoutAnimationBuilder {</span>
+    <span class="s0">constructor</span><span class="s2">(scope, updateDom, defaultOptions) {</span>
+        <span class="s2">this.sharedTransitions = new </span><span class="s4">Map</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.notifyReady = noop;</span>
+        <span class="s2">this.rejectReady = noop;</span>
+        <span class="s2">this.scope = scope;</span>
+        <span class="s2">this.updateDom = updateDom;</span>
+        <span class="s2">this.defaultOptions = defaultOptions;</span>
+        <span class="s2">this.readyPromise = new </span><span class="s1">Promise(</span><span class="s2">(resolve, reject) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.notifyReady = resolve;</span>
+            <span class="s2">this.rejectReady = reject;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">frame.</span><span class="s4">postRender</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">start</span><span class="s1">()</span><span class="s2">.</span><span class="s4">then</span><span class="s1">(</span><span class="s2">this.notifyReady</span><span class="s1">)</span><span class="s2">.</span><span class="s4">catch</span><span class="s1">(</span><span class="s2">this.rejectReady</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">shared</span><span class="s2">(id, transition) {</span>
+        <span class="s2">this.sharedTransitions.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">id, transition</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">this;</span>
+    <span class="s2">}</span>
+    <span class="s4">then</span><span class="s2">(resolve, reject) {</span>
+        <span class="s0">return </span><span class="s2">this.readyPromise.</span><span class="s4">then</span><span class="s1">(</span><span class="s2">resolve, reject</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">async </span><span class="s4">start</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">beforeElements = </span><span class="s4">collectLayoutElements</span><span class="s1">(</span><span class="s2">this.scope</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">beforeRecords = this.</span><span class="s4">buildRecords</span><span class="s1">(</span><span class="s2">beforeElements</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">beforeRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">({ projection }) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">hasCurrentAnimation = </span><span class="s4">Boolean</span><span class="s1">(</span><span class="s2">projection.currentAnimation</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">isSharedLayout = </span><span class="s4">Boolean</span><span class="s1">(</span><span class="s2">projection.options.layoutId</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">hasCurrentAnimation &amp;&amp; isSharedLayout</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">snapshot = </span><span class="s4">snapshotFromTarget</span><span class="s1">(</span><span class="s2">projection</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">snapshot</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">projection.snapshot = snapshot;</span>
+                <span class="s2">}</span>
+                <span class="s0">else if </span><span class="s1">(</span><span class="s2">projection.snapshot</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">projection.snapshot = </span><span class="s5">undefined</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+            <span class="s0">else if </span><span class="s1">(</span><span class="s2">projection.snapshot &amp;&amp;</span>
+                <span class="s1">(</span><span class="s2">projection.currentAnimation || projection.</span><span class="s4">isProjecting</span><span class="s1">())) </span><span class="s2">{</span>
+                <span class="s2">projection.snapshot = </span><span class="s5">undefined</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">projection.isPresent = </span><span class="s5">true</span><span class="s2">;</span>
+            <span class="s2">projection.</span><span class="s4">willUpdate</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">await </span><span class="s2">this.</span><span class="s4">updateDom</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">afterElements = </span><span class="s4">collectLayoutElements</span><span class="s1">(</span><span class="s2">this.scope</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">afterRecords = this.</span><span class="s4">buildRecords</span><span class="s1">(</span><span class="s2">afterElements</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s4">handleExitingElements</span><span class="s1">(</span><span class="s2">beforeRecords, afterRecords</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">afterRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">({ projection }) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">instance = projection.instance;</span>
+            <span class="s0">const </span><span class="s2">resumeFromInstance = projection.resumeFrom</span>
+                <span class="s2">?.instance;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!instance || !resumeFromInstance</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">style</span><span class="s2">&quot; in instance</span><span class="s1">))</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">currentTransform = instance.style.transform;</span>
+            <span class="s0">const </span><span class="s2">resumeFromTransform = resumeFromInstance.style.transform;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">currentTransform &amp;&amp;</span>
+                <span class="s2">resumeFromTransform &amp;&amp;</span>
+                <span class="s2">currentTransform === resumeFromTransform</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">instance.style.transform = &quot;&quot;;</span>
+                <span class="s2">instance.style.transformOrigin = &quot;&quot;;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">afterRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">({ projection }) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">projection.isPresent = </span><span class="s5">true</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">root = </span><span class="s4">getProjectionRoot</span><span class="s1">(</span><span class="s2">afterRecords, beforeRecords</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">root?.</span><span class="s4">didUpdate</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">await </span><span class="s2">new </span><span class="s1">Promise(</span><span class="s2">(resolve) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">frame.</span><span class="s4">postRender</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s4">resolve</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">animations = </span><span class="s4">collectAnimations</span><span class="s1">(</span><span class="s2">afterRecords</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">animation = new </span><span class="s4">GroupAnimation</span><span class="s1">(</span><span class="s2">animations</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">animation;</span>
+    <span class="s2">}</span>
+    <span class="s4">buildRecords</span><span class="s2">(elements) {</span>
+        <span class="s0">const </span><span class="s2">records = </span><span class="s1">[]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">recordMap = new </span><span class="s4">Map</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">element of elements</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">parentRecord = </span><span class="s4">findParentRecord</span><span class="s1">(</span><span class="s2">element, recordMap, this.scope</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ layout, layoutId } = </span><span class="s4">readLayoutAttributes</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">override = layoutId</span>
+                <span class="s2">? this.sharedTransitions.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">layoutId</span><span class="s1">)</span>
+                <span class="s2">: </span><span class="s5">undefined</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">transition = override || this.defaultOptions;</span>
+            <span class="s0">const </span><span class="s2">record = </span><span class="s4">getOrCreateRecord</span><span class="s1">(</span><span class="s2">element, parentRecord?.projection, {</span>
+                <span class="s2">layout,</span>
+                <span class="s2">layoutId,</span>
+                <span class="s1">animationType</span><span class="s2">: typeof layout === &quot;</span><span class="s3">string</span><span class="s2">&quot; ? layout : &quot;</span><span class="s3">both</span><span class="s2">&quot;,</span>
+                <span class="s1">transition</span><span class="s2">: transition,</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">recordMap.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">element, record</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">records.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">record</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">records;</span>
+    <span class="s2">}</span>
+    <span class="s4">handleExitingElements</span><span class="s2">(beforeRecords, afterRecords) {</span>
+        <span class="s0">const </span><span class="s2">afterElementsSet = new </span><span class="s4">Set</span><span class="s1">(</span><span class="s2">afterRecords.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(record) </span><span class="s0">=&gt; </span><span class="s2">record.element</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">beforeRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(record) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">afterElementsSet.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">record.element</span><span class="s1">))</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s7">For shared layout elements, relegate to set up resumeFrom</span>
+            <span class="s2">// </span><span class="s7">so the remaining element animates from this position</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">record.projection.options.layoutId</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">record.projection.isPresent = </span><span class="s5">false</span><span class="s2">;</span>
+                <span class="s2">record.projection.</span><span class="s4">relegate</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">record.visualElement.</span><span class="s4">unmount</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">visualElementStore.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">record.element</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s7">Clear resumeFrom on EXISTING nodes that point to unmounted projections</span>
+        <span class="s2">// </span><span class="s7">This prevents crossfade animation when the source element was removed entirely</span>
+        <span class="s2">// </span><span class="s7">But preserve resumeFrom for NEW nodes so they can animate from the old position</span>
+        <span class="s2">// </span><span class="s7">Also preserve resumeFrom for lead nodes that were just promoted via relegate</span>
+        <span class="s0">const </span><span class="s2">beforeElementsSet = new </span><span class="s4">Set</span><span class="s1">(</span><span class="s2">beforeRecords.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(record) </span><span class="s0">=&gt; </span><span class="s2">record.element</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">afterRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">({ element, projection }) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">beforeElementsSet.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">element</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">projection.resumeFrom &amp;&amp;</span>
+                <span class="s2">!projection.resumeFrom.instance &amp;&amp;</span>
+                <span class="s2">!projection.</span><span class="s4">isLead</span><span class="s1">()) </span><span class="s2">{</span>
+                <span class="s2">projection.resumeFrom = </span><span class="s5">undefined</span><span class="s2">;</span>
+                <span class="s2">projection.snapshot = </span><span class="s5">undefined</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">parseAnimateLayoutArgs</span><span class="s2">(scopeOrUpdateDom, updateDomOrOptions, options) {</span>
+    <span class="s2">// </span><span class="s7">animateLayout(updateDom)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof scopeOrUpdateDom === &quot;</span><span class="s3">function</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{</span>
+            <span class="s1">scope</span><span class="s2">: document,</span>
+            <span class="s1">updateDom</span><span class="s2">: scopeOrUpdateDom,</span>
+            <span class="s1">defaultOptions</span><span class="s2">: updateDomOrOptions,</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s2">// </span><span class="s7">animateLayout(scope, updateDom, options?)</span>
+    <span class="s0">const </span><span class="s2">elements = </span><span class="s4">resolveElements</span><span class="s1">(</span><span class="s2">scopeOrUpdateDom</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">scope = elements</span><span class="s1">[</span><span class="s6">0</span><span class="s1">] </span><span class="s2">|| document;</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">scope,</span>
+        <span class="s1">updateDom</span><span class="s2">: updateDomOrOptions,</span>
+        <span class="s1">defaultOptions</span><span class="s2">: options,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">collectLayoutElements</span><span class="s2">(scope) {</span>
+    <span class="s0">const </span><span class="s2">elements = Array.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">scope.</span><span class="s4">querySelectorAll</span><span class="s1">(</span><span class="s2">layoutSelector</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">scope instanceof Element &amp;&amp; scope.</span><span class="s4">matches</span><span class="s1">(</span><span class="s2">layoutSelector</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!elements.</span><span class="s4">includes</span><span class="s1">(</span><span class="s2">scope</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s2">elements.</span><span class="s4">unshift</span><span class="s1">(</span><span class="s2">scope</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">elements;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">readLayoutAttributes</span><span class="s2">(element) {</span>
+    <span class="s0">const </span><span class="s2">layoutId = element.</span><span class="s4">getAttribute</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">data-layout-id</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">|| </span><span class="s5">undefined</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">rawLayout = element.</span><span class="s4">getAttribute</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">data-layout</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">layout;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">rawLayout === &quot;&quot; || rawLayout === &quot;</span><span class="s3">true</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">layout = </span><span class="s5">true</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">else if </span><span class="s1">(</span><span class="s2">rawLayout</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">layout = rawLayout;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">layout,</span>
+        <span class="s2">layoutId,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">createVisualState</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">latestValues</span><span class="s2">: {},</span>
+        <span class="s1">renderState</span><span class="s2">: {</span>
+            <span class="s1">transform</span><span class="s2">: {},</span>
+            <span class="s1">transformOrigin</span><span class="s2">: {},</span>
+            <span class="s1">style</span><span class="s2">: {},</span>
+            <span class="s1">vars</span><span class="s2">: {},</span>
+        <span class="s2">},</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">getOrCreateRecord</span><span class="s2">(element, parentProjection, projectionOptions) {</span>
+    <span class="s0">const </span><span class="s2">existing = visualElementStore.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">visualElement = existing ??</span>
+        <span class="s2">new </span><span class="s4">HTMLVisualElement</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s1">props</span><span class="s2">: {},</span>
+            <span class="s1">presenceContext</span><span class="s2">: </span><span class="s5">null</span><span class="s2">,</span>
+            <span class="s1">visualState</span><span class="s2">: </span><span class="s4">createVisualState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s2">}, { </span><span class="s1">allowProjection</span><span class="s2">: </span><span class="s5">true </span><span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!existing || !visualElement.projection</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">visualElement.projection = new </span><span class="s4">HTMLProjectionNode</span><span class="s1">(</span><span class="s2">visualElement.latestValues, parentProjection</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">visualElement.projection.</span><span class="s4">setOptions</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">...projectionOptions,</span>
+        <span class="s2">visualElement,</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!visualElement.current</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">visualElement.</span><span class="s4">mount</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">else if </span><span class="s1">(</span><span class="s2">!visualElement.projection.instance</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s7">Mount projection if VisualElement is already mounted but projection isn't</span>
+        <span class="s2">// </span><span class="s7">This happens when animate() was called before animateLayout()</span>
+        <span class="s2">visualElement.projection.</span><span class="s4">mount</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!existing</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">visualElementStore.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">element, visualElement</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">element,</span>
+        <span class="s2">visualElement,</span>
+        <span class="s1">projection</span><span class="s2">: visualElement.projection,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">findParentRecord</span><span class="s2">(element, recordMap, scope) {</span>
+    <span class="s0">let </span><span class="s2">parent = element.parentElement;</span>
+    <span class="s0">while </span><span class="s1">(</span><span class="s2">parent</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">record = recordMap.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">parent</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">record</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">record;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">parent === scope</span><span class="s1">)</span>
+            <span class="s0">break</span><span class="s2">;</span>
+        <span class="s2">parent = parent.parentElement;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s5">undefined</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">getProjectionRoot</span><span class="s2">(afterRecords, beforeRecords) {</span>
+    <span class="s0">const </span><span class="s2">record = afterRecords</span><span class="s1">[</span><span class="s6">0</span><span class="s1">] </span><span class="s2">|| beforeRecords</span><span class="s1">[</span><span class="s6">0</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">record?.projection.root;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">collectAnimations</span><span class="s2">(afterRecords) {</span>
+    <span class="s0">const </span><span class="s2">animations = new </span><span class="s4">Set</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">afterRecords.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(record) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">animation = record.projection.currentAnimation;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span>
+            <span class="s2">animations.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">Array.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">animations</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ LayoutAnimationBuilder, parseAnimateLayoutArgs };</span>
+<span class="s2">//</span><span class="s7"># sourceMappingURL=LayoutAnimationBuilder.mjs.map</span>
+</pre>
+</body>
+</html>

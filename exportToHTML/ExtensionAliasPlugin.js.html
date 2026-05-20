@@ -1,0 +1,150 @@
+<html>
+<head>
+<title>ExtensionAliasPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ExtensionAliasPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Ivan Kopeykin @vankop 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const forEachBail = require(</span><span class="s2">&quot;./forEachBail&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+<span class="s0">/** @typedef {{ alias: string | string[], extension: string }} ExtensionAliasOption */</span>
+
+<span class="s1">module.exports = class ExtensionAliasPlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {ExtensionAliasOption} options options 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, options, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.options = options;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">const { extension, alias } = </span><span class="s3">this</span><span class="s1">.options;</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;ExtensionAliasPlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s0">// Two modes of operation:</span>
+				<span class="s0">// - &quot;request&quot; mode: original request specifier still carries the</span>
+				<span class="s0">//   extension (e.g. user wrote `./foo.js`). We swap the extension</span>
+				<span class="s0">//   on `request.request` and re-resolve.</span>
+				<span class="s0">// - &quot;path&quot; mode: the specifier has already been joined into an</span>
+				<span class="s0">//   absolute `request.path` (e.g. produced by the imports field).</span>
+				<span class="s0">//   We swap the extension on `request.path` and `request.relativePath`.</span>
+				<span class="s1">const useRequest = request.request !== undefined;</span>
+				<span class="s1">const source = useRequest</span>
+					<span class="s1">? </span><span class="s0">/** @type {string} */ </span><span class="s1">(request.request)</span>
+					<span class="s1">: request.path;</span>
+				<span class="s3">if </span><span class="s1">(!source || !source.endsWith(extension)) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">const isAliasString = </span><span class="s3">typeof </span><span class="s1">alias === </span><span class="s2">&quot;string&quot;</span><span class="s1">;</span>
+				<span class="s0">// Hoist the base (everything before the old extension) out of the</span>
+				<span class="s0">// per-alias `resolve` callback. For an array `alias`, the callback</span>
+				<span class="s0">// runs once per candidate extension; the base does not change</span>
+				<span class="s0">// between iterations, so there's no reason to recompute it.</span>
+				<span class="s1">const sourceBase = source.slice(</span><span class="s4">0</span><span class="s1">, -extension.length);</span>
+				<span class="s1">const relativePathBase =</span>
+					<span class="s1">!useRequest &amp;&amp;</span>
+					<span class="s1">request.relativePath &amp;&amp;</span>
+					<span class="s1">request.relativePath.endsWith(extension)</span>
+						<span class="s1">? request.relativePath.slice(</span><span class="s4">0</span><span class="s1">, -extension.length)</span>
+						<span class="s1">: </span><span class="s3">null</span><span class="s1">;</span>
+				<span class="s0">/** 
+                 * @param {string} alias extension alias 
+                 * @param {(err?: null | Error, result?: null | ResolveRequest) =&gt; void} callback callback 
+                 * @param {number=} index index 
+                 * @returns {void} 
+                 */</span>
+				<span class="s1">const resolve = (alias, callback, index) =&gt; {</span>
+					<span class="s1">const newValue = `${sourceBase}${alias}`;</span>
+					<span class="s1">const nextRequest = useRequest</span>
+						<span class="s1">? {</span>
+								<span class="s1">...request,</span>
+								<span class="s1">request: newValue,</span>
+								<span class="s1">fullySpecified: </span><span class="s3">true</span><span class="s1">,</span>
+							<span class="s1">}</span>
+						<span class="s1">: {</span>
+								<span class="s1">...request,</span>
+								<span class="s1">path: newValue,</span>
+								<span class="s1">relativePath:</span>
+									<span class="s1">relativePathBase !== </span><span class="s3">null</span>
+										<span class="s1">? `${relativePathBase}${alias}`</span>
+										<span class="s1">: request.relativePath,</span>
+								<span class="s1">fullySpecified: </span><span class="s3">true</span><span class="s1">,</span>
+							<span class="s1">};</span>
+
+					<span class="s3">return </span><span class="s1">resolver.doResolve(</span>
+						<span class="s1">target,</span>
+						<span class="s1">nextRequest,</span>
+						<span class="s1">`aliased from extension alias </span><span class="s3">with </span><span class="s1">mapping </span><span class="s2">'${extension}' </span><span class="s1">to </span><span class="s2">'${alias}'</span><span class="s1">`,</span>
+						<span class="s1">resolveContext,</span>
+						<span class="s1">(err, result) =&gt; {</span>
+							<span class="s0">// Throw error if we are on the last alias (for multiple aliases) and it failed, always throw if we are not an array or we have only one alias</span>
+							<span class="s3">if </span><span class="s1">(!isAliasString &amp;&amp; index) {</span>
+								<span class="s3">if </span><span class="s1">(index !== </span><span class="s3">this</span><span class="s1">.options.alias.length) {</span>
+									<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+										<span class="s1">resolveContext.log(</span>
+											<span class="s1">`Failed to alias from extension alias </span><span class="s3">with </span><span class="s1">mapping </span><span class="s2">'${extension}' </span><span class="s1">to </span><span class="s2">'${alias}' </span><span class="s3">for </span><span class="s2">'${newValue}'</span><span class="s1">: ${err}`,</span>
+										<span class="s1">);</span>
+									<span class="s1">}</span>
+
+									<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+								<span class="s1">}</span>
+
+								<span class="s3">return </span><span class="s1">callback(err, result);</span>
+							<span class="s1">}</span>
+							<span class="s1">callback(err, result);</span>
+						<span class="s1">},</span>
+					<span class="s1">);</span>
+				<span class="s1">};</span>
+				<span class="s0">/** 
+                 * @param {(null | Error)=} err error 
+                 * @param {(null | ResolveRequest)=} result result 
+                 * @returns {void} 
+                 */</span>
+				<span class="s1">const stoppingCallback = (err, result) =&gt; {</span>
+					<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+					<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+					<span class="s0">// Don't allow other aliasing or raw request</span>
+					<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+				<span class="s1">};</span>
+				<span class="s3">if </span><span class="s1">(isAliasString) {</span>
+					<span class="s1">resolve(alias, stoppingCallback);</span>
+				<span class="s1">} </span><span class="s3">else if </span><span class="s1">(alias.length &gt; </span><span class="s4">1</span><span class="s1">) {</span>
+					<span class="s1">forEachBail(alias, resolve, stoppingCallback);</span>
+				<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+					<span class="s1">resolve(alias[</span><span class="s4">0</span><span class="s1">], stoppingCallback);</span>
+				<span class="s1">}</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

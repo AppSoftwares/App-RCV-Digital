@@ -1,0 +1,1144 @@
+<html>
+<head>
+<title>RealtimeChannel.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #c77dbb; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #56a8f5;}
+.s7 { color: #42c3d4;}
+.s8 { color: #2aacb8; font-style: italic;}
+.s9 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+RealtimeChannel.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ CHANNEL_EVENTS, CHANNEL_STATES } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/constants</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{ ChannelState } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/constants</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">RealtimeClient </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./RealtimeClient</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">RealtimePresence, { REALTIME_PRESENCE_LISTEN_EVENTS } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./RealtimePresence</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">RealtimePresenceJoinPayload,</span>
+  <span class="s2">RealtimePresenceLeavePayload,</span>
+  <span class="s2">RealtimePresenceState,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./RealtimePresence</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s4">* </span><span class="s0">as </span><span class="s2">Transformers </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/transformers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ httpEndpointURL } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/transformers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ normalizeChannelError } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/normalizeChannelError</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">ChannelAdapter </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./phoenix/channelAdapter</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ ChannelBindingCallback, ChannelOnErrorCallback } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./phoenix/types</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{ Timer } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./phoenix/types</span><span class="s2">'</span>
+
+<span class="s0">type </span><span class="s2">ReplayOption = {</span>
+  <span class="s2">since: number</span>
+  <span class="s2">limit?: number</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeChannelOptions = {</span>
+  <span class="s2">config: {</span>
+    <span class="s2">/**</span>
+     <span class="s5">* self option enables client to receive message it broadcast 
+     * ack option instructs server to acknowledge that broadcast message was received 
+     * replay option instructs server to replay broadcast messages 
+     </span><span class="s2">*/</span>
+    <span class="s2">broadcast?: { self?: boolean; ack?: boolean; replay?: ReplayOption }</span>
+    <span class="s2">/**</span>
+     <span class="s5">* key option is used to track presence payload across clients 
+     </span><span class="s2">*/</span>
+    <span class="s2">presence?: { key?: string; enabled?: boolean }</span>
+    <span class="s2">/**</span>
+     <span class="s5">* defines if the channel is private or not and if RLS policies will be used to check data 
+     </span><span class="s2">*/</span>
+    <span class="s2">private?: boolean</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">type </span><span class="s2">RealtimeChangesPayloadBase = {</span>
+  <span class="s2">schema: string</span>
+  <span class="s2">table: string</span>
+<span class="s2">}</span>
+
+<span class="s0">type </span><span class="s2">RealtimeBroadcastChangesPayloadBase = RealtimeChangesPayloadBase &amp; {</span>
+  <span class="s2">id: string</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeBroadcastInsertPayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimeBroadcastChangesPayloadBase &amp; {</span>
+    <span class="s2">operation: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.INSERT}`</span>
+    <span class="s2">record: T</span>
+    <span class="s2">old_record: null</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeBroadcastUpdatePayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimeBroadcastChangesPayloadBase &amp; {</span>
+    <span class="s2">operation: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.UPDATE}`</span>
+    <span class="s2">record: T</span>
+    <span class="s2">old_record: T</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeBroadcastDeletePayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimeBroadcastChangesPayloadBase &amp; {</span>
+    <span class="s2">operation: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.DELETE}`</span>
+    <span class="s2">record: null</span>
+    <span class="s2">old_record: T</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeBroadcastPayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">| RealtimeBroadcastInsertPayload&lt;T&gt;</span>
+  <span class="s2">| RealtimeBroadcastUpdatePayload&lt;T&gt;</span>
+  <span class="s2">| RealtimeBroadcastDeletePayload&lt;T&gt;</span>
+
+<span class="s0">type </span><span class="s2">RealtimePostgresChangesPayloadBase = {</span>
+  <span class="s2">schema: string</span>
+  <span class="s2">table: string</span>
+  <span class="s2">commit_timestamp: string</span>
+  <span class="s2">errors: string</span><span class="s1">[]</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimePostgresInsertPayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimePostgresChangesPayloadBase &amp; {</span>
+    <span class="s2">eventType: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.INSERT}`</span>
+    <span class="s2">new: T</span>
+    <span class="s2">old: {}</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimePostgresUpdatePayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimePostgresChangesPayloadBase &amp; {</span>
+    <span class="s2">eventType: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.UPDATE}`</span>
+    <span class="s2">new: T</span>
+    <span class="s2">old: Partial&lt;T&gt;</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimePostgresDeletePayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">RealtimePostgresChangesPayloadBase &amp; {</span>
+    <span class="s2">eventType: `${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.DELETE}`</span>
+    <span class="s2">new: {}</span>
+    <span class="s2">old: Partial&lt;T&gt;</span>
+  <span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimePostgresChangesPayload&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt; =</span>
+  <span class="s2">| RealtimePostgresInsertPayload&lt;T&gt;</span>
+  <span class="s2">| RealtimePostgresUpdatePayload&lt;T&gt;</span>
+  <span class="s2">| RealtimePostgresDeletePayload&lt;T&gt;</span>
+
+<span class="s0">export type </span><span class="s2">RealtimePostgresChangesFilter&lt;T </span><span class="s0">extends </span><span class="s2">`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT}`&gt; = {</span>
+  <span class="s2">/**</span>
+   <span class="s5">* The type of database change to listen to. 
+   </span><span class="s2">*/</span>
+  <span class="s2">event: T</span>
+  <span class="s2">/**</span>
+   <span class="s5">* The database schema to listen to. 
+   </span><span class="s2">*/</span>
+  <span class="s2">schema: string</span>
+  <span class="s2">/**</span>
+   <span class="s5">* The database table to listen to. 
+   </span><span class="s2">*/</span>
+  <span class="s2">table?: string</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Receive database changes when filter is matched. 
+   </span><span class="s2">*/</span>
+  <span class="s2">filter?: string</span>
+<span class="s2">}</span>
+
+<span class="s0">export type </span><span class="s2">RealtimeChannelSendResponse = '</span><span class="s3">ok</span><span class="s2">' | '</span><span class="s3">timed out</span><span class="s2">' | '</span><span class="s3">error</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+
+<span class="s0">export enum </span><span class="s2">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT {</span>
+  <span class="s2">ALL = '</span><span class="s3">*</span><span class="s2">',</span>
+  <span class="s2">INSERT = '</span><span class="s3">INSERT</span><span class="s2">',</span>
+  <span class="s2">UPDATE = '</span><span class="s3">UPDATE</span><span class="s2">',</span>
+  <span class="s2">DELETE = '</span><span class="s3">DELETE</span><span class="s2">',</span>
+<span class="s2">}</span>
+
+<span class="s0">export enum </span><span class="s2">REALTIME_LISTEN_TYPES {</span>
+  <span class="s2">BROADCAST = '</span><span class="s3">broadcast</span><span class="s2">',</span>
+  <span class="s2">PRESENCE = '</span><span class="s3">presence</span><span class="s2">',</span>
+  <span class="s2">POSTGRES_CHANGES = '</span><span class="s3">postgres_changes</span><span class="s2">',</span>
+  <span class="s2">SYSTEM = '</span><span class="s3">system</span><span class="s2">',</span>
+<span class="s2">}</span>
+
+<span class="s0">export enum </span><span class="s2">REALTIME_SUBSCRIBE_STATES {</span>
+  <span class="s2">SUBSCRIBED = '</span><span class="s3">SUBSCRIBED</span><span class="s2">',</span>
+  <span class="s2">TIMED_OUT = '</span><span class="s3">TIMED_OUT</span><span class="s2">',</span>
+  <span class="s2">CLOSED = '</span><span class="s3">CLOSED</span><span class="s2">',</span>
+  <span class="s2">CHANNEL_ERROR = '</span><span class="s3">CHANNEL_ERROR</span><span class="s2">',</span>
+<span class="s2">}</span>
+
+<span class="s0">export const </span><span class="s2">REALTIME_CHANNEL_STATES = CHANNEL_STATES</span>
+
+<span class="s0">type </span><span class="s2">PostgresChangesFilters = {</span>
+  <span class="s2">postgres_changes: {</span>
+    <span class="s2">id: string</span>
+    <span class="s2">event: string</span>
+    <span class="s2">schema?: string</span>
+    <span class="s2">table?: string</span>
+    <span class="s2">filter?: string</span>
+  <span class="s2">}</span><span class="s1">[]</span>
+<span class="s2">}</span>
+
+<span class="s0">type </span><span class="s2">Binding = {</span>
+  <span class="s2">type: string</span>
+  <span class="s2">filter: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }</span>
+  <span class="s2">callback: ChannelBindingCallback</span>
+  <span class="s2">ref: number</span>
+  <span class="s2">id?: string</span>
+<span class="s2">}</span>
+
+<span class="s2">/** </span><span class="s5">A channel is the basic building block of Realtime 
+ * and narrows the scope of data flow to subscribed clients. 
+ * You can think of a channel as a chatroom where participants are able to see who's online 
+ * and send and receive messages. 
+ </span><span class="s2">*/</span>
+<span class="s0">export default class </span><span class="s2">RealtimeChannel {</span>
+  <span class="s2">bindings: Record&lt;string, Binding</span><span class="s1">[]</span><span class="s2">&gt; = {}</span>
+  <span class="s2">subTopic: string</span>
+  <span class="s2">broadcastEndpointURL: string</span>
+  <span class="s2">private: boolean</span>
+  <span class="s2">presence: RealtimePresence</span>
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s2">channelAdapter: ChannelAdapter</span>
+
+  <span class="s0">get </span><span class="s6">state</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.channelAdapter.state</span>
+  <span class="s2">}</span>
+
+  <span class="s0">set </span><span class="s6">state</span><span class="s2">(state: ChannelState) {</span>
+    <span class="s2">this.channelAdapter.state = state</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">joinedOnce</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.channelAdapter.joinedOnce</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">timeout</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.socket.timeout</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">joinPush</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">this.channelAdapter.joinPush</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s6">rejoinTimer</span><span class="s2">(): Timer {</span>
+    <span class="s0">return </span><span class="s2">this.channelAdapter.rejoinTimer</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Creates a channel that can broadcast messages, sync presence, and listen to Postgres changes. 
+   * 
+   * The topic determines which realtime stream you are subscribing to. Config options let you 
+   * enable acknowledgement for broadcasts, presence tracking, or private channels. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s5">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s5">* </span><span class="s1">channel 
+   </span><span class="s5">*   </span><span class="s1">.on('broadcast', { event: 'cursor-pos' }, (payload) =&gt; console.log(payload)) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">import RealtimeClient from '@supabase/realtime-js' 
+   </span><span class="s5">* 
+   * </span><span class="s1">const client = new RealtimeClient('https://xyzcompany.supabase.co/realtime/v1', { 
+   </span><span class="s5">*   </span><span class="s1">params: { apikey: 'your-publishable-key' }, 
+   </span><span class="s5">* </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">const channel = new RealtimeChannel('realtime:public:messages', { config: {} }, client) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">/** </span><span class="s5">Topic name can be any string. </span><span class="s2">*/</span>
+    <span class="s0">public </span><span class="s2">topic: string,</span>
+    <span class="s0">public </span><span class="s2">params: RealtimeChannelOptions = { </span><span class="s1">config</span><span class="s2">: {} },</span>
+    <span class="s0">public </span><span class="s2">socket: RealtimeClient</span>
+  <span class="s2">) {</span>
+    <span class="s2">this.subTopic = topic.</span><span class="s6">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s0">^</span><span class="s7">realtime:</span><span class="s2">/</span><span class="s0">i</span><span class="s2">, ''</span><span class="s1">)</span>
+    <span class="s2">this.params.config = {</span>
+      <span class="s2">...{</span>
+        <span class="s1">broadcast</span><span class="s2">: { </span><span class="s1">ack</span><span class="s2">: </span><span class="s4">false</span><span class="s2">, </span><span class="s1">self</span><span class="s2">: </span><span class="s4">false </span><span class="s2">},</span>
+        <span class="s1">presence</span><span class="s2">: { </span><span class="s1">key</span><span class="s2">: '', </span><span class="s1">enabled</span><span class="s2">: </span><span class="s4">false </span><span class="s2">},</span>
+        <span class="s1">private</span><span class="s2">: </span><span class="s4">false</span><span class="s2">,</span>
+      <span class="s2">},</span>
+      <span class="s2">...params.config,</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.channelAdapter = new </span><span class="s6">ChannelAdapter</span><span class="s1">(</span><span class="s2">this.socket.socketAdapter, topic, this.params</span><span class="s1">)</span>
+    <span class="s2">this.presence = new </span><span class="s6">RealtimePresence</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+
+    <span class="s2">this.</span><span class="s6">_onClose</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">this.socket.</span><span class="s6">_remove</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s2">this.</span><span class="s6">_updateFilterTransform</span><span class="s1">()</span>
+
+    <span class="s2">this.broadcastEndpointURL = </span><span class="s6">httpEndpointURL</span><span class="s1">(</span><span class="s2">this.socket.socketAdapter.</span><span class="s6">endPointURL</span><span class="s1">())</span>
+    <span class="s2">this.private = this.params.config.private || </span><span class="s4">false</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.private &amp;&amp; this.params.config?.broadcast?.replay</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span>
+        <span class="s2">`</span><span class="s3">tried to use replay on public channel '</span><span class="s2">${this.topic}</span><span class="s3">'. It must be a private channel.</span><span class="s2">`</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Subscribe registers your client with the server 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">subscribe</span><span class="s2">(</span>
+    <span class="s6">callback</span><span class="s2">?: (status: REALTIME_SUBSCRIBE_STATES, err?: Error) </span><span class="s0">=&gt; </span><span class="s2">void,</span>
+    <span class="s2">timeout = this.timeout</span>
+  <span class="s2">): RealtimeChannel {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.socket.</span><span class="s6">isConnected</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s2">this.socket.</span><span class="s6">connect</span><span class="s1">()</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.channelAdapter.</span><span class="s6">isClosed</span><span class="s1">()) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">{</span>
+        <span class="s2">config: { broadcast, presence, private: isPrivate },</span>
+      <span class="s2">} = this.params</span>
+
+      <span class="s0">const </span><span class="s2">postgres_changes = this.bindings.postgres_changes?.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">(r) </span><span class="s0">=&gt; </span><span class="s2">r.filter</span><span class="s1">) </span><span class="s2">?? </span><span class="s1">[]</span>
+
+      <span class="s0">const </span><span class="s2">presence_enabled =</span>
+        <span class="s1">(</span><span class="s2">!!this.bindings</span><span class="s1">[</span><span class="s2">REALTIME_LISTEN_TYPES.PRESENCE</span><span class="s1">] </span><span class="s2">&amp;&amp;</span>
+          <span class="s2">this.bindings</span><span class="s1">[</span><span class="s2">REALTIME_LISTEN_TYPES.PRESENCE</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s8">0</span><span class="s1">) </span><span class="s2">||</span>
+        <span class="s2">this.params.config.presence?.enabled === </span><span class="s4">true</span>
+      <span class="s0">const </span><span class="s2">accessTokenPayload: { access_token?: string } = {}</span>
+      <span class="s0">const </span><span class="s2">config = {</span>
+        <span class="s2">broadcast,</span>
+        <span class="s1">presence</span><span class="s2">: { ...presence, </span><span class="s1">enabled</span><span class="s2">: presence_enabled },</span>
+        <span class="s2">postgres_changes,</span>
+        <span class="s1">private</span><span class="s2">: isPrivate,</span>
+      <span class="s2">}</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.socket.accessTokenValue</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">accessTokenPayload.access_token = this.socket.accessTokenValue</span>
+      <span class="s2">}</span>
+
+      <span class="s2">this.</span><span class="s6">_onError</span><span class="s1">(</span><span class="s2">(reason: unknown) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, </span><span class="s6">normalizeChannelError</span><span class="s1">(</span><span class="s2">reason</span><span class="s1">))</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s2">this.</span><span class="s6">_onClose</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.CLOSED</span><span class="s1">))</span>
+
+      <span class="s2">this.</span><span class="s6">updateJoinPayload</span><span class="s1">(</span><span class="s2">{ ...{ config }, ...accessTokenPayload }</span><span class="s1">)</span>
+
+      <span class="s2">this.</span><span class="s6">_updateFilterMessage</span><span class="s1">()</span>
+
+      <span class="s2">this.channelAdapter</span>
+        <span class="s2">.</span><span class="s6">subscribe</span><span class="s1">(</span><span class="s2">timeout</span><span class="s1">)</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">', </span><span class="s0">async </span><span class="s2">({ postgres_changes }: PostgresChangesFilters) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s2">// </span><span class="s5">Only refresh auth if using callback-based tokens</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.socket.</span><span class="s6">_isManualToken</span><span class="s1">()) </span><span class="s2">{</span>
+            <span class="s2">this.socket.</span><span class="s6">setAuth</span><span class="s1">()</span>
+          <span class="s2">}</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">postgres_changes === </span><span class="s4">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.SUBSCRIBED</span><span class="s1">)</span>
+            <span class="s0">return</span>
+          <span class="s2">}</span>
+
+          <span class="s2">this.</span><span class="s6">_updatePostgresBindings</span><span class="s1">(</span><span class="s2">postgres_changes, callback</span><span class="s1">)</span>
+        <span class="s2">}</span><span class="s1">)</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', (error: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s2">this.state = CHANNEL_STATES.errored</span>
+          <span class="s0">const </span><span class="s2">message = Object.</span><span class="s6">values</span><span class="s1">(</span><span class="s2">error</span><span class="s1">)</span><span class="s2">.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">, </span><span class="s2">'</span><span class="s1">) </span><span class="s2">|| '</span><span class="s3">error</span><span class="s2">'</span>
+          <span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">message, { </span><span class="s1">cause</span><span class="s2">: error }</span><span class="s1">))</span>
+        <span class="s2">}</span><span class="s1">)</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">timeout</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.TIMED_OUT</span><span class="s1">)</span>
+        <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s6">_updatePostgresBindings</span><span class="s2">(</span>
+    <span class="s2">postgres_changes: PostgresChangesFilters</span><span class="s1">[</span><span class="s2">'</span><span class="s3">postgres_changes</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s6">callback</span><span class="s2">?: (status: REALTIME_SUBSCRIBE_STATES, err?: Error) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">clientPostgresBindings = this.bindings.postgres_changes</span>
+    <span class="s0">const </span><span class="s2">bindingsLen = clientPostgresBindings?.</span><span class="s1">length </span><span class="s2">?? </span><span class="s8">0</span>
+    <span class="s0">const </span><span class="s2">newPostgresBindings = </span><span class="s1">[]</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s8">0</span><span class="s2">; i &lt; bindingsLen; i++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">clientPostgresBinding = clientPostgresBindings</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span>
+      <span class="s0">const </span><span class="s2">{</span>
+        <span class="s2">filter: { event, schema, table, filter },</span>
+      <span class="s2">} = clientPostgresBinding</span>
+      <span class="s0">const </span><span class="s2">serverPostgresFilter = postgres_changes &amp;&amp; postgres_changes</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span>
+
+      <span class="s0">if </span><span class="s1">(</span>
+        <span class="s2">serverPostgresFilter &amp;&amp;</span>
+        <span class="s2">serverPostgresFilter.event === event &amp;&amp;</span>
+        <span class="s2">RealtimeChannel.</span><span class="s6">isFilterValueEqual</span><span class="s1">(</span><span class="s2">serverPostgresFilter.schema, schema</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+        <span class="s2">RealtimeChannel.</span><span class="s6">isFilterValueEqual</span><span class="s1">(</span><span class="s2">serverPostgresFilter.table, table</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+        <span class="s2">RealtimeChannel.</span><span class="s6">isFilterValueEqual</span><span class="s1">(</span><span class="s2">serverPostgresFilter.filter, filter</span><span class="s1">)</span>
+      <span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">newPostgresBindings.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">{</span>
+          <span class="s2">...clientPostgresBinding,</span>
+          <span class="s1">id</span><span class="s2">: serverPostgresFilter.id,</span>
+        <span class="s2">}</span><span class="s1">)</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">unsubscribe</span><span class="s1">()</span>
+        <span class="s2">this.state = CHANNEL_STATES.errored</span>
+
+        <span class="s6">callback</span><span class="s2">?.</span><span class="s1">(</span>
+          <span class="s2">REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR,</span>
+          <span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">mismatch between server and client bindings for postgres changes</span><span class="s2">'</span><span class="s1">)</span>
+        <span class="s1">)</span>
+        <span class="s0">return</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.bindings.postgres_changes = newPostgresBindings</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state != CHANNEL_STATES.errored &amp;&amp; callback</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s6">callback</span><span class="s1">(</span><span class="s2">REALTIME_SUBSCRIBE_STATES.SUBSCRIBED</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Returns the current presence state for this channel. 
+   * 
+   * The shape is a map keyed by presence key (for example a user id) where each entry contains the 
+   * tracked metadata for that user. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">presenceState</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any } = {}&gt;(): RealtimePresenceState&lt;T&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.presence.state </span><span class="s0">as </span><span class="s2">RealtimePresenceState&lt;T&gt;</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Sends the supplied payload to the presence tracker so other subscribers can see that this 
+   * client is online. Use `untrack` to stop broadcasting presence for the same key. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">track</span><span class="s2">(</span>
+    <span class="s2">payload: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any },</span>
+    <span class="s2">opts: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any } = {}</span>
+  <span class="s2">): Promise&lt;RealtimeChannelSendResponse&gt; {</span>
+    <span class="s0">return await </span><span class="s2">this.</span><span class="s6">send</span><span class="s1">(</span>
+      <span class="s2">{</span>
+        <span class="s1">type</span><span class="s2">: '</span><span class="s3">presence</span><span class="s2">',</span>
+        <span class="s1">event</span><span class="s2">: '</span><span class="s3">track</span><span class="s2">',</span>
+        <span class="s2">payload,</span>
+      <span class="s2">},</span>
+      <span class="s2">opts.timeout || this.timeout</span>
+    <span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Removes the current presence state for this client. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">untrack</span><span class="s2">(opts: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any } = {}): Promise&lt;RealtimeChannelSendResponse&gt; {</span>
+    <span class="s0">return await </span><span class="s2">this.</span><span class="s6">send</span><span class="s1">(</span>
+      <span class="s2">{</span>
+        <span class="s1">type</span><span class="s2">: '</span><span class="s3">presence</span><span class="s2">',</span>
+        <span class="s1">event</span><span class="s2">: '</span><span class="s3">untrack</span><span class="s2">',</span>
+      <span class="s2">},</span>
+      <span class="s2">opts</span>
+    <span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Creates an event handler that listens to changes. 
+   </span><span class="s2">*/</span>
+  <span class="s6">on</span><span class="s2">(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.PRESENCE}`,</span>
+    <span class="s2">filter: { event: `${REALTIME_PRESENCE_LISTEN_EVENTS.SYNC}` },</span>
+    <span class="s6">callback</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.PRESENCE}`,</span>
+    <span class="s2">filter: { event: `${REALTIME_PRESENCE_LISTEN_EVENTS.JOIN}` },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePresenceJoinPayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.PRESENCE}`,</span>
+    <span class="s2">filter: { event: `${REALTIME_PRESENCE_LISTEN_EVENTS.LEAVE}` },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePresenceLeavePayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.PRESENCE}`,</span>
+    <span class="s2">filter: { event: '</span><span class="s3">*</span><span class="s2">' },</span>
+    <span class="s6">callback</span><span class="s2">: (payload?: RealtimePresenceJoinPayload&lt;T&gt; | RealtimePresenceLeavePayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.POSTGRES_CHANGES}`,</span>
+    <span class="s2">filter: RealtimePostgresChangesFilter&lt;`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.ALL}`&gt;,</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePostgresChangesPayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.POSTGRES_CHANGES}`,</span>
+    <span class="s2">filter: RealtimePostgresChangesFilter&lt;`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.INSERT}`&gt;,</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePostgresInsertPayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.POSTGRES_CHANGES}`,</span>
+    <span class="s2">filter: RealtimePostgresChangesFilter&lt;`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.UPDATE}`&gt;,</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePostgresUpdatePayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.POSTGRES_CHANGES}`,</span>
+    <span class="s2">filter: RealtimePostgresChangesFilter&lt;`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.DELETE}`&gt;,</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePostgresDeletePayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.POSTGRES_CHANGES}`,</span>
+    <span class="s2">filter: RealtimePostgresChangesFilter&lt;`${REALTIME_POSTGRES_CHANGES_LISTEN_EVENT}`&gt;,</span>
+    <span class="s6">callback</span><span class="s2">: (payload: RealtimePostgresChangesPayload&lt;T&gt;) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s2">/**</span>
+   <span class="s5">* The following is placed here to display on supabase.com/docs/reference/javascript/subscribe. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">type </span><span class="s5">One of &quot;broadcast&quot;, &quot;presence&quot;, or &quot;postgres_changes&quot;. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">filter </span><span class="s5">Custom object specific to the Realtime feature detailing which payloads to receive. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">callback </span><span class="s5">Function to be invoked when event handler is triggered. 
+   </span><span class="s2">*/</span>
+  <span class="s6">on</span><span class="s2">(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: string },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: string</span>
+      <span class="s2">meta?: {</span>
+        <span class="s2">replayed?: boolean</span>
+        <span class="s2">id: string</span>
+      <span class="s2">}</span>
+      <span class="s1">[</span><span class="s2">key</span><span class="s1">: </span><span class="s2">string</span><span class="s1">]</span><span class="s2">: any</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: string },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: string</span>
+      <span class="s2">meta?: {</span>
+        <span class="s2">replayed?: boolean</span>
+        <span class="s2">id: string</span>
+      <span class="s2">}</span>
+      <span class="s2">payload: T</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.ALL },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.ALL</span>
+      <span class="s2">payload: RealtimeBroadcastPayload&lt;T&gt;</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.INSERT },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.INSERT</span>
+      <span class="s2">payload: RealtimeBroadcastInsertPayload&lt;T&gt;</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.UPDATE },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.UPDATE</span>
+      <span class="s2">payload: RealtimeBroadcastUpdatePayload&lt;T&gt;</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`,</span>
+    <span class="s2">filter: { event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.DELETE },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: {</span>
+      <span class="s2">type: `${REALTIME_LISTEN_TYPES.BROADCAST}`</span>
+      <span class="s2">event: REALTIME_POSTGRES_CHANGES_LISTEN_EVENT.DELETE</span>
+      <span class="s2">payload: RealtimeBroadcastDeletePayload&lt;T&gt;</span>
+    <span class="s2">}) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s6">on</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">{ </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }&gt;(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES.SYSTEM}`,</span>
+    <span class="s2">filter: {},</span>
+    <span class="s6">callback</span><span class="s2">: (payload: any) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Listen to realtime events on this channel. 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - By default, Broadcast and Presence are enabled for all projects. 
+   * - By default, listening to database changes is disabled for new projects due to database performance and security concerns. You can turn it on by managing Realtime's [replication](/docs/guides/api#realtime-api-overview). 
+   * - You can receive the &quot;previous&quot; data for updates and deletes by setting the table's `REPLICA IDENTITY` to `FULL` (e.g., `ALTER TABLE your_table REPLICA IDENTITY FULL;`). 
+   * - Row level security is not applied to delete statements. When RLS is enabled and replica identity is set to full, only the primary key is sent to clients. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to broadcast messages 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel(&quot;room1&quot;) 
+   </span><span class="s5">* 
+   * </span><span class="s1">channel.on(&quot;broadcast&quot;, { event: &quot;cursor-pos&quot; }, (payload) =&gt; { 
+   </span><span class="s5">*   </span><span class="s1">console.log(&quot;Cursor position received!&quot;, payload); 
+   </span><span class="s5">* </span><span class="s1">}).subscribe((status) =&gt; { 
+   </span><span class="s5">*   </span><span class="s1">if (status === &quot;SUBSCRIBED&quot;) { 
+   </span><span class="s5">*     </span><span class="s1">channel.send({ 
+   </span><span class="s5">*       </span><span class="s1">type: &quot;broadcast&quot;, 
+   </span><span class="s5">*       </span><span class="s1">event: &quot;cursor-pos&quot;, 
+   </span><span class="s5">*       </span><span class="s1">payload: { x: Math.random(), y: Math.random() }, 
+   </span><span class="s5">*     </span><span class="s1">}); 
+   </span><span class="s5">*   </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">}); 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to presence sync 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s5">* </span><span class="s1">channel 
+   </span><span class="s5">*   </span><span class="s1">.on('presence', { event: 'sync' }, () =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Synced presence state: ', channel.presenceState()) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe(async (status) =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">if (status === 'SUBSCRIBED') { 
+   </span><span class="s5">*       </span><span class="s1">await channel.track({ online_at: new Date().toISOString() }) 
+   </span><span class="s5">*     </span><span class="s1">} 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to presence join 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s5">* </span><span class="s1">channel 
+   </span><span class="s5">*   </span><span class="s1">.on('presence', { event: 'join' }, ({ newPresences }) =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Newly joined presences: ', newPresences) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe(async (status) =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">if (status === 'SUBSCRIBED') { 
+   </span><span class="s5">*       </span><span class="s1">await channel.track({ online_at: new Date().toISOString() }) 
+   </span><span class="s5">*     </span><span class="s1">} 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to presence leave 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s5">* </span><span class="s1">channel 
+   </span><span class="s5">*   </span><span class="s1">.on('presence', { event: 'leave' }, ({ leftPresences }) =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Newly left presences: ', leftPresences) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe(async (status) =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">if (status === 'SUBSCRIBED') { 
+   </span><span class="s5">*       </span><span class="s1">await channel.track({ online_at: new Date().toISOString() }) 
+   </span><span class="s5">*       </span><span class="s1">await channel.untrack() 
+   </span><span class="s5">*     </span><span class="s1">} 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to all database changes 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: '*', schema: '*' }, payload =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Change received!', payload) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to a specific table 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: '*', schema: 'public', table: 'countries' }, payload =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Change received!', payload) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to inserts 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'countries' }, payload =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Change received!', payload) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Listen to updates 
+   * By default, Supabase will send only the updated record. If you want to receive the previous values as well you can 
+   * enable full replication for the table you are listening to: 
+   * 
+   * ```sql 
+   * alter table &quot;your_table&quot; replica identity full; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to updates 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'countries' }, payload =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Change received!', payload) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Listen to deletes 
+   * By default, Supabase does not send deleted records. If you want to receive the deleted record you can 
+   * enable full replication for the table you are listening to: 
+   * 
+   * ```sql 
+   * alter table &quot;your_table&quot; replica identity full; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to deletes 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'countries' }, payload =&gt; { 
+   </span><span class="s5">*     </span><span class="s1">console.log('Change received!', payload) 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Listen to multiple events 
+   * You can chain listeners if you want to listen to multiple events for each table. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to multiple events 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'countries' }, handleRecordInserted) 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'countries' }, handleRecordDeleted) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Listen to row level changes 
+   * You can listen to individual rows using the format `{table}:{col}=eq.{val}` - where `{col}` is the column name, and `{val}` is the value which you want to match. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Listen to row level changes 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'countries', filter: 'id=eq.200' }, handleRecordUpdated) 
+   </span><span class="s5">*   </span><span class="s1">.subscribe() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s6">on</span><span class="s2">(</span>
+    <span class="s2">type: `${REALTIME_LISTEN_TYPES}`,</span>
+    <span class="s2">filter: { event: string; </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string },</span>
+    <span class="s6">callback</span><span class="s2">: (payload: any) </span><span class="s0">=&gt; </span><span class="s2">void</span>
+  <span class="s2">): RealtimeChannel {</span>
+    <span class="s0">const </span><span class="s2">stateCheck = this.channelAdapter.</span><span class="s6">isJoined</span><span class="s1">() </span><span class="s2">|| this.channelAdapter.</span><span class="s6">isJoining</span><span class="s1">()</span>
+    <span class="s0">const </span><span class="s2">typeCheck =</span>
+      <span class="s2">type === REALTIME_LISTEN_TYPES.PRESENCE || type === REALTIME_LISTEN_TYPES.POSTGRES_CHANGES</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">stateCheck &amp;&amp; typeCheck</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.socket.</span><span class="s6">log</span><span class="s1">(</span>
+        <span class="s2">'</span><span class="s3">channel</span><span class="s2">',</span>
+        <span class="s2">`</span><span class="s3">cannot add </span><span class="s9">\`</span><span class="s2">${type}</span><span class="s9">\` </span><span class="s3">callbacks for </span><span class="s2">${this.topic} </span><span class="s3">after </span><span class="s9">\`</span><span class="s3">subscribe()</span><span class="s9">\`</span><span class="s3">.</span><span class="s2">`</span>
+      <span class="s1">)</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">cannot add </span><span class="s9">\`</span><span class="s2">${type}</span><span class="s9">\` </span><span class="s3">callbacks for </span><span class="s2">${this.topic} </span><span class="s3">after </span><span class="s9">\`</span><span class="s3">subscribe()</span><span class="s9">\`</span><span class="s3">.</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s6">_on</span><span class="s1">(</span><span class="s2">type, filter, callback</span><span class="s1">)</span>
+  <span class="s2">}</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Sends a broadcast message explicitly via REST API. 
+   * 
+   * This method always uses the REST API endpoint regardless of WebSocket connection state. 
+   * Useful when you want to guarantee REST delivery or when gradually migrating from implicit REST fallback. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">event </span><span class="s5">The name of the broadcast event 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">payload </span><span class="s5">Payload to be sent (required) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">opts </span><span class="s5">Options including timeout 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise resolving to object with success status, and error details if failed 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">httpSend</span><span class="s2">(</span>
+    <span class="s2">event: string,</span>
+    <span class="s2">payload: any,</span>
+    <span class="s2">opts: { timeout?: number } = {}</span>
+  <span class="s2">): Promise&lt;{ success: true } | { success: false; status: number; error: string }&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">payload === </span><span class="s4">undefined </span><span class="s2">|| payload === </span><span class="s4">null</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s1">Promise</span><span class="s2">.</span><span class="s6">reject</span><span class="s1">(</span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Payload is required for httpSend()</span><span class="s2">'</span><span class="s1">))</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">headers: Record&lt;string, string&gt; = {</span>
+      <span class="s1">apikey</span><span class="s2">: this.socket.apiKey ? this.socket.apiKey : '',</span>
+      <span class="s2">'</span><span class="s3">Content-Type</span><span class="s2">': '</span><span class="s3">application/json</span><span class="s2">',</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.socket.accessTokenValue</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Authorization</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= `</span><span class="s3">Bearer </span><span class="s2">${this.socket.accessTokenValue}`</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">options = {</span>
+      <span class="s1">method</span><span class="s2">: '</span><span class="s3">POST</span><span class="s2">',</span>
+      <span class="s2">headers,</span>
+      <span class="s1">body</span><span class="s2">: JSON.</span><span class="s6">stringify</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">messages</span><span class="s2">: </span><span class="s1">[</span>
+          <span class="s2">{</span>
+            <span class="s1">topic</span><span class="s2">: this.subTopic,</span>
+            <span class="s2">event,</span>
+            <span class="s1">payload</span><span class="s2">: payload,</span>
+            <span class="s1">private</span><span class="s2">: this.private,</span>
+          <span class="s2">},</span>
+        <span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">response = </span><span class="s0">await </span><span class="s2">this.</span><span class="s6">_fetchWithTimeout</span><span class="s1">(</span>
+      <span class="s2">this.broadcastEndpointURL,</span>
+      <span class="s2">options,</span>
+      <span class="s2">opts.timeout ?? this.timeout</span>
+    <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">response.status === </span><span class="s8">202</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">success</span><span class="s2">: </span><span class="s4">true </span><span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">let </span><span class="s2">errorMessage = response.statusText</span>
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">errorBody = </span><span class="s0">await </span><span class="s2">response.</span><span class="s6">json</span><span class="s1">()</span>
+      <span class="s2">errorMessage = errorBody.error || errorBody.message || errorMessage</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s2">{}</span>
+
+    <span class="s0">return </span><span class="s1">Promise</span><span class="s2">.</span><span class="s6">reject</span><span class="s1">(</span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">errorMessage</span><span class="s1">))</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Sends a message into the channel. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args </span><span class="s5">Arguments to send to channel 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args.type </span><span class="s5">The type of event to send 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args.event </span><span class="s5">The name of the event being sent 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args.payload </span><span class="s5">Payload to be sent 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">opts </span><span class="s5">Options to be used during the send process 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - When using REST you don't need to subscribe to the channel 
+   * - REST calls are only available from 2.37.0 onwards 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Send a message via websocket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const channel = supabase.channel('room1') 
+   </span><span class="s5">* 
+   * </span><span class="s1">channel.subscribe((status) =&gt; { 
+   </span><span class="s5">*   </span><span class="s1">if (status === 'SUBSCRIBED') { 
+   </span><span class="s5">*     </span><span class="s1">channel.send({ 
+   </span><span class="s5">*       </span><span class="s1">type: 'broadcast', 
+   </span><span class="s5">*       </span><span class="s1">event: 'cursor-pos', 
+   </span><span class="s5">*       </span><span class="s1">payload: { x: Math.random(), y: Math.random() }, 
+   </span><span class="s5">*     </span><span class="s1">}) 
+   </span><span class="s5">*   </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">Send a message via websocket 
+   * ```js 
+   * ok | timed out | error 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Send a message via REST 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">supabase 
+   </span><span class="s5">*   </span><span class="s1">.channel('room1') 
+   </span><span class="s5">*   </span><span class="s1">.httpSend('cursor-pos', { x: Math.random(), y: Math.random() }) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">send</span><span class="s2">(</span>
+    <span class="s2">args: {</span>
+      <span class="s2">type: '</span><span class="s3">broadcast</span><span class="s2">' | '</span><span class="s3">presence</span><span class="s2">' | '</span><span class="s3">postgres_changes</span><span class="s2">'</span>
+      <span class="s2">event: string</span>
+      <span class="s2">payload?: any</span>
+      <span class="s1">[</span><span class="s2">key</span><span class="s1">: </span><span class="s2">string</span><span class="s1">]</span><span class="s2">: any</span>
+    <span class="s2">},</span>
+    <span class="s2">opts: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any } = {}</span>
+  <span class="s2">): Promise&lt;RealtimeChannelSendResponse&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.channelAdapter.</span><span class="s6">canPush</span><span class="s1">() </span><span class="s2">&amp;&amp; args.type === '</span><span class="s3">broadcast</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">console.</span><span class="s6">warn</span><span class="s1">(</span>
+        <span class="s2">'</span><span class="s3">Realtime send() is automatically falling back to REST API. </span><span class="s2">' +</span>
+          <span class="s2">'</span><span class="s3">This behavior will be deprecated in the future. </span><span class="s2">' +</span>
+          <span class="s2">'</span><span class="s3">Please use httpSend() explicitly for REST delivery.</span><span class="s2">'</span>
+      <span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">{ event, payload: endpoint_payload } = args</span>
+      <span class="s0">const </span><span class="s2">headers: Record&lt;string, string&gt; = {</span>
+        <span class="s1">apikey</span><span class="s2">: this.socket.apiKey ? this.socket.apiKey : '',</span>
+        <span class="s2">'</span><span class="s3">Content-Type</span><span class="s2">': '</span><span class="s3">application/json</span><span class="s2">',</span>
+      <span class="s2">}</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.socket.accessTokenValue</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Authorization</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= `</span><span class="s3">Bearer </span><span class="s2">${this.socket.accessTokenValue}`</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">options = {</span>
+        <span class="s1">method</span><span class="s2">: '</span><span class="s3">POST</span><span class="s2">',</span>
+        <span class="s2">headers,</span>
+        <span class="s1">body</span><span class="s2">: JSON.</span><span class="s6">stringify</span><span class="s1">(</span><span class="s2">{</span>
+          <span class="s1">messages</span><span class="s2">: </span><span class="s1">[</span>
+            <span class="s2">{</span>
+              <span class="s1">topic</span><span class="s2">: this.subTopic,</span>
+              <span class="s2">event,</span>
+              <span class="s1">payload</span><span class="s2">: endpoint_payload,</span>
+              <span class="s1">private</span><span class="s2">: this.private,</span>
+            <span class="s2">},</span>
+          <span class="s1">]</span><span class="s2">,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+
+      <span class="s0">try </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">response = </span><span class="s0">await </span><span class="s2">this.</span><span class="s6">_fetchWithTimeout</span><span class="s1">(</span>
+          <span class="s2">this.broadcastEndpointURL,</span>
+          <span class="s2">options,</span>
+          <span class="s2">opts.timeout ?? this.timeout</span>
+        <span class="s1">)</span>
+
+        <span class="s0">await </span><span class="s2">response.body?.</span><span class="s6">cancel</span><span class="s1">()</span>
+        <span class="s0">return </span><span class="s2">response.ok ? '</span><span class="s3">ok</span><span class="s2">' : '</span><span class="s3">error</span><span class="s2">'</span>
+      <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">error instanceof Error &amp;&amp; error.name === '</span><span class="s3">AbortError</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s2">'</span><span class="s3">timed out</span><span class="s2">'</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s2">'</span><span class="s3">error</span><span class="s2">'</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">new </span><span class="s1">Promise(</span><span class="s2">(resolve) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">push = this.channelAdapter.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">args.type, args, opts.timeout || this.timeout</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">args.type === '</span><span class="s3">broadcast</span><span class="s2">' &amp;&amp; !this.params?.config?.broadcast?.ack</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">'</span><span class="s1">)</span>
+        <span class="s2">}</span>
+
+        <span class="s2">push.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">'</span><span class="s1">))</span>
+        <span class="s2">push.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">'</span><span class="s1">))</span>
+        <span class="s2">push.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">timeout</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">timed out</span><span class="s2">'</span><span class="s1">))</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Updates the payload that will be sent the next time the channel joins (reconnects). 
+   * Useful for rotating access tokens or updating config without re-creating the channel. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">updateJoinPayload</span><span class="s2">(payload: Record&lt;string, any&gt;) {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">updateJoinPayload</span><span class="s1">(</span><span class="s2">payload</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Leaves the channel. 
+   * 
+   * Unsubscribes from server events, and instructs channel to terminate on server. 
+   * Triggers onClose() hooks. 
+   * 
+   * To receive leave acknowledgements, use the a `receive` hook to bind to the server ack, ie: 
+   * channel.unsubscribe().receive(&quot;ok&quot;, () =&gt; alert(&quot;left!&quot;) ) 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">unsubscribe</span><span class="s2">(timeout = this.timeout) {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s1">Promise</span><span class="s2">&lt;RealtimeChannelSendResponse&gt;</span><span class="s1">(</span><span class="s2">(resolve) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">this.channelAdapter</span>
+        <span class="s2">.</span><span class="s6">unsubscribe</span><span class="s1">(</span><span class="s2">timeout</span><span class="s1">)</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">ok</span><span class="s2">'</span><span class="s1">))</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">timeout</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">timed out</span><span class="s2">'</span><span class="s1">))</span>
+        <span class="s2">.</span><span class="s6">receive</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">', () </span><span class="s0">=&gt; </span><span class="s6">resolve</span><span class="s1">(</span><span class="s2">'</span><span class="s3">error</span><span class="s2">'</span><span class="s1">))</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Destroys and stops related timers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s6">teardown</span><span class="s2">() {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">teardown</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">_fetchWithTimeout</span><span class="s2">(url: string, options: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }, timeout: number) {</span>
+    <span class="s0">const </span><span class="s2">controller = new </span><span class="s6">AbortController</span><span class="s1">()</span>
+    <span class="s0">const </span><span class="s2">id = </span><span class="s6">setTimeout</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">controller.</span><span class="s6">abort</span><span class="s1">()</span><span class="s2">, timeout</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">response = </span><span class="s0">await </span><span class="s2">this.socket.</span><span class="s6">fetch</span><span class="s1">(</span><span class="s2">url, {</span>
+      <span class="s2">...options,</span>
+      <span class="s1">signal</span><span class="s2">: controller.signal,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">id</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">response</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s6">_on</span><span class="s2">(type: string, filter: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: any }, callback: ChannelBindingCallback) {</span>
+    <span class="s0">const </span><span class="s2">typeLower = type.</span><span class="s6">toLocaleLowerCase</span><span class="s1">()</span>
+
+    <span class="s0">const </span><span class="s2">ref = this.channelAdapter.</span><span class="s6">on</span><span class="s1">(</span><span class="s2">type, callback</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">binding: Binding = {</span>
+      <span class="s1">type</span><span class="s2">: typeLower,</span>
+      <span class="s1">filter</span><span class="s2">: filter,</span>
+      <span class="s1">callback</span><span class="s2">: callback,</span>
+      <span class="s1">ref</span><span class="s2">: ref,</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.bindings</span><span class="s1">[</span><span class="s2">typeLower</span><span class="s1">]) </span><span class="s2">{</span>
+      <span class="s2">this.bindings</span><span class="s1">[</span><span class="s2">typeLower</span><span class="s1">]</span><span class="s2">.</span><span class="s6">push</span><span class="s1">(</span><span class="s2">binding</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">this.bindings</span><span class="s1">[</span><span class="s2">typeLower</span><span class="s1">] </span><span class="s2">= </span><span class="s1">[</span><span class="s2">binding</span><span class="s1">]</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.</span><span class="s6">_updateFilterMessage</span><span class="s1">()</span>
+
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Registers a callback that will be executed when the channel closes. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_onClose</span><span class="s2">(callback: ChannelBindingCallback) {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">onClose</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Registers a callback that will be executed when the channel encounteres an error. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_onError</span><span class="s2">(callback: ChannelOnErrorCallback) {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">onError</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_updateFilterMessage</span><span class="s2">() {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">updateFilterBindings</span><span class="s1">(</span><span class="s2">(binding, payload: any, ref) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">typeLower = binding.event.</span><span class="s6">toLocaleLowerCase</span><span class="s1">()</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.</span><span class="s6">_notThisChannelEvent</span><span class="s1">(</span><span class="s2">typeLower, ref</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s4">false</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">bind = this.bindings</span><span class="s1">[</span><span class="s2">typeLower</span><span class="s1">]</span><span class="s2">?.</span><span class="s6">find</span><span class="s1">(</span><span class="s2">(bind) </span><span class="s0">=&gt; </span><span class="s2">bind.ref === binding.ref</span><span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!bind</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s4">true</span>
+      <span class="s2">}</span>
+
+      <span class="s0">if </span><span class="s1">([</span><span class="s2">'</span><span class="s3">broadcast</span><span class="s2">', '</span><span class="s3">presence</span><span class="s2">', '</span><span class="s3">postgres_changes</span><span class="s2">'</span><span class="s1">]</span><span class="s2">.</span><span class="s6">includes</span><span class="s1">(</span><span class="s2">typeLower</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">id</span><span class="s2">' in bind</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s0">const </span><span class="s2">bindId = bind.id</span>
+          <span class="s0">const </span><span class="s2">bindEvent = bind.filter?.event</span>
+          <span class="s0">return </span><span class="s1">(</span>
+            <span class="s2">bindId &amp;&amp;</span>
+            <span class="s2">payload.ids?.</span><span class="s6">includes</span><span class="s1">(</span><span class="s2">bindId</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+            <span class="s1">(</span><span class="s2">bindEvent === '</span><span class="s3">*</span><span class="s2">' ||</span>
+              <span class="s2">bindEvent?.</span><span class="s6">toLocaleLowerCase</span><span class="s1">() </span><span class="s2">=== payload.data?.type.</span><span class="s6">toLocaleLowerCase</span><span class="s1">())</span>
+          <span class="s1">)</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+          <span class="s0">const </span><span class="s2">bindEvent = bind?.filter?.event?.</span><span class="s6">toLocaleLowerCase</span><span class="s1">()</span>
+          <span class="s0">return </span><span class="s2">bindEvent === '</span><span class="s3">*</span><span class="s2">' || bindEvent === payload?.event?.</span><span class="s6">toLocaleLowerCase</span><span class="s1">()</span>
+        <span class="s2">}</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">bind.type.</span><span class="s6">toLocaleLowerCase</span><span class="s1">() </span><span class="s2">=== typeLower</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_notThisChannelEvent</span><span class="s2">(event: string, ref?: string | null) {</span>
+    <span class="s0">const </span><span class="s2">{ close, error, leave, join } = CHANNEL_EVENTS</span>
+    <span class="s0">const </span><span class="s2">events: string</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[</span><span class="s2">close, error, leave, join</span><span class="s1">]</span>
+    <span class="s0">return </span><span class="s2">ref &amp;&amp; events.</span><span class="s6">includes</span><span class="s1">(</span><span class="s2">event</span><span class="s1">) </span><span class="s2">&amp;&amp; ref !== this.joinPush.ref</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_updateFilterTransform</span><span class="s2">() {</span>
+    <span class="s2">this.channelAdapter.</span><span class="s6">updatePayloadTransform</span><span class="s1">(</span><span class="s2">(event, payload: any, ref) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof payload === '</span><span class="s3">object</span><span class="s2">' &amp;&amp; '</span><span class="s3">ids</span><span class="s2">' in payload</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">postgresChanges = payload.data</span>
+        <span class="s0">const </span><span class="s2">{ schema, table, commit_timestamp, type, errors } = postgresChanges</span>
+        <span class="s0">const </span><span class="s2">enrichedPayload = {</span>
+          <span class="s1">schema</span><span class="s2">: schema,</span>
+          <span class="s1">table</span><span class="s2">: table,</span>
+          <span class="s1">commit_timestamp</span><span class="s2">: commit_timestamp,</span>
+          <span class="s1">eventType</span><span class="s2">: type,</span>
+          <span class="s1">new</span><span class="s2">: {},</span>
+          <span class="s1">old</span><span class="s2">: {},</span>
+          <span class="s1">errors</span><span class="s2">: errors,</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">{</span>
+          <span class="s2">...enrichedPayload,</span>
+          <span class="s2">...this.</span><span class="s6">_getPayloadRecords</span><span class="s1">(</span><span class="s2">postgresChanges</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">return </span><span class="s2">payload</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s6">copyBindings</span><span class="s2">(other: RealtimeChannel) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.joinedOnce</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cannot copy bindings into joined channel</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">kind in other.bindings</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">binding of other.bindings</span><span class="s1">[</span><span class="s2">kind</span><span class="s1">]) </span><span class="s2">{</span>
+        <span class="s2">this.</span><span class="s6">_on</span><span class="s1">(</span><span class="s2">binding.type, binding.filter, binding.callback</span><span class="s1">)</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Compares two optional filter values for equality. 
+   * Treats undefined, null, and empty string as equivalent empty values. 
+   * </span><span class="s2">@</span><span class="s0">internal</span>
+   <span class="s2">*/</span>
+  <span class="s0">private static </span><span class="s6">isFilterValueEqual</span><span class="s2">(</span>
+    <span class="s2">serverValue: string | undefined | null,</span>
+    <span class="s2">clientValue: string | undefined</span>
+  <span class="s2">): boolean {</span>
+    <span class="s0">const </span><span class="s2">normalizedServer = serverValue ?? </span><span class="s4">undefined</span>
+    <span class="s0">const </span><span class="s2">normalizedClient = clientValue ?? </span><span class="s4">undefined</span>
+    <span class="s0">return </span><span class="s2">normalizedServer === normalizedClient</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** @</span><span class="s0">internal </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">_getPayloadRecords</span><span class="s2">(payload: any) {</span>
+    <span class="s0">const </span><span class="s2">records = {</span>
+      <span class="s1">new</span><span class="s2">: {},</span>
+      <span class="s1">old</span><span class="s2">: {},</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">payload.type === '</span><span class="s3">INSERT</span><span class="s2">' || payload.type === '</span><span class="s3">UPDATE</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">records.new = Transformers.</span><span class="s6">convertChangeData</span><span class="s1">(</span><span class="s2">payload.columns, payload.record</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">payload.type === '</span><span class="s3">UPDATE</span><span class="s2">' || payload.type === '</span><span class="s3">DELETE</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">records.old = Transformers.</span><span class="s6">convertChangeData</span><span class="s1">(</span><span class="s2">payload.columns, payload.old_record</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">records</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

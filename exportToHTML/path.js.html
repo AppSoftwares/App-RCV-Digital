@@ -1,0 +1,365 @@
+<html>
+<head>
+<title>path.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+path.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const path = require(</span><span class="s2">&quot;path&quot;</span><span class="s1">);</span>
+
+<span class="s1">const CHAR_HASH = </span><span class="s2">&quot;#&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_SLASH = </span><span class="s2">&quot;/&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_BACKSLASH = </span><span class="s2">&quot;</span><span class="s4">\\</span><span class="s2">&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_A = </span><span class="s2">&quot;A&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_Z = </span><span class="s2">&quot;Z&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_LOWER_A = </span><span class="s2">&quot;a&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_LOWER_Z = </span><span class="s2">&quot;z&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_DOT = </span><span class="s2">&quot;.&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_COLON = </span><span class="s2">&quot;:&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const CHAR_QUESTION = </span><span class="s2">&quot;?&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+
+<span class="s1">const posixNormalize = path.posix.normalize;</span>
+<span class="s1">const winNormalize = path.win32.normalize;</span>
+
+<span class="s0">/** 
+ * @enum {number} 
+ */</span>
+<span class="s1">const PathType = Object.freeze({</span>
+	<span class="s1">Empty: </span><span class="s3">0</span><span class="s1">,</span>
+	<span class="s1">Normal: </span><span class="s3">1</span><span class="s1">,</span>
+	<span class="s1">Relative: </span><span class="s3">2</span><span class="s1">,</span>
+	<span class="s1">AbsoluteWin: </span><span class="s3">3</span><span class="s1">,</span>
+	<span class="s1">AbsolutePosix: </span><span class="s3">4</span><span class="s1">,</span>
+	<span class="s1">Internal: </span><span class="s3">5</span><span class="s1">,</span>
+<span class="s1">});</span>
+
+<span class="s1">const deprecatedInvalidSegmentRegEx =</span>
+	<span class="s1">/(^|\\|\/)((\.|%</span><span class="s3">2</span><span class="s1">e)(\.|%</span><span class="s3">2</span><span class="s1">e)?|(n|%</span><span class="s3">6</span><span class="s1">e|%</span><span class="s3">4</span><span class="s1">e)(o|%</span><span class="s3">6</span><span class="s1">f|%</span><span class="s3">4</span><span class="s1">f)(d|%</span><span class="s3">64</span><span class="s1">|%</span><span class="s3">44</span><span class="s1">)(e|%</span><span class="s3">65</span><span class="s1">|%</span><span class="s3">45</span><span class="s1">)(_|%</span><span class="s3">5</span><span class="s1">f)(m|%</span><span class="s3">6</span><span class="s1">d|%</span><span class="s3">4</span><span class="s1">d)(o|%</span><span class="s3">6</span><span class="s1">f|%</span><span class="s3">4</span><span class="s1">f)(d|%</span><span class="s3">64</span><span class="s1">|%</span><span class="s3">44</span><span class="s1">)(u|%</span><span class="s3">75</span><span class="s1">|%</span><span class="s3">55</span><span class="s1">)(l|%</span><span class="s3">6</span><span class="s1">c|%</span><span class="s3">4</span><span class="s1">c)(e|%</span><span class="s3">65</span><span class="s1">|%</span><span class="s3">45</span><span class="s1">)(s|%</span><span class="s3">73</span><span class="s1">|%</span><span class="s3">53</span><span class="s1">))(\\|\/|$)/i;</span>
+
+<span class="s1">const invalidSegmentRegEx =</span>
+	<span class="s1">/(^|\\|\/)((\.|%</span><span class="s3">2</span><span class="s1">e)(\.|%</span><span class="s3">2</span><span class="s1">e)?|(n|%</span><span class="s3">6</span><span class="s1">e|%</span><span class="s3">4</span><span class="s1">e)(o|%</span><span class="s3">6</span><span class="s1">f|%</span><span class="s3">4</span><span class="s1">f)(d|%</span><span class="s3">64</span><span class="s1">|%</span><span class="s3">44</span><span class="s1">)(e|%</span><span class="s3">65</span><span class="s1">|%</span><span class="s3">45</span><span class="s1">)(_|%</span><span class="s3">5</span><span class="s1">f)(m|%</span><span class="s3">6</span><span class="s1">d|%</span><span class="s3">4</span><span class="s1">d)(o|%</span><span class="s3">6</span><span class="s1">f|%</span><span class="s3">4</span><span class="s1">f)(d|%</span><span class="s3">64</span><span class="s1">|%</span><span class="s3">44</span><span class="s1">)(u|%</span><span class="s3">75</span><span class="s1">|%</span><span class="s3">55</span><span class="s1">)(l|%</span><span class="s3">6</span><span class="s1">c|%</span><span class="s3">4</span><span class="s1">c)(e|%</span><span class="s3">65</span><span class="s1">|%</span><span class="s3">45</span><span class="s1">)(s|%</span><span class="s3">73</span><span class="s1">|%</span><span class="s3">53</span><span class="s1">))?(\\|\/|$)/i;</span>
+
+<span class="s0">/** 
+ * @param {string} maybePath a path known to start with `\\` 
+ * @returns {PathType} AbsoluteWin for `\\?\…` / `\\.\…`, otherwise Normal 
+ */</span>
+<span class="s1">const getDosDeviceType = (maybePath) =&gt; {</span>
+	<span class="s4">if </span><span class="s1">(maybePath.length &gt;= </span><span class="s3">4 </span><span class="s1">&amp;&amp; maybePath.charCodeAt(</span><span class="s3">3</span><span class="s1">) === CHAR_BACKSLASH) {</span>
+		<span class="s1">const c2 = maybePath.charCodeAt(</span><span class="s3">2</span><span class="s1">);</span>
+		<span class="s4">if </span><span class="s1">(c2 === CHAR_QUESTION || c2 === CHAR_DOT) {</span>
+			<span class="s4">return </span><span class="s1">PathType.AbsoluteWin;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @param {string} maybePath a path 
+ * @returns {PathType} type of path 
+ */</span>
+<span class="s1">const getType = (maybePath) =&gt; {</span>
+	<span class="s4">switch </span><span class="s1">(maybePath.length) {</span>
+		<span class="s4">case </span><span class="s3">0</span><span class="s1">:</span>
+			<span class="s4">return </span><span class="s1">PathType.Empty;</span>
+		<span class="s4">case </span><span class="s3">1</span><span class="s1">: {</span>
+			<span class="s1">const c0 = maybePath.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+			<span class="s4">switch </span><span class="s1">(c0) {</span>
+				<span class="s4">case </span><span class="s1">CHAR_DOT:</span>
+					<span class="s4">return </span><span class="s1">PathType.Relative;</span>
+				<span class="s4">case </span><span class="s1">CHAR_SLASH:</span>
+					<span class="s4">return </span><span class="s1">PathType.AbsolutePosix;</span>
+				<span class="s4">case </span><span class="s1">CHAR_HASH:</span>
+					<span class="s4">return </span><span class="s1">PathType.Internal;</span>
+			<span class="s1">}</span>
+			<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+		<span class="s1">}</span>
+		<span class="s4">case </span><span class="s3">2</span><span class="s1">: {</span>
+			<span class="s1">const c0 = maybePath.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+			<span class="s4">switch </span><span class="s1">(c0) {</span>
+				<span class="s4">case </span><span class="s1">CHAR_DOT: {</span>
+					<span class="s1">const c1 = maybePath.charCodeAt(</span><span class="s3">1</span><span class="s1">);</span>
+					<span class="s4">switch </span><span class="s1">(c1) {</span>
+						<span class="s4">case </span><span class="s1">CHAR_DOT:</span>
+						<span class="s4">case </span><span class="s1">CHAR_SLASH:</span>
+							<span class="s4">return </span><span class="s1">PathType.Relative;</span>
+					<span class="s1">}</span>
+					<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+				<span class="s1">}</span>
+				<span class="s4">case </span><span class="s1">CHAR_SLASH:</span>
+					<span class="s4">return </span><span class="s1">PathType.AbsolutePosix;</span>
+				<span class="s4">case </span><span class="s1">CHAR_HASH:</span>
+					<span class="s4">return </span><span class="s1">PathType.Internal;</span>
+			<span class="s1">}</span>
+			<span class="s1">const c1 = maybePath.charCodeAt(</span><span class="s3">1</span><span class="s1">);</span>
+			<span class="s4">if </span><span class="s1">(</span>
+				<span class="s1">c1 === CHAR_COLON &amp;&amp;</span>
+				<span class="s1">((c0 &gt;= CHAR_A &amp;&amp; c0 &lt;= CHAR_Z) ||</span>
+					<span class="s1">(c0 &gt;= CHAR_LOWER_A &amp;&amp; c0 &lt;= CHAR_LOWER_Z))</span>
+			<span class="s1">) {</span>
+				<span class="s4">return </span><span class="s1">PathType.AbsoluteWin;</span>
+			<span class="s1">}</span>
+			<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s1">const c0 = maybePath.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+	<span class="s4">switch </span><span class="s1">(c0) {</span>
+		<span class="s4">case </span><span class="s1">CHAR_DOT: {</span>
+			<span class="s1">const c1 = maybePath.charCodeAt(</span><span class="s3">1</span><span class="s1">);</span>
+			<span class="s4">switch </span><span class="s1">(c1) {</span>
+				<span class="s4">case </span><span class="s1">CHAR_SLASH:</span>
+					<span class="s4">return </span><span class="s1">PathType.Relative;</span>
+				<span class="s4">case </span><span class="s1">CHAR_DOT: {</span>
+					<span class="s1">const c2 = maybePath.charCodeAt(</span><span class="s3">2</span><span class="s1">);</span>
+					<span class="s4">if </span><span class="s1">(c2 === CHAR_SLASH) </span><span class="s4">return </span><span class="s1">PathType.Relative;</span>
+					<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+			<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+		<span class="s1">}</span>
+		<span class="s4">case </span><span class="s1">CHAR_SLASH:</span>
+			<span class="s4">return </span><span class="s1">PathType.AbsolutePosix;</span>
+		<span class="s4">case </span><span class="s1">CHAR_HASH:</span>
+			<span class="s4">return </span><span class="s1">PathType.Internal;</span>
+	<span class="s1">}</span>
+	<span class="s1">const c1 = maybePath.charCodeAt(</span><span class="s3">1</span><span class="s1">);</span>
+	<span class="s4">if </span><span class="s1">(c1 === CHAR_COLON) {</span>
+		<span class="s1">const c2 = maybePath.charCodeAt(</span><span class="s3">2</span><span class="s1">);</span>
+		<span class="s4">if </span><span class="s1">(</span>
+			<span class="s1">(c2 === CHAR_BACKSLASH || c2 === CHAR_SLASH) &amp;&amp;</span>
+			<span class="s1">((c0 &gt;= CHAR_A &amp;&amp; c0 &lt;= CHAR_Z) ||</span>
+				<span class="s1">(c0 &gt;= CHAR_LOWER_A &amp;&amp; c0 &lt;= CHAR_LOWER_Z))</span>
+		<span class="s1">) {</span>
+			<span class="s4">return </span><span class="s1">PathType.AbsoluteWin;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s0">// DOS device paths (`\\?\…`, `\\.\…`) are handled in a cold helper so</span>
+	<span class="s0">// this function stays small — inlining the full check here regressed</span>
+	<span class="s0">// `description-files-multi` under `--no-opt` interpretation. Here we</span>
+	<span class="s0">// only pay the two-byte gate for non-DOS inputs.</span>
+	<span class="s4">if </span><span class="s1">(c0 === CHAR_BACKSLASH &amp;&amp; c1 === CHAR_BACKSLASH) {</span>
+		<span class="s4">return </span><span class="s1">getDosDeviceType(maybePath);</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">PathType.Normal;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @param {string} maybePath a path 
+ * @returns {string} the normalized path 
+ */</span>
+<span class="s1">const normalize = (maybePath) =&gt; {</span>
+	<span class="s4">switch </span><span class="s1">(getType(maybePath)) {</span>
+		<span class="s4">case </span><span class="s1">PathType.Empty:</span>
+			<span class="s4">return </span><span class="s1">maybePath;</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsoluteWin:</span>
+			<span class="s4">return </span><span class="s1">winNormalize(maybePath);</span>
+		<span class="s4">case </span><span class="s1">PathType.Relative: {</span>
+			<span class="s1">const r = posixNormalize(maybePath);</span>
+			<span class="s4">return </span><span class="s1">getType(r) === PathType.Relative ? r : `./${r}`;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">posixNormalize(maybePath);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @param {string} rootPath the root path 
+ * @param {string | undefined} request the request path 
+ * @returns {string} the joined path 
+ */</span>
+<span class="s1">const join = (rootPath, request) =&gt; {</span>
+	<span class="s4">if </span><span class="s1">(!request) </span><span class="s4">return </span><span class="s1">normalize(rootPath);</span>
+	<span class="s1">const requestType = getType(request);</span>
+	<span class="s4">switch </span><span class="s1">(requestType) {</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsolutePosix:</span>
+			<span class="s4">return </span><span class="s1">posixNormalize(request);</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsoluteWin:</span>
+			<span class="s4">return </span><span class="s1">winNormalize(request);</span>
+	<span class="s1">}</span>
+	<span class="s4">switch </span><span class="s1">(getType(rootPath)) {</span>
+		<span class="s4">case </span><span class="s1">PathType.Normal:</span>
+		<span class="s4">case </span><span class="s1">PathType.Relative:</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsolutePosix:</span>
+			<span class="s4">return </span><span class="s1">posixNormalize(`${rootPath}/${request}`);</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsoluteWin:</span>
+			<span class="s4">return </span><span class="s1">winNormalize(`${rootPath}\\${request}`);</span>
+	<span class="s1">}</span>
+	<span class="s4">switch </span><span class="s1">(requestType) {</span>
+		<span class="s4">case </span><span class="s1">PathType.Empty:</span>
+			<span class="s4">return </span><span class="s1">rootPath;</span>
+		<span class="s4">case </span><span class="s1">PathType.Relative: {</span>
+			<span class="s1">const r = posixNormalize(rootPath);</span>
+			<span class="s4">return </span><span class="s1">getType(r) === PathType.Relative ? r : `./${r}`;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">posixNormalize(rootPath);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @param {string} maybePath a path 
+ * @returns {string} the directory name 
+ */</span>
+<span class="s1">const dirname = (maybePath) =&gt; {</span>
+	<span class="s4">switch </span><span class="s1">(getType(maybePath)) {</span>
+		<span class="s4">case </span><span class="s1">PathType.AbsoluteWin:</span>
+			<span class="s4">return </span><span class="s1">path.win32.dirname(maybePath);</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">path.posix.dirname(maybePath);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** @typedef {{ fn: (rootPath: string, request: string) =&gt; string, cache: Map&lt;string, Map&lt;string, string | undefined&gt;&gt; }} CachedJoin */</span>
+
+<span class="s0">/** 
+ * @returns {CachedJoin} cached join 
+ */</span>
+<span class="s1">const createCachedJoin = () =&gt; {</span>
+	<span class="s0">/** @type {CachedJoin[&quot;cache&quot;]} */</span>
+	<span class="s1">const cache = </span><span class="s4">new </span><span class="s1">Map();</span>
+	<span class="s0">/** @type {CachedJoin[&quot;fn&quot;]} */</span>
+	<span class="s1">const fn = (rootPath, request) =&gt; {</span>
+		<span class="s0">/** @type {string | undefined} */</span>
+		<span class="s1">let cacheEntry;</span>
+		<span class="s1">let inner = cache.get(rootPath);</span>
+		<span class="s4">if </span><span class="s1">(inner === undefined) {</span>
+			<span class="s1">cache.set(rootPath, (inner = </span><span class="s4">new </span><span class="s1">Map()));</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s1">cacheEntry = inner.get(request);</span>
+			<span class="s4">if </span><span class="s1">(cacheEntry !== undefined) </span><span class="s4">return </span><span class="s1">cacheEntry;</span>
+		<span class="s1">}</span>
+		<span class="s1">cacheEntry = join(rootPath, request);</span>
+		<span class="s1">inner.set(request, cacheEntry);</span>
+		<span class="s4">return </span><span class="s1">cacheEntry;</span>
+	<span class="s1">};</span>
+	<span class="s4">return </span><span class="s1">{ fn, cache };</span>
+<span class="s1">};</span>
+
+<span class="s0">/** @typedef {{ fn: (maybePath: string) =&gt; string, cache: Map&lt;string, string&gt; }} CachedDirname */</span>
+
+<span class="s0">/** 
+ * @returns {CachedDirname} cached dirname 
+ */</span>
+<span class="s1">const createCachedDirname = () =&gt; {</span>
+	<span class="s0">/** @type {CachedDirname[&quot;cache&quot;]} */</span>
+	<span class="s1">const cache = </span><span class="s4">new </span><span class="s1">Map();</span>
+	<span class="s0">/** @type {CachedDirname[&quot;fn&quot;]} */</span>
+	<span class="s1">const fn = (maybePath) =&gt; {</span>
+		<span class="s1">const cacheEntry = cache.get(maybePath);</span>
+		<span class="s4">if </span><span class="s1">(cacheEntry !== undefined) </span><span class="s4">return </span><span class="s1">cacheEntry;</span>
+		<span class="s1">const result = dirname(maybePath);</span>
+		<span class="s1">cache.set(maybePath, result);</span>
+		<span class="s4">return </span><span class="s1">result;</span>
+	<span class="s1">};</span>
+	<span class="s4">return </span><span class="s1">{ fn, cache };</span>
+<span class="s1">};</span>
+
+<span class="s0">/** @typedef {{ fn: (maybePath: string, suffix?: string) =&gt; string, cache: Map&lt;string, Map&lt;string | undefined, string | undefined&gt;&gt; }} CachedBasename */</span>
+
+<span class="s0">/** 
+ * @returns {CachedBasename} cached basename 
+ */</span>
+<span class="s1">const createCachedBasename = () =&gt; {</span>
+	<span class="s0">/** @type {CachedBasename[&quot;cache&quot;]} */</span>
+	<span class="s1">const cache = </span><span class="s4">new </span><span class="s1">Map();</span>
+	<span class="s0">/** @type {CachedBasename[&quot;fn&quot;]} */</span>
+	<span class="s1">const fn = (maybePath, suffix) =&gt; {</span>
+		<span class="s0">/** @type {string | undefined} */</span>
+		<span class="s1">let cacheEntry;</span>
+		<span class="s1">let inner = cache.get(maybePath);</span>
+		<span class="s4">if </span><span class="s1">(inner === undefined) {</span>
+			<span class="s1">cache.set(maybePath, (inner = </span><span class="s4">new </span><span class="s1">Map()));</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s1">cacheEntry = inner.get(suffix);</span>
+			<span class="s4">if </span><span class="s1">(cacheEntry !== undefined) </span><span class="s4">return </span><span class="s1">cacheEntry;</span>
+		<span class="s1">}</span>
+		<span class="s1">cacheEntry = path.basename(maybePath, suffix);</span>
+		<span class="s1">inner.set(suffix, cacheEntry);</span>
+		<span class="s4">return </span><span class="s1">cacheEntry;</span>
+	<span class="s1">};</span>
+	<span class="s4">return </span><span class="s1">{ fn, cache };</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Whether `request` is a relative request — i.e. matches `^\.\.?(?:\/|$)`. 
+ * 
+ * This is called on every `doResolve` via `UnsafeCachePlugin` and 
+ * `getInnerRequest`, so the char-code form is meaningfully faster than the 
+ * equivalent regex test: no regex state machine, no string object churn. 
+ * @param {string} request request string 
+ * @returns {boolean} true if request is relative 
+ */</span>
+<span class="s1">const isRelativeRequest = (request) =&gt; {</span>
+	<span class="s1">const len = request.length;</span>
+	<span class="s4">if </span><span class="s1">(len === </span><span class="s3">0 </span><span class="s1">|| request.charCodeAt(</span><span class="s3">0</span><span class="s1">) !== CHAR_DOT) </span><span class="s4">return false</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(len === </span><span class="s3">1</span><span class="s1">) </span><span class="s4">return true</span><span class="s1">; </span><span class="s0">// &quot;.&quot;</span>
+	<span class="s1">const c1 = request.charCodeAt(</span><span class="s3">1</span><span class="s1">);</span>
+	<span class="s4">if </span><span class="s1">(c1 === CHAR_SLASH) </span><span class="s4">return true</span><span class="s1">; </span><span class="s0">// &quot;./...&quot;</span>
+	<span class="s4">if </span><span class="s1">(c1 !== CHAR_DOT) </span><span class="s4">return false</span><span class="s1">; </span><span class="s0">// &quot;.x...&quot;</span>
+	<span class="s4">if </span><span class="s1">(len === </span><span class="s3">2</span><span class="s1">) </span><span class="s4">return true</span><span class="s1">; </span><span class="s0">// &quot;..&quot;</span>
+	<span class="s4">return </span><span class="s1">request.charCodeAt(</span><span class="s3">2</span><span class="s1">) === CHAR_SLASH; </span><span class="s0">// &quot;../...&quot;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Check if childPath is a subdirectory of parentPath. 
+ * 
+ * Called from `TsconfigPathsPlugin._selectPathsDataForContext` inside a loop 
+ * over every tsconfig-paths context on every resolve, so it's worth keeping 
+ * cheap. Compared to the previous `startsWith(normalize(parent + &quot;/&quot;))` 
+ * version, this: checks the last char with `charCodeAt` instead of two 
+ * `endsWith` calls; and skips `normalize()` entirely in the common case 
+ * (parent has no trailing separator), since all we really need is the same 
+ * anchoring effect — a cheap `startsWith` plus a separator char check on the 
+ * byte immediately after `parentPath.length`. 
+ * @param {string} parentPath parent directory path 
+ * @param {string} childPath child path to check 
+ * @returns {boolean} true if childPath is under parentPath 
+ */</span>
+<span class="s1">const isSubPath = (parentPath, childPath) =&gt; {</span>
+	<span class="s1">const parentLen = parentPath.length;</span>
+	<span class="s4">if </span><span class="s1">(parentLen === </span><span class="s3">0</span><span class="s1">) {</span>
+		<span class="s0">// Match the old `normalize(&quot;&quot; + &quot;/&quot;) === &quot;/&quot;` fallback: an empty</span>
+		<span class="s0">// parent only &quot;contains&quot; a child that starts with a forward slash.</span>
+		<span class="s4">return </span><span class="s1">childPath.length &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; childPath.charCodeAt(</span><span class="s3">0</span><span class="s1">) === CHAR_SLASH;</span>
+	<span class="s1">}</span>
+	<span class="s1">const lastChar = parentPath.charCodeAt(parentLen - </span><span class="s3">1</span><span class="s1">);</span>
+	<span class="s4">if </span><span class="s1">(lastChar === CHAR_SLASH || lastChar === CHAR_BACKSLASH) {</span>
+		<span class="s0">// Parent already ends with a separator — a plain prefix test is enough.</span>
+		<span class="s4">return </span><span class="s1">childPath.startsWith(parentPath);</span>
+	<span class="s1">}</span>
+	<span class="s4">if </span><span class="s1">(childPath.length &lt;= parentLen) </span><span class="s4">return false</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(!childPath.startsWith(parentPath)) </span><span class="s4">return false</span><span class="s1">;</span>
+	<span class="s0">// Must be followed by a separator so &quot;/app&quot; doesn't match &quot;/app-other&quot;.</span>
+	<span class="s1">const nextChar = childPath.charCodeAt(parentLen);</span>
+	<span class="s4">return </span><span class="s1">nextChar === CHAR_SLASH || nextChar === CHAR_BACKSLASH;</span>
+<span class="s1">};</span>
+
+<span class="s1">module.exports.PathType = PathType;</span>
+<span class="s1">module.exports.createCachedBasename = createCachedBasename;</span>
+<span class="s1">module.exports.createCachedDirname = createCachedDirname;</span>
+<span class="s1">module.exports.createCachedJoin = createCachedJoin;</span>
+<span class="s1">module.exports.deprecatedInvalidSegmentRegEx = deprecatedInvalidSegmentRegEx;</span>
+<span class="s1">module.exports.dirname = dirname;</span>
+<span class="s1">module.exports.getType = getType;</span>
+<span class="s1">module.exports.invalidSegmentRegEx = invalidSegmentRegEx;</span>
+<span class="s1">module.exports.isRelativeRequest = isRelativeRequest;</span>
+<span class="s1">module.exports.isSubPath = isSubPath;</span>
+<span class="s1">module.exports.join = join;</span>
+<span class="s1">module.exports.normalize = normalize;</span>
+</pre>
+</body>
+</html>

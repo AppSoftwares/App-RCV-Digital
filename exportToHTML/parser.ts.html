@@ -1,0 +1,498 @@
+<html>
+<head>
+<title>parser.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #bcbec4;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #6aab73;}
+.s5 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+parser.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">// </span><span class="s1">Credits to @bnjmnt4n (https://www.npmjs.com/package/postgrest-query)</span>
+<span class="s0">// </span><span class="s1">See https://github.com/PostgREST/postgrest/blob/2f91853cb1de18944a4556df09e52450b881cfb3/src/PostgREST/ApiRequest/QueryParams.hs#L282-L284</span>
+
+<span class="s3">import </span><span class="s0">{ SimplifyDeep } </span><span class="s3">from </span><span class="s0">'</span><span class="s4">../types/types</span><span class="s0">'</span>
+<span class="s3">import </span><span class="s0">{ JsonPathToAccessor } </span><span class="s3">from </span><span class="s0">'</span><span class="s4">./utils</span><span class="s0">'</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a query. 
+ * A query is a sequence of nodes, separated by `,`, ensuring that there is 
+ * no remaining input after all nodes have been parsed. 
+ * 
+ * Returns an array of parsed nodes, or an error. 
+ </span><span class="s0">*/</span>
+<span class="s3">export type </span><span class="s0">ParseQuery&lt;Query </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Query</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: ParseNodes&lt;EatWhitespace&lt;Query&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Nodes, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? Nodes </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+      <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">''</span>
+        <span class="s0">? SimplifyDeep&lt;Nodes&gt;</span>
+        <span class="s0">: ParserError&lt;`</span><span class="s4">Unexpected input: </span><span class="s0">${Remainder}`&gt;</span>
+      <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid nodes array structure</span><span class="s0">'&gt;</span>
+    <span class="s0">: ParseNodes&lt;EatWhitespace&lt;Query&gt;&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Notes: all `Parse*` types assume that their input strings have their whitespace 
+ * removed. They return tuples of [&quot;Return Value&quot;, &quot;Remainder of text&quot;] or 
+ * a `ParserError`. 
+ </span><span class="s0">*/</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a sequence of nodes, separated by `,`. 
+ * 
+ * Returns a tuple of [&quot;Parsed fields&quot;, &quot;Remainder of text&quot;] or an error. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseNodes&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: ParseNodesHelper&lt;Input, </span><span class="s2">[]</span><span class="s0">&gt;</span>
+
+<span class="s3">type </span><span class="s0">ParseNodesHelper&lt;Input </span><span class="s3">extends </span><span class="s0">string, Nodes </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span><span class="s0">&gt; =</span>
+  <span class="s0">ParseNode&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Node, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? Node </span><span class="s3">extends </span><span class="s0">Ast.Node</span>
+      <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">,</span><span class="s0">${infer Remainder}`</span>
+        <span class="s0">? ParseNodesHelper&lt;EatWhitespace&lt;Remainder&gt;, </span><span class="s2">[</span><span class="s0">...Nodes, Node</span><span class="s2">]</span><span class="s0">&gt;</span>
+        <span class="s0">: </span><span class="s2">[[</span><span class="s0">...Nodes, Node</span><span class="s2">]</span><span class="s0">, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+      <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid node type in nodes helper</span><span class="s0">'&gt;</span>
+    <span class="s0">: ParseNode&lt;Input&gt;</span>
+<span class="s0">/**</span>
+ <span class="s1">* Parses a node. 
+ * A node is one of the following: 
+ * - `*` 
+ * - a field, as defined above 
+ * - a renamed field, `renamed_field:field` 
+ * - a spread field, `...field` 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseNode&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = Input </span><span class="s3">extends </span><span class="s0">''</span>
+  <span class="s0">? ParserError&lt;'</span><span class="s4">Empty string</span><span class="s0">'&gt;</span>
+  <span class="s0">: // </span><span class="s1">`*`</span>
+    <span class="s0">Input </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">*</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? </span><span class="s2">[</span><span class="s0">Ast.StarNode, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+    <span class="s0">: // </span><span class="s1">`...field`</span>
+      <span class="s0">Input </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">...</span><span class="s0">${infer Remainder}`</span>
+      <span class="s0">? ParseField&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer TargetField, `${infer Remainder}`</span><span class="s2">]</span>
+        <span class="s0">? TargetField </span><span class="s3">extends </span><span class="s0">Ast.FieldNode</span>
+          <span class="s0">? </span><span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">spread</span><span class="s0">'; target: TargetField }, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+          <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid target field type in spread</span><span class="s0">'&gt;</span>
+        <span class="s0">: ParserError&lt;`</span><span class="s4">Unable to parse spread resource at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+      <span class="s0">: ParseIdentifier&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer NameOrAlias, `${infer Remainder}`</span><span class="s2">]</span>
+        <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">::</span><span class="s0">${infer _}`</span>
+          <span class="s0">? // </span><span class="s1">It's a type cast and not an alias, so treat it as part of the field.</span>
+            <span class="s0">ParseField&lt;Input&gt;</span>
+          <span class="s0">: EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">:</span><span class="s0">${infer Remainder}`</span>
+            <span class="s0">? // </span><span class="s1">`alias:`</span>
+              <span class="s0">ParseField&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Field, `${infer Remainder}`</span><span class="s2">]</span>
+              <span class="s0">? Field </span><span class="s3">extends </span><span class="s0">Ast.FieldNode</span>
+                <span class="s0">? </span><span class="s2">[</span><span class="s0">Omit&lt;Field, '</span><span class="s4">alias</span><span class="s0">'&gt; &amp; { alias: NameOrAlias }, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+                <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid field type in alias parsing</span><span class="s0">'&gt;</span>
+              <span class="s0">: ParserError&lt;`</span><span class="s4">Unable to parse renamed field at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+            <span class="s0">: // </span><span class="s1">Otherwise, just parse it as a field without alias.</span>
+              <span class="s0">ParseField&lt;Input&gt;</span>
+        <span class="s0">: ParserError&lt;`</span><span class="s4">Expected identifier at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a field without preceding alias. 
+ * A field is one of the following: 
+ * - a top-level `count` field: https://docs.postgrest.org/en/v12/references/api/aggregate_functions.html#the-case-of-count 
+ * - a field with an embedded resource 
+ *   - `field(nodes)` 
+ *   - `field!hint(nodes)` 
+ *   - `field!inner(nodes)` 
+ *   - `field!left(nodes)` 
+ *   - `field!hint!inner(nodes)` 
+ *   - `field!hint!left(nodes)` 
+ * - a field without an embedded resource (see </span><span class="s0">{@</span><span class="s3">link </span><span class="s0">ParseNonEmbeddedResourceField}</span><span class="s1">) 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseField&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = Input </span><span class="s3">extends </span><span class="s0">''</span>
+  <span class="s0">? ParserError&lt;'</span><span class="s4">Empty string</span><span class="s0">'&gt;</span>
+  <span class="s0">: ParseIdentifier&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? Name </span><span class="s3">extends </span><span class="s0">'</span><span class="s4">count</span><span class="s0">'</span>
+      <span class="s0">? ParseCountField&lt;Input&gt;</span>
+      <span class="s0">: Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">!inner</span><span class="s0">${infer Remainder}`</span>
+        <span class="s0">? ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+            <span class="s0">infer Children,</span>
+            <span class="s0">`${infer Remainder}`,</span>
+          <span class="s2">]</span>
+          <span class="s0">? Children </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+            <span class="s0">? // </span><span class="s1">`field!inner(nodes)`</span>
+              <span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: Name; innerJoin: true; children: Children }, Remainder</span><span class="s2">]</span>
+            <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid children array in inner join</span><span class="s0">'&gt;</span>
+          <span class="s0">: CreateParserErrorIfRequired&lt;</span>
+              <span class="s0">ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt;,</span>
+              <span class="s0">`</span><span class="s4">Expected embedded resource after &quot;!inner&quot; at </span><span class="s5">\`</span><span class="s0">${Remainder}</span><span class="s5">\`</span><span class="s0">`</span>
+            <span class="s0">&gt;</span>
+        <span class="s0">: EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">!left</span><span class="s0">${infer Remainder}`</span>
+          <span class="s0">? ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+              <span class="s0">infer Children,</span>
+              <span class="s0">`${infer Remainder}`,</span>
+            <span class="s2">]</span>
+            <span class="s0">? Children </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+              <span class="s0">? // </span><span class="s1">`field!left(nodes)`</span>
+                <span class="s0">// </span><span class="s1">!left is a noise word - treat it the same way as a non-`!inner`.</span>
+                <span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: Name; children: Children }, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+              <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid children array in left join</span><span class="s0">'&gt;</span>
+            <span class="s0">: CreateParserErrorIfRequired&lt;</span>
+                <span class="s0">ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt;,</span>
+                <span class="s0">`</span><span class="s4">Expected embedded resource after &quot;!left&quot; at </span><span class="s5">\`</span><span class="s0">${EatWhitespace&lt;Remainder&gt;}</span><span class="s5">\`</span><span class="s0">`</span>
+              <span class="s0">&gt;</span>
+          <span class="s0">: EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">!</span><span class="s0">${infer Remainder}`</span>
+            <span class="s0">? ParseIdentifier&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Hint, `${infer Remainder}`</span><span class="s2">]</span>
+              <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">!inner</span><span class="s0">${infer Remainder}`</span>
+                <span class="s0">? ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+                    <span class="s0">infer Children,</span>
+                    <span class="s0">`${infer Remainder}`,</span>
+                  <span class="s2">]</span>
+                  <span class="s0">? Children </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+                    <span class="s0">? // </span><span class="s1">`field!hint!inner(nodes)`</span>
+                      <span class="s2">[</span>
+                        <span class="s0">{</span>
+                          <span class="s0">type: '</span><span class="s4">field</span><span class="s0">'</span>
+                          <span class="s0">name: Name</span>
+                          <span class="s0">hint: Hint</span>
+                          <span class="s0">innerJoin: true</span>
+                          <span class="s0">children: Children</span>
+                        <span class="s0">},</span>
+                        <span class="s0">EatWhitespace&lt;Remainder&gt;,</span>
+                      <span class="s2">]</span>
+                    <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid children array in hint inner join</span><span class="s0">'&gt;</span>
+                  <span class="s0">: ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt;</span>
+                <span class="s0">: ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+                      <span class="s0">infer Children,</span>
+                      <span class="s0">`${infer Remainder}`,</span>
+                    <span class="s2">]</span>
+                  <span class="s0">? Children </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+                    <span class="s0">? // </span><span class="s1">`field!hint(nodes)`</span>
+                      <span class="s2">[</span>
+                        <span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: Name; hint: Hint; children: Children },</span>
+                        <span class="s0">EatWhitespace&lt;Remainder&gt;,</span>
+                      <span class="s2">]</span>
+                    <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid children array in hint</span><span class="s0">'&gt;</span>
+                  <span class="s0">: ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt;</span>
+              <span class="s0">: ParserError&lt;`</span><span class="s4">Expected identifier after &quot;!&quot; at </span><span class="s5">\`</span><span class="s0">${EatWhitespace&lt;Remainder&gt;}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+            <span class="s0">: EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">(</span><span class="s0">${infer _}`</span>
+              <span class="s0">? ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+                  <span class="s0">infer Children,</span>
+                  <span class="s0">`${infer Remainder}`,</span>
+                <span class="s2">]</span>
+                <span class="s0">? Children </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+                  <span class="s0">? // </span><span class="s1">`field(nodes)`</span>
+                    <span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: Name; children: Children }, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+                  <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid children array in field</span><span class="s0">'&gt;</span>
+                <span class="s0">: // </span><span class="s1">Return error if start of embedded resource was detected but not found.</span>
+                  <span class="s0">ParseEmbeddedResource&lt;EatWhitespace&lt;Remainder&gt;&gt;</span>
+              <span class="s0">: // </span><span class="s1">Otherwise it's a non-embedded resource field.</span>
+                <span class="s0">ParseNonEmbeddedResourceField&lt;Input&gt;</span>
+    <span class="s0">: ParserError&lt;`</span><span class="s4">Expected identifier at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s3">type </span><span class="s0">ParseCountField&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">ParseIdentifier&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">'</span><span class="s4">count</span><span class="s0">', `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? </span><span class="s2">(</span>
+        <span class="s0">EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">()</span><span class="s0">${infer Remainder_}`</span>
+          <span class="s0">? EatWhitespace&lt;Remainder_&gt;</span>
+          <span class="s0">: EatWhitespace&lt;Remainder&gt;</span>
+      <span class="s2">) </span><span class="s3">extends </span><span class="s0">`${infer Remainder}`</span>
+      <span class="s0">? Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">::</span><span class="s0">${infer _}`</span>
+        <span class="s0">? ParseFieldTypeCast&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer CastType, `${infer Remainder}`</span><span class="s2">]</span>
+          <span class="s0">? </span><span class="s2">[</span>
+              <span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: '</span><span class="s4">count</span><span class="s0">'; aggregateFunction: '</span><span class="s4">count</span><span class="s0">'; castType: CastType },</span>
+              <span class="s0">Remainder,</span>
+            <span class="s2">]</span>
+          <span class="s0">: ParseFieldTypeCast&lt;Remainder&gt;</span>
+        <span class="s0">: </span><span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: '</span><span class="s4">count</span><span class="s0">'; aggregateFunction: '</span><span class="s4">count</span><span class="s0">' }, Remainder</span><span class="s2">]</span>
+      <span class="s0">: never</span>
+    <span class="s0">: ParserError&lt;`</span><span class="s4">Expected &quot;count&quot; at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses an embedded resource, which is an opening `(`, followed by a sequence of 
+ * 0 or more nodes separated by `,`, then a closing `)`. 
+ * 
+ * Returns a tuple of [&quot;Parsed fields&quot;, &quot;Remainder of text&quot;], an error, 
+ * or the original string input indicating that no opening `(` was found. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseEmbeddedResource&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = Input </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">(</span><span class="s0">${infer Remainder}`</span>
+  <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">)</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? </span><span class="s2">[[]</span><span class="s0">, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+    <span class="s0">: ParseNodes&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Nodes, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? Nodes </span><span class="s3">extends </span><span class="s0">Ast.Node</span><span class="s2">[]</span>
+        <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">)</span><span class="s0">${infer Remainder}`</span>
+          <span class="s0">? </span><span class="s2">[</span><span class="s0">Nodes, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+          <span class="s0">: ParserError&lt;`</span><span class="s4">Expected &quot;)&quot; at </span><span class="s5">\`</span><span class="s0">${EatWhitespace&lt;Remainder&gt;}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+        <span class="s0">: ParserError&lt;'</span><span class="s4">Invalid nodes array in embedded resource</span><span class="s0">'&gt;</span>
+      <span class="s0">: ParseNodes&lt;EatWhitespace&lt;Remainder&gt;&gt;</span>
+  <span class="s0">: ParserError&lt;`</span><span class="s4">Expected &quot;(&quot; at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a field excluding embedded resources, without preceding field renaming. 
+ * This is one of the following: 
+ * - `field` 
+ * - `field.aggregate()` 
+ * - `field.aggregate()::type` 
+ * - `field::type` 
+ * - `field::type.aggregate()` 
+ * - `field::type.aggregate()::type` 
+ * - `field-&gt;json...` 
+ * - `field-&gt;json.aggregate()` 
+ * - `field-&gt;json.aggregate()::type` 
+ * - `field-&gt;json::type` 
+ * - `field-&gt;json::type.aggregate()` 
+ * - `field-&gt;json::type.aggregate()::type` 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseNonEmbeddedResourceField&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">ParseIdentifier&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? // </span><span class="s1">Parse optional JSON path.</span>
+      <span class="s2">(</span>
+        <span class="s0">Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">-&gt;</span><span class="s0">${infer PathAndRest}`</span>
+          <span class="s0">? ParseJsonAccessor&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+              <span class="s0">infer PropertyName,</span>
+              <span class="s0">infer PropertyType,</span>
+              <span class="s0">`${infer Remainder}`,</span>
+            <span class="s2">]</span>
+            <span class="s0">? </span><span class="s2">[</span>
+                <span class="s0">{</span>
+                  <span class="s0">type: '</span><span class="s4">field</span><span class="s0">'</span>
+                  <span class="s0">name: Name</span>
+                  <span class="s0">alias: PropertyName</span>
+                  <span class="s0">castType: PropertyType</span>
+                  <span class="s0">jsonPath: JsonPathToAccessor&lt;</span>
+                    <span class="s0">PathAndRest </span><span class="s3">extends </span><span class="s0">`${infer Path}</span><span class="s4">,</span><span class="s0">${string}` ? Path : PathAndRest</span>
+                  <span class="s0">&gt;</span>
+                <span class="s0">},</span>
+                <span class="s0">Remainder,</span>
+              <span class="s2">]</span>
+            <span class="s0">: ParseJsonAccessor&lt;Remainder&gt;</span>
+          <span class="s0">: </span><span class="s2">[</span><span class="s0">{ type: '</span><span class="s4">field</span><span class="s0">'; name: Name }, Remainder</span><span class="s2">]</span>
+      <span class="s2">) </span><span class="s3">extends </span><span class="s0">infer Parsed</span>
+      <span class="s0">? Parsed </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Field, `${infer Remainder}`</span><span class="s2">]</span>
+        <span class="s0">? // </span><span class="s1">Parse optional typecast or aggregate function input typecast.</span>
+          <span class="s2">(</span>
+            <span class="s0">Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">::</span><span class="s0">${infer _}`</span>
+              <span class="s0">? ParseFieldTypeCast&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer CastType, `${infer Remainder}`</span><span class="s2">]</span>
+                <span class="s0">? </span><span class="s2">[</span><span class="s0">Omit&lt;Field, '</span><span class="s4">castType</span><span class="s0">'&gt; &amp; { castType: CastType }, Remainder</span><span class="s2">]</span>
+                <span class="s0">: ParseFieldTypeCast&lt;Remainder&gt;</span>
+              <span class="s0">: </span><span class="s2">[</span><span class="s0">Field, Remainder</span><span class="s2">]</span>
+          <span class="s2">) </span><span class="s3">extends </span><span class="s0">infer Parsed</span>
+          <span class="s0">? Parsed </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Field, `${infer Remainder}`</span><span class="s2">]</span>
+            <span class="s0">? // </span><span class="s1">Parse optional aggregate function.</span>
+              <span class="s0">Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">.</span><span class="s0">${infer _}`</span>
+              <span class="s0">? ParseFieldAggregation&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+                  <span class="s0">infer AggregateFunction,</span>
+                  <span class="s0">`${infer Remainder}`,</span>
+                <span class="s2">]</span>
+                <span class="s0">? // </span><span class="s1">Parse optional aggregate function output typecast.</span>
+                  <span class="s0">Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">::</span><span class="s0">${infer _}`</span>
+                  <span class="s0">? ParseFieldTypeCast&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer CastType, `${infer Remainder}`</span><span class="s2">]</span>
+                    <span class="s0">? </span><span class="s2">[</span>
+                        <span class="s0">Omit&lt;Field, '</span><span class="s4">castType</span><span class="s0">'&gt; &amp; {</span>
+                          <span class="s0">aggregateFunction: AggregateFunction</span>
+                          <span class="s0">castType: CastType</span>
+                        <span class="s0">},</span>
+                        <span class="s0">Remainder,</span>
+                      <span class="s2">]</span>
+                    <span class="s0">: ParseFieldTypeCast&lt;Remainder&gt;</span>
+                  <span class="s0">: </span><span class="s2">[</span><span class="s0">Field &amp; { aggregateFunction: AggregateFunction }, Remainder</span><span class="s2">]</span>
+                <span class="s0">: ParseFieldAggregation&lt;Remainder&gt;</span>
+              <span class="s0">: </span><span class="s2">[</span><span class="s0">Field, Remainder</span><span class="s2">]</span>
+            <span class="s0">: Parsed</span>
+          <span class="s0">: never</span>
+        <span class="s0">: Parsed</span>
+      <span class="s0">: never</span>
+    <span class="s0">: ParserError&lt;`</span><span class="s4">Expected identifier at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a JSON property accessor of the shape `-&gt;a-&gt;b-&gt;c`. The last accessor in 
+ * the series may convert to text by using the -&gt;&gt; operator instead of -&gt;. 
+ * 
+ * Returns a tuple of [&quot;Last property name&quot;, &quot;Last property type&quot;, &quot;Remainder of text&quot;] 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseJsonAccessor&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = Input </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">-&gt;</span><span class="s0">${infer Remainder}`</span>
+  <span class="s0">? Remainder </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">&gt;</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? ParseIdentifier&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? </span><span class="s2">[</span><span class="s0">Name, '</span><span class="s4">text</span><span class="s0">', EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+      <span class="s0">: ParserError&lt;'</span><span class="s4">Expected property name after `-&gt;&gt;`</span><span class="s0">'&gt;</span>
+    <span class="s0">: ParseIdentifier&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? ParseJsonAccessor&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+          <span class="s0">infer PropertyName,</span>
+          <span class="s0">infer PropertyType,</span>
+          <span class="s0">`${infer Remainder}`,</span>
+        <span class="s2">]</span>
+        <span class="s0">? </span><span class="s2">[</span><span class="s0">PropertyName, PropertyType, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+        <span class="s0">: </span><span class="s2">[</span><span class="s0">Name, '</span><span class="s4">json</span><span class="s0">', EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+      <span class="s0">: ParserError&lt;'</span><span class="s4">Expected property name after `-&gt;`</span><span class="s0">'&gt;</span>
+  <span class="s0">: ParserError&lt;'</span><span class="s4">Expected -&gt;</span><span class="s0">'&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a field typecast (`::type`), returning a tuple of [&quot;Type&quot;, &quot;Remainder of text&quot;]. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseFieldTypeCast&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">EatWhitespace&lt;Input&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">::</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? ParseIdentifier&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">`${infer CastType}`, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? </span><span class="s2">[</span><span class="s0">CastType, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+      <span class="s0">: ParserError&lt;`</span><span class="s4">Invalid type for </span><span class="s5">\`</span><span class="s4">::</span><span class="s5">\` </span><span class="s4">operator at </span><span class="s5">\`</span><span class="s0">${Remainder}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+    <span class="s0">: ParserError&lt;'</span><span class="s4">Expected ::</span><span class="s0">'&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a field aggregation (`.max()`), returning a tuple of [&quot;Aggregate function&quot;, &quot;Remainder of text&quot;] 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseFieldAggregation&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">EatWhitespace&lt;Input&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">.</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? ParseIdentifier&lt;EatWhitespace&lt;Remainder&gt;&gt; </span><span class="s3">extends </span><span class="s2">[</span>
+        <span class="s0">`${infer FunctionName}`,</span>
+        <span class="s0">`${infer Remainder}`,</span>
+      <span class="s2">]</span>
+      <span class="s0">? // </span><span class="s1">Ensure that aggregation function is valid.</span>
+        <span class="s0">FunctionName </span><span class="s3">extends </span><span class="s0">Token.AggregateFunction</span>
+        <span class="s0">? EatWhitespace&lt;Remainder&gt; </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">()</span><span class="s0">${infer Remainder}`</span>
+          <span class="s0">? </span><span class="s2">[</span><span class="s0">FunctionName, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+          <span class="s0">: ParserError&lt;`</span><span class="s4">Expected </span><span class="s5">\`</span><span class="s4">()</span><span class="s5">\` </span><span class="s4">after </span><span class="s5">\`</span><span class="s4">.</span><span class="s5">\` </span><span class="s4">operator </span><span class="s5">\`</span><span class="s0">${FunctionName}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+        <span class="s0">: ParserError&lt;`</span><span class="s4">Invalid type for </span><span class="s5">\`</span><span class="s4">.</span><span class="s5">\` </span><span class="s4">operator </span><span class="s5">\`</span><span class="s0">${FunctionName}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+      <span class="s0">: ParserError&lt;`</span><span class="s4">Invalid type for </span><span class="s5">\`</span><span class="s4">.</span><span class="s5">\` </span><span class="s4">operator at </span><span class="s5">\`</span><span class="s0">${Remainder}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+    <span class="s0">: ParserError&lt;'</span><span class="s4">Expected .</span><span class="s0">'&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parses a (possibly double-quoted) identifier. 
+ * Identifiers are sequences of 1 or more letters. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseIdentifier&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">ParseLetters&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? </span><span class="s2">[</span><span class="s0">Name, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+    <span class="s0">: ParseQuotedLetters&lt;Input&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">infer Name, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? </span><span class="s2">[</span><span class="s0">Name, EatWhitespace&lt;Remainder&gt;</span><span class="s2">]</span>
+      <span class="s0">: ParserError&lt;`</span><span class="s4">No (possibly double-quoted) identifier at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parse a consecutive sequence of 1 or more letter, where letters are `[0-9a-zA-Z_]`. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseLetters&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: ParseLettersHelper&lt;Input, ''&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">`${infer Letters}`, `${infer Remainder}`</span><span class="s2">]</span>
+    <span class="s0">? Letters </span><span class="s3">extends </span><span class="s0">''</span>
+      <span class="s0">? ParserError&lt;`</span><span class="s4">Expected letter at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+      <span class="s0">: </span><span class="s2">[</span><span class="s0">Letters, Remainder</span><span class="s2">]</span>
+    <span class="s0">: ParseLettersHelper&lt;Input, ''&gt;</span>
+
+<span class="s3">type </span><span class="s0">ParseLettersHelper&lt;Input </span><span class="s3">extends </span><span class="s0">string, Acc </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: Input </span><span class="s3">extends </span><span class="s0">`${infer L}${infer Remainder}`</span>
+    <span class="s0">? L </span><span class="s3">extends </span><span class="s0">Token.Letter</span>
+      <span class="s0">? ParseLettersHelper&lt;Remainder, `${Acc}${L}`&gt;</span>
+      <span class="s0">: </span><span class="s2">[</span><span class="s0">Acc, Input</span><span class="s2">]</span>
+    <span class="s0">: </span><span class="s2">[</span><span class="s0">Acc, ''</span><span class="s2">]</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parse a consecutive sequence of 1 or more double-quoted letters, 
+ * where letters are `[^&quot;]`. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">ParseQuotedLetters&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: Input </span><span class="s3">extends </span><span class="s0">`</span><span class="s4">&quot;</span><span class="s0">${infer Remainder}`</span>
+    <span class="s0">? ParseQuotedLettersHelper&lt;Remainder, ''&gt; </span><span class="s3">extends </span><span class="s2">[</span><span class="s0">`${infer Letters}`, `${infer Remainder}`</span><span class="s2">]</span>
+      <span class="s0">? Letters </span><span class="s3">extends </span><span class="s0">''</span>
+        <span class="s0">? ParserError&lt;`</span><span class="s4">Expected string at </span><span class="s5">\`</span><span class="s0">${Remainder}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+        <span class="s0">: </span><span class="s2">[</span><span class="s0">Letters, Remainder</span><span class="s2">]</span>
+      <span class="s0">: ParseQuotedLettersHelper&lt;Remainder, ''&gt;</span>
+    <span class="s0">: ParserError&lt;`</span><span class="s4">Not a double-quoted string at </span><span class="s5">\`</span><span class="s0">${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s3">type </span><span class="s0">ParseQuotedLettersHelper&lt;Input </span><span class="s3">extends </span><span class="s0">string, Acc </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: Input </span><span class="s3">extends </span><span class="s0">`${infer L}${infer Remainder}`</span>
+    <span class="s0">? L </span><span class="s3">extends </span><span class="s0">'</span><span class="s4">&quot;</span><span class="s0">'</span>
+      <span class="s0">? </span><span class="s2">[</span><span class="s0">Acc, Remainder</span><span class="s2">]</span>
+      <span class="s0">: ParseQuotedLettersHelper&lt;Remainder, `${Acc}${L}`&gt;</span>
+    <span class="s0">: ParserError&lt;`</span><span class="s4">Missing closing double-quote in </span><span class="s5">\`</span><span class="s4">&quot;</span><span class="s0">${Acc}${Input}</span><span class="s5">\`</span><span class="s0">`&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Trims whitespace from the left of the input. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">EatWhitespace&lt;Input </span><span class="s3">extends </span><span class="s0">string&gt; = string </span><span class="s3">extends </span><span class="s0">Input</span>
+  <span class="s0">? GenericStringError</span>
+  <span class="s0">: Input </span><span class="s3">extends </span><span class="s0">`${Token.Whitespace}${infer Remainder}`</span>
+    <span class="s0">? EatWhitespace&lt;Remainder&gt;</span>
+    <span class="s0">: Input</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Creates a new </span><span class="s0">{@</span><span class="s3">link </span><span class="s0">ParserError} </span><span class="s1">if the given input is not already a parser error. 
+ </span><span class="s0">*/</span>
+<span class="s3">type </span><span class="s0">CreateParserErrorIfRequired&lt;Input, Message </span><span class="s3">extends </span><span class="s0">string&gt; =</span>
+  <span class="s0">Input </span><span class="s3">extends </span><span class="s0">ParserError&lt;string&gt; ? Input : ParserError&lt;Message&gt;</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Parser errors. 
+ </span><span class="s0">*/</span>
+<span class="s3">export type </span><span class="s0">ParserError&lt;Message </span><span class="s3">extends </span><span class="s0">string&gt; = { error: true } &amp; Message</span>
+<span class="s3">type </span><span class="s0">GenericStringError = ParserError&lt;'</span><span class="s4">Received a generic string</span><span class="s0">'&gt;</span>
+
+<span class="s3">export namespace </span><span class="s0">Ast {</span>
+  <span class="s3">export type </span><span class="s0">Node = FieldNode | StarNode | SpreadNode</span>
+
+  <span class="s3">export type </span><span class="s0">FieldNode = {</span>
+    <span class="s0">type: '</span><span class="s4">field</span><span class="s0">'</span>
+    <span class="s0">name: string</span>
+    <span class="s0">alias?: string</span>
+    <span class="s0">hint?: string</span>
+    <span class="s0">innerJoin?: true</span>
+    <span class="s0">castType?: string</span>
+    <span class="s0">jsonPath?: string</span>
+    <span class="s0">aggregateFunction?: Token.AggregateFunction</span>
+    <span class="s0">children?: Node</span><span class="s2">[]</span>
+  <span class="s0">}</span>
+
+  <span class="s3">export type </span><span class="s0">StarNode = {</span>
+    <span class="s0">type: '</span><span class="s4">star</span><span class="s0">'</span>
+  <span class="s0">}</span>
+
+  <span class="s3">export type </span><span class="s0">SpreadNode = {</span>
+    <span class="s0">type: '</span><span class="s4">spread</span><span class="s0">'</span>
+    <span class="s0">target: FieldNode &amp; { children: Node</span><span class="s2">[] </span><span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s3">namespace </span><span class="s0">Token {</span>
+  <span class="s3">export type </span><span class="s0">Whitespace = ' ' | '</span><span class="s5">\n</span><span class="s0">' | '</span><span class="s5">\t</span><span class="s0">'</span>
+
+  <span class="s3">type </span><span class="s0">LowerAlphabet =</span>
+    <span class="s0">| '</span><span class="s4">a</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">b</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">c</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">d</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">e</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">f</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">g</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">h</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">i</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">j</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">k</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">l</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">m</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">n</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">o</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">p</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">q</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">r</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">s</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">t</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">u</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">v</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">w</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">x</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">y</span><span class="s0">'</span>
+    <span class="s0">| '</span><span class="s4">z</span><span class="s0">'</span>
+
+  <span class="s3">type </span><span class="s0">Alphabet = LowerAlphabet | Uppercase&lt;LowerAlphabet&gt;</span>
+
+  <span class="s3">type </span><span class="s0">Digit = '</span><span class="s4">1</span><span class="s0">' | '</span><span class="s4">2</span><span class="s0">' | '</span><span class="s4">3</span><span class="s0">' | '</span><span class="s4">4</span><span class="s0">' | '</span><span class="s4">5</span><span class="s0">' | '</span><span class="s4">6</span><span class="s0">' | '</span><span class="s4">7</span><span class="s0">' | '</span><span class="s4">8</span><span class="s0">' | '</span><span class="s4">9</span><span class="s0">' | '</span><span class="s4">0</span><span class="s0">'</span>
+
+  <span class="s3">export type </span><span class="s0">Letter = Alphabet | Digit | '</span><span class="s4">_</span><span class="s0">'</span>
+
+  <span class="s3">export type </span><span class="s0">AggregateFunction = '</span><span class="s4">count</span><span class="s0">' | '</span><span class="s4">sum</span><span class="s0">' | '</span><span class="s4">avg</span><span class="s0">' | '</span><span class="s4">min</span><span class="s0">' | '</span><span class="s4">max</span><span class="s0">'</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

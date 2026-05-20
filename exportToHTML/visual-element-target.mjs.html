@@ -1,0 +1,124 @@
+<html>
+<head>
+<title>visual-element-target.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+visual-element-target.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ getValueTransition } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/get-value-transition.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ resolveTransition } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/resolve-transition.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ positionalKeys } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../render/utils/keys-position.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ setTarget } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../render/utils/setters.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ addValueToWillChange } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../value/will-change/add-will-change.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getOptimisedAppearId } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../optimized-appear/get-appear-id.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ animateMotionValue } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./motion-value.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../frameloop/frame.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Decide whether we should block this animation. Previously, we achieved this 
+ * just by checking whether the key was listed in protectedKeys, but this 
+ * posed problems if an animation was triggered by afterChildren and protectedKeys 
+ * had been set to true in the meantime. 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">shouldBlockAnimation</span><span class="s2">({ protectedKeys, needsAnimating }, key) {</span>
+    <span class="s0">const </span><span class="s2">shouldBlock = protectedKeys.</span><span class="s5">hasOwnProperty</span><span class="s1">(</span><span class="s2">key</span><span class="s1">) </span><span class="s2">&amp;&amp; needsAnimating</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">!== </span><span class="s6">true</span><span class="s2">;</span>
+    <span class="s2">needsAnimating</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s6">false</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">shouldBlock;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">animateTarget</span><span class="s2">(visualElement, targetAndTransition, { delay = </span><span class="s7">0</span><span class="s2">, transitionOverride, type } = {}) {</span>
+    <span class="s0">let </span><span class="s2">{ transition, transitionEnd, ...target } = targetAndTransition;</span>
+    <span class="s0">const </span><span class="s2">defaultTransition = visualElement.</span><span class="s5">getDefaultTransition</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">transition = transition</span>
+        <span class="s2">? </span><span class="s5">resolveTransition</span><span class="s1">(</span><span class="s2">transition, defaultTransition</span><span class="s1">)</span>
+        <span class="s2">: defaultTransition;</span>
+    <span class="s0">const </span><span class="s2">reduceMotion = transition?.reduceMotion;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transitionOverride</span><span class="s1">)</span>
+        <span class="s2">transition = transitionOverride;</span>
+    <span class="s0">const </span><span class="s2">animations = </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">animationTypeState = type &amp;&amp;</span>
+        <span class="s2">visualElement.animationState &amp;&amp;</span>
+        <span class="s2">visualElement.animationState.</span><span class="s5">getState</span><span class="s1">()[</span><span class="s2">type</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in target</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">value = visualElement.</span><span class="s5">getValue</span><span class="s1">(</span><span class="s2">key, visualElement.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">?? </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">valueTarget = target</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">valueTarget === </span><span class="s6">undefined </span><span class="s2">||</span>
+            <span class="s1">(</span><span class="s2">animationTypeState &amp;&amp;</span>
+                <span class="s5">shouldBlockAnimation</span><span class="s1">(</span><span class="s2">animationTypeState, key</span><span class="s1">))) </span><span class="s2">{</span>
+            <span class="s0">continue</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">valueTransition = {</span>
+            <span class="s2">delay,</span>
+            <span class="s2">...</span><span class="s5">getValueTransition</span><span class="s1">(</span><span class="s2">transition || {}, key</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s2">};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If the value is already at the defined target, skip the animation. 
+         * We still re-assert the value via frame.update to take precedence 
+         * over any stale transitionEnd callbacks from previous animations. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">currentValue = value.</span><span class="s5">get</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">currentValue !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">!value.</span><span class="s5">isAnimating</span><span class="s1">() </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">!Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">valueTarget</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">valueTarget === currentValue &amp;&amp;</span>
+            <span class="s2">!valueTransition.velocity</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">frame.</span><span class="s5">update</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">value.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">valueTarget</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s0">continue</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If this is the first time a value is being animated, check 
+         * to see if we're handling off from an existing animation. 
+         </span><span class="s2">*/</span>
+        <span class="s0">let </span><span class="s2">isHandoff = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">window.MotionHandoffAnimation</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">appearId = </span><span class="s5">getOptimisedAppearId</span><span class="s1">(</span><span class="s2">visualElement</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">appearId</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">startTime = window.</span><span class="s5">MotionHandoffAnimation</span><span class="s1">(</span><span class="s2">appearId, key, frame</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">startTime !== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">valueTransition.startTime = startTime;</span>
+                    <span class="s2">isHandoff = </span><span class="s6">true</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s5">addValueToWillChange</span><span class="s1">(</span><span class="s2">visualElement, key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">shouldReduceMotion = reduceMotion ?? visualElement.shouldReduceMotion;</span>
+        <span class="s2">value.</span><span class="s5">start</span><span class="s1">(</span><span class="s5">animateMotionValue</span><span class="s1">(</span><span class="s2">key, value, valueTarget, shouldReduceMotion &amp;&amp; positionalKeys.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span>
+            <span class="s2">? { </span><span class="s1">type</span><span class="s2">: </span><span class="s6">false </span><span class="s2">}</span>
+            <span class="s2">: valueTransition, visualElement, isHandoff</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">animation = value.animation;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">animation</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">animations.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transitionEnd</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s5">applyTransitionEnd </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">frame.</span><span class="s5">update</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">transitionEnd &amp;&amp; </span><span class="s5">setTarget</span><span class="s1">(</span><span class="s2">visualElement, transitionEnd</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">animations.</span><span class="s1">length) </span><span class="s2">{</span>
+            <span class="s1">Promise</span><span class="s2">.</span><span class="s5">all</span><span class="s1">(</span><span class="s2">animations</span><span class="s1">)</span><span class="s2">.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">applyTransitionEnd</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s5">applyTransitionEnd</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">animations;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ animateTarget };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=visual-element-target.mjs.map</span>
+</pre>
+</body>
+</html>

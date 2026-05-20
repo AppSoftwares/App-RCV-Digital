@@ -1,0 +1,469 @@
+<html>
+<head>
+<title>graceful-fs.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+graceful-fs.js</font>
+</center></td></tr></table>
+<pre><span class="s0">var </span><span class="s1">fs = require(</span><span class="s2">'fs'</span><span class="s1">)</span>
+<span class="s0">var </span><span class="s1">polyfills = require(</span><span class="s2">'./polyfills.js'</span><span class="s1">)</span>
+<span class="s0">var </span><span class="s1">legacy = require(</span><span class="s2">'./legacy-streams.js'</span><span class="s1">)</span>
+<span class="s0">var </span><span class="s1">clone = require(</span><span class="s2">'./clone.js'</span><span class="s1">)</span>
+
+<span class="s0">var </span><span class="s1">util = require(</span><span class="s2">'util'</span><span class="s1">)</span>
+
+<span class="s3">/* istanbul ignore next - node 0.x polyfill */</span>
+<span class="s0">var </span><span class="s1">gracefulQueue</span>
+<span class="s0">var </span><span class="s1">previousSymbol</span>
+
+<span class="s3">/* istanbul ignore else - node 0.x polyfill */</span>
+<span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">Symbol === </span><span class="s2">'function' </span><span class="s1">&amp;&amp; </span><span class="s0">typeof </span><span class="s1">Symbol.</span><span class="s0">for </span><span class="s1">=== </span><span class="s2">'function'</span><span class="s1">) {</span>
+  <span class="s1">gracefulQueue = Symbol.</span><span class="s0">for</span><span class="s1">(</span><span class="s2">'graceful-fs.queue'</span><span class="s1">)</span>
+  <span class="s3">// This is used in testing by future versions</span>
+  <span class="s1">previousSymbol = Symbol.</span><span class="s0">for</span><span class="s1">(</span><span class="s2">'graceful-fs.previous'</span><span class="s1">)</span>
+<span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+  <span class="s1">gracefulQueue = </span><span class="s2">'___graceful-fs.queue'</span>
+  <span class="s1">previousSymbol = </span><span class="s2">'___graceful-fs.previous'</span>
+<span class="s1">}</span>
+
+<span class="s0">function </span><span class="s1">noop () {}</span>
+
+<span class="s0">function </span><span class="s1">publishQueue(context, queue) {</span>
+  <span class="s1">Object.defineProperty(context, gracefulQueue, {</span>
+    <span class="s1">get: </span><span class="s0">function</span><span class="s1">() {</span>
+      <span class="s0">return </span><span class="s1">queue</span>
+    <span class="s1">}</span>
+  <span class="s1">})</span>
+<span class="s1">}</span>
+
+<span class="s0">var </span><span class="s1">debug = noop</span>
+<span class="s0">if </span><span class="s1">(util.debuglog)</span>
+  <span class="s1">debug = util.debuglog(</span><span class="s2">'gfs4'</span><span class="s1">)</span>
+<span class="s0">else if </span><span class="s1">(/\bgfs4\b/i.test(process.env.NODE_DEBUG || </span><span class="s2">''</span><span class="s1">))</span>
+  <span class="s1">debug = </span><span class="s0">function</span><span class="s1">() {</span>
+    <span class="s0">var </span><span class="s1">m = util.format.apply(util, arguments)</span>
+    <span class="s1">m = </span><span class="s2">'GFS4: ' </span><span class="s1">+ m.split(/\n/).join(</span><span class="s2">'</span><span class="s0">\n</span><span class="s2">GFS4: '</span><span class="s1">)</span>
+    <span class="s1">console.error(m)</span>
+  <span class="s1">}</span>
+
+<span class="s3">// Once time initialization</span>
+<span class="s0">if </span><span class="s1">(!fs[gracefulQueue]) {</span>
+  <span class="s3">// This queue can be shared by multiple loaded instances</span>
+  <span class="s0">var </span><span class="s1">queue = global[gracefulQueue] || []</span>
+  <span class="s1">publishQueue(fs, queue)</span>
+
+  <span class="s3">// Patch fs.close/closeSync to shared queue version, because we need</span>
+  <span class="s3">// to retry() whenever a close happens *anywhere* in the program.</span>
+  <span class="s3">// This is essential when multiple graceful-fs instances are</span>
+  <span class="s3">// in play at the same time.</span>
+  <span class="s1">fs.close = (</span><span class="s0">function </span><span class="s1">(fs$close) {</span>
+    <span class="s0">function </span><span class="s1">close (fd, cb) {</span>
+      <span class="s0">return </span><span class="s1">fs$close.call(fs, fd, </span><span class="s0">function </span><span class="s1">(err) {</span>
+        <span class="s3">// This function uses the graceful-fs shared queue</span>
+        <span class="s0">if </span><span class="s1">(!err) {</span>
+          <span class="s1">resetQueue()</span>
+        <span class="s1">}</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+          <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s1">Object.defineProperty(close, previousSymbol, {</span>
+      <span class="s1">value: fs$close</span>
+    <span class="s1">})</span>
+    <span class="s0">return </span><span class="s1">close</span>
+  <span class="s1">})(fs.close)</span>
+
+  <span class="s1">fs.closeSync = (</span><span class="s0">function </span><span class="s1">(fs$closeSync) {</span>
+    <span class="s0">function </span><span class="s1">closeSync (fd) {</span>
+      <span class="s3">// This function uses the graceful-fs shared queue</span>
+      <span class="s1">fs$closeSync.apply(fs, arguments)</span>
+      <span class="s1">resetQueue()</span>
+    <span class="s1">}</span>
+
+    <span class="s1">Object.defineProperty(closeSync, previousSymbol, {</span>
+      <span class="s1">value: fs$closeSync</span>
+    <span class="s1">})</span>
+    <span class="s0">return </span><span class="s1">closeSync</span>
+  <span class="s1">})(fs.closeSync)</span>
+
+  <span class="s0">if </span><span class="s1">(/\bgfs4\b/i.test(process.env.NODE_DEBUG || </span><span class="s2">''</span><span class="s1">)) {</span>
+    <span class="s1">process.on(</span><span class="s2">'exit'</span><span class="s1">, </span><span class="s0">function</span><span class="s1">() {</span>
+      <span class="s1">debug(fs[gracefulQueue])</span>
+      <span class="s1">require(</span><span class="s2">'assert'</span><span class="s1">).equal(fs[gracefulQueue].length, </span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">if </span><span class="s1">(!global[gracefulQueue]) {</span>
+  <span class="s1">publishQueue(global, fs[gracefulQueue]);</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = patch(clone(fs))</span>
+<span class="s0">if </span><span class="s1">(process.env.TEST_GRACEFUL_FS_GLOBAL_PATCH &amp;&amp; !fs.__patched) {</span>
+    <span class="s1">module.exports = patch(fs)</span>
+    <span class="s1">fs.__patched = </span><span class="s0">true</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">function </span><span class="s1">patch (fs) {</span>
+  <span class="s3">// Everything that references the open() function needs to be in here</span>
+  <span class="s1">polyfills(fs)</span>
+  <span class="s1">fs.gracefulify = patch</span>
+
+  <span class="s1">fs.createReadStream = createReadStream</span>
+  <span class="s1">fs.createWriteStream = createWriteStream</span>
+  <span class="s0">var </span><span class="s1">fs$readFile = fs.readFile</span>
+  <span class="s1">fs.readFile = readFile</span>
+  <span class="s0">function </span><span class="s1">readFile (path, options, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb = options, options = </span><span class="s0">null</span>
+
+    <span class="s0">return </span><span class="s1">go$readFile(path, options, cb)</span>
+
+    <span class="s0">function </span><span class="s1">go$readFile (path, options, cb, startTime) {</span>
+      <span class="s0">return </span><span class="s1">fs$readFile(path, options, </span><span class="s0">function </span><span class="s1">(err) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([go$readFile, [path, options, cb], err, startTime || Date.now(), Date.now()])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$writeFile = fs.writeFile</span>
+  <span class="s1">fs.writeFile = writeFile</span>
+  <span class="s0">function </span><span class="s1">writeFile (path, data, options, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb = options, options = </span><span class="s0">null</span>
+
+    <span class="s0">return </span><span class="s1">go$writeFile(path, data, options, cb)</span>
+
+    <span class="s0">function </span><span class="s1">go$writeFile (path, data, options, cb, startTime) {</span>
+      <span class="s0">return </span><span class="s1">fs$writeFile(path, data, options, </span><span class="s0">function </span><span class="s1">(err) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([go$writeFile, [path, data, options, cb], err, startTime || Date.now(), Date.now()])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$appendFile = fs.appendFile</span>
+  <span class="s0">if </span><span class="s1">(fs$appendFile)</span>
+    <span class="s1">fs.appendFile = appendFile</span>
+  <span class="s0">function </span><span class="s1">appendFile (path, data, options, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb = options, options = </span><span class="s0">null</span>
+
+    <span class="s0">return </span><span class="s1">go$appendFile(path, data, options, cb)</span>
+
+    <span class="s0">function </span><span class="s1">go$appendFile (path, data, options, cb, startTime) {</span>
+      <span class="s0">return </span><span class="s1">fs$appendFile(path, data, options, </span><span class="s0">function </span><span class="s1">(err) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([go$appendFile, [path, data, options, cb], err, startTime || Date.now(), Date.now()])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$copyFile = fs.copyFile</span>
+  <span class="s0">if </span><span class="s1">(fs$copyFile)</span>
+    <span class="s1">fs.copyFile = copyFile</span>
+  <span class="s0">function </span><span class="s1">copyFile (src, dest, flags, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">flags === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = flags</span>
+      <span class="s1">flags = </span><span class="s4">0</span>
+    <span class="s1">}</span>
+    <span class="s0">return </span><span class="s1">go$copyFile(src, dest, flags, cb)</span>
+
+    <span class="s0">function </span><span class="s1">go$copyFile (src, dest, flags, cb, startTime) {</span>
+      <span class="s0">return </span><span class="s1">fs$copyFile(src, dest, flags, </span><span class="s0">function </span><span class="s1">(err) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([go$copyFile, [src, dest, flags, cb], err, startTime || Date.now(), Date.now()])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$readdir = fs.readdir</span>
+  <span class="s1">fs.readdir = readdir</span>
+  <span class="s0">var </span><span class="s1">noReaddirOptionVersions = /^v[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">5</span><span class="s1">]\./</span>
+  <span class="s0">function </span><span class="s1">readdir (path, options, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb = options, options = </span><span class="s0">null</span>
+
+    <span class="s0">var </span><span class="s1">go$readdir = noReaddirOptionVersions.test(process.version)</span>
+      <span class="s1">? </span><span class="s0">function </span><span class="s1">go$readdir (path, options, cb, startTime) {</span>
+        <span class="s0">return </span><span class="s1">fs$readdir(path, fs$readdirCallback(</span>
+          <span class="s1">path, options, cb, startTime</span>
+        <span class="s1">))</span>
+      <span class="s1">}</span>
+      <span class="s1">: </span><span class="s0">function </span><span class="s1">go$readdir (path, options, cb, startTime) {</span>
+        <span class="s0">return </span><span class="s1">fs$readdir(path, options, fs$readdirCallback(</span>
+          <span class="s1">path, options, cb, startTime</span>
+        <span class="s1">))</span>
+      <span class="s1">}</span>
+
+    <span class="s0">return </span><span class="s1">go$readdir(path, options, cb)</span>
+
+    <span class="s0">function </span><span class="s1">fs$readdirCallback (path, options, cb, startTime) {</span>
+      <span class="s0">return function </span><span class="s1">(err, files) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([</span>
+            <span class="s1">go$readdir,</span>
+            <span class="s1">[path, options, cb],</span>
+            <span class="s1">err,</span>
+            <span class="s1">startTime || Date.now(),</span>
+            <span class="s1">Date.now()</span>
+          <span class="s1">])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(files &amp;&amp; files.sort)</span>
+            <span class="s1">files.sort()</span>
+
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.call(</span><span class="s0">this</span><span class="s1">, err, files)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">if </span><span class="s1">(process.version.substr(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">4</span><span class="s1">) === </span><span class="s2">'v0.8'</span><span class="s1">) {</span>
+    <span class="s0">var </span><span class="s1">legStreams = legacy(fs)</span>
+    <span class="s1">ReadStream = legStreams.ReadStream</span>
+    <span class="s1">WriteStream = legStreams.WriteStream</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$ReadStream = fs.ReadStream</span>
+  <span class="s0">if </span><span class="s1">(fs$ReadStream) {</span>
+    <span class="s1">ReadStream.prototype = Object.create(fs$ReadStream.prototype)</span>
+    <span class="s1">ReadStream.prototype.open = ReadStream$open</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$WriteStream = fs.WriteStream</span>
+  <span class="s0">if </span><span class="s1">(fs$WriteStream) {</span>
+    <span class="s1">WriteStream.prototype = Object.create(fs$WriteStream.prototype)</span>
+    <span class="s1">WriteStream.prototype.open = WriteStream$open</span>
+  <span class="s1">}</span>
+
+  <span class="s1">Object.defineProperty(fs, </span><span class="s2">'ReadStream'</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s0">function </span><span class="s1">() {</span>
+      <span class="s0">return </span><span class="s1">ReadStream</span>
+    <span class="s1">},</span>
+    <span class="s1">set: </span><span class="s0">function </span><span class="s1">(val) {</span>
+      <span class="s1">ReadStream = val</span>
+    <span class="s1">},</span>
+    <span class="s1">enumerable: </span><span class="s0">true</span><span class="s1">,</span>
+    <span class="s1">configurable: </span><span class="s0">true</span>
+  <span class="s1">})</span>
+  <span class="s1">Object.defineProperty(fs, </span><span class="s2">'WriteStream'</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s0">function </span><span class="s1">() {</span>
+      <span class="s0">return </span><span class="s1">WriteStream</span>
+    <span class="s1">},</span>
+    <span class="s1">set: </span><span class="s0">function </span><span class="s1">(val) {</span>
+      <span class="s1">WriteStream = val</span>
+    <span class="s1">},</span>
+    <span class="s1">enumerable: </span><span class="s0">true</span><span class="s1">,</span>
+    <span class="s1">configurable: </span><span class="s0">true</span>
+  <span class="s1">})</span>
+
+  <span class="s3">// legacy names</span>
+  <span class="s0">var </span><span class="s1">FileReadStream = ReadStream</span>
+  <span class="s1">Object.defineProperty(fs, </span><span class="s2">'FileReadStream'</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s0">function </span><span class="s1">() {</span>
+      <span class="s0">return </span><span class="s1">FileReadStream</span>
+    <span class="s1">},</span>
+    <span class="s1">set: </span><span class="s0">function </span><span class="s1">(val) {</span>
+      <span class="s1">FileReadStream = val</span>
+    <span class="s1">},</span>
+    <span class="s1">enumerable: </span><span class="s0">true</span><span class="s1">,</span>
+    <span class="s1">configurable: </span><span class="s0">true</span>
+  <span class="s1">})</span>
+  <span class="s0">var </span><span class="s1">FileWriteStream = WriteStream</span>
+  <span class="s1">Object.defineProperty(fs, </span><span class="s2">'FileWriteStream'</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s0">function </span><span class="s1">() {</span>
+      <span class="s0">return </span><span class="s1">FileWriteStream</span>
+    <span class="s1">},</span>
+    <span class="s1">set: </span><span class="s0">function </span><span class="s1">(val) {</span>
+      <span class="s1">FileWriteStream = val</span>
+    <span class="s1">},</span>
+    <span class="s1">enumerable: </span><span class="s0">true</span><span class="s1">,</span>
+    <span class="s1">configurable: </span><span class="s0">true</span>
+  <span class="s1">})</span>
+
+  <span class="s0">function </span><span class="s1">ReadStream (path, options) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this instanceof </span><span class="s1">ReadStream)</span>
+      <span class="s0">return </span><span class="s1">fs$ReadStream.apply(</span><span class="s0">this</span><span class="s1">, arguments), </span><span class="s0">this</span>
+    <span class="s0">else</span>
+      <span class="s0">return </span><span class="s1">ReadStream.apply(Object.create(ReadStream.prototype), arguments)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">ReadStream$open () {</span>
+    <span class="s0">var </span><span class="s1">that = </span><span class="s0">this</span>
+    <span class="s1">open(that.path, that.flags, that.mode, </span><span class="s0">function </span><span class="s1">(err, fd) {</span>
+      <span class="s0">if </span><span class="s1">(err) {</span>
+        <span class="s0">if </span><span class="s1">(that.autoClose)</span>
+          <span class="s1">that.destroy()</span>
+
+        <span class="s1">that.emit(</span><span class="s2">'error'</span><span class="s1">, err)</span>
+      <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+        <span class="s1">that.fd = fd</span>
+        <span class="s1">that.emit(</span><span class="s2">'open'</span><span class="s1">, fd)</span>
+        <span class="s1">that.read()</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">WriteStream (path, options) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this instanceof </span><span class="s1">WriteStream)</span>
+      <span class="s0">return </span><span class="s1">fs$WriteStream.apply(</span><span class="s0">this</span><span class="s1">, arguments), </span><span class="s0">this</span>
+    <span class="s0">else</span>
+      <span class="s0">return </span><span class="s1">WriteStream.apply(Object.create(WriteStream.prototype), arguments)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">WriteStream$open () {</span>
+    <span class="s0">var </span><span class="s1">that = </span><span class="s0">this</span>
+    <span class="s1">open(that.path, that.flags, that.mode, </span><span class="s0">function </span><span class="s1">(err, fd) {</span>
+      <span class="s0">if </span><span class="s1">(err) {</span>
+        <span class="s1">that.destroy()</span>
+        <span class="s1">that.emit(</span><span class="s2">'error'</span><span class="s1">, err)</span>
+      <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+        <span class="s1">that.fd = fd</span>
+        <span class="s1">that.emit(</span><span class="s2">'open'</span><span class="s1">, fd)</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">createReadStream (path, options) {</span>
+    <span class="s0">return new </span><span class="s1">fs.ReadStream(path, options)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">createWriteStream (path, options) {</span>
+    <span class="s0">return new </span><span class="s1">fs.WriteStream(path, options)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">fs$open = fs.open</span>
+  <span class="s1">fs.open = open</span>
+  <span class="s0">function </span><span class="s1">open (path, flags, mode, cb) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">mode === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb = mode, mode = </span><span class="s0">null</span>
+
+    <span class="s0">return </span><span class="s1">go$open(path, flags, mode, cb)</span>
+
+    <span class="s0">function </span><span class="s1">go$open (path, flags, mode, cb, startTime) {</span>
+      <span class="s0">return </span><span class="s1">fs$open(path, flags, mode, </span><span class="s0">function </span><span class="s1">(err, fd) {</span>
+        <span class="s0">if </span><span class="s1">(err &amp;&amp; (err.code === </span><span class="s2">'EMFILE' </span><span class="s1">|| err.code === </span><span class="s2">'ENFILE'</span><span class="s1">))</span>
+          <span class="s1">enqueue([go$open, [path, flags, mode, cb], err, startTime || Date.now(), Date.now()])</span>
+        <span class="s0">else </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+            <span class="s1">cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">return </span><span class="s1">fs</span>
+<span class="s1">}</span>
+
+<span class="s0">function </span><span class="s1">enqueue (elem) {</span>
+  <span class="s1">debug(</span><span class="s2">'ENQUEUE'</span><span class="s1">, elem[</span><span class="s4">0</span><span class="s1">].name, elem[</span><span class="s4">1</span><span class="s1">])</span>
+  <span class="s1">fs[gracefulQueue].push(elem)</span>
+  <span class="s1">retry()</span>
+<span class="s1">}</span>
+
+<span class="s3">// keep track of the timeout between retry() calls</span>
+<span class="s0">var </span><span class="s1">retryTimer</span>
+
+<span class="s3">// reset the startTime and lastTime to now</span>
+<span class="s3">// this resets the start of the 60 second overall timeout as well as the</span>
+<span class="s3">// delay between attempts so that we'll retry these jobs sooner</span>
+<span class="s0">function </span><span class="s1">resetQueue () {</span>
+  <span class="s0">var </span><span class="s1">now = Date.now()</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; fs[gracefulQueue].length; ++i) {</span>
+    <span class="s3">// entries that are only a length of 2 are from an older version, don't</span>
+    <span class="s3">// bother modifying those since they'll be retried anyway.</span>
+    <span class="s0">if </span><span class="s1">(fs[gracefulQueue][i].length &gt; </span><span class="s4">2</span><span class="s1">) {</span>
+      <span class="s1">fs[gracefulQueue][i][</span><span class="s4">3</span><span class="s1">] = now </span><span class="s3">// startTime</span>
+      <span class="s1">fs[gracefulQueue][i][</span><span class="s4">4</span><span class="s1">] = now </span><span class="s3">// lastTime</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">// call retry to make sure we're actively processing the queue</span>
+  <span class="s1">retry()</span>
+<span class="s1">}</span>
+
+<span class="s0">function </span><span class="s1">retry () {</span>
+  <span class="s3">// clear the timer and remove it to help prevent unintended concurrency</span>
+  <span class="s1">clearTimeout(retryTimer)</span>
+  <span class="s1">retryTimer = undefined</span>
+
+  <span class="s0">if </span><span class="s1">(fs[gracefulQueue].length === </span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s0">return</span>
+
+  <span class="s0">var </span><span class="s1">elem = fs[gracefulQueue].shift()</span>
+  <span class="s0">var </span><span class="s1">fn = elem[</span><span class="s4">0</span><span class="s1">]</span>
+  <span class="s0">var </span><span class="s1">args = elem[</span><span class="s4">1</span><span class="s1">]</span>
+  <span class="s3">// these items may be unset if they were added by an older graceful-fs</span>
+  <span class="s0">var </span><span class="s1">err = elem[</span><span class="s4">2</span><span class="s1">]</span>
+  <span class="s0">var </span><span class="s1">startTime = elem[</span><span class="s4">3</span><span class="s1">]</span>
+  <span class="s0">var </span><span class="s1">lastTime = elem[</span><span class="s4">4</span><span class="s1">]</span>
+
+  <span class="s3">// if we don't have a startTime we have no way of knowing if we've waited</span>
+  <span class="s3">// long enough, so go ahead and retry this item now</span>
+  <span class="s0">if </span><span class="s1">(startTime === undefined) {</span>
+    <span class="s1">debug(</span><span class="s2">'RETRY'</span><span class="s1">, fn.name, args)</span>
+    <span class="s1">fn.apply(</span><span class="s0">null</span><span class="s1">, args)</span>
+  <span class="s1">} </span><span class="s0">else if </span><span class="s1">(Date.now() - startTime &gt;= </span><span class="s4">60000</span><span class="s1">) {</span>
+    <span class="s3">// it's been more than 60 seconds total, bail now</span>
+    <span class="s1">debug(</span><span class="s2">'TIMEOUT'</span><span class="s1">, fn.name, args)</span>
+    <span class="s0">var </span><span class="s1">cb = args.pop()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">cb === </span><span class="s2">'function'</span><span class="s1">)</span>
+      <span class="s1">cb.call(</span><span class="s0">null</span><span class="s1">, err)</span>
+  <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+    <span class="s3">// the amount of time between the last attempt and right now</span>
+    <span class="s0">var </span><span class="s1">sinceAttempt = Date.now() - lastTime</span>
+    <span class="s3">// the amount of time between when we first tried, and when we last tried</span>
+    <span class="s3">// rounded up to at least 1</span>
+    <span class="s0">var </span><span class="s1">sinceStart = Math.max(lastTime - startTime, </span><span class="s4">1</span><span class="s1">)</span>
+    <span class="s3">// backoff. wait longer than the total time we've been retrying, but only</span>
+    <span class="s3">// up to a maximum of 100ms</span>
+    <span class="s0">var </span><span class="s1">desiredDelay = Math.min(sinceStart * </span><span class="s4">1.2</span><span class="s1">, </span><span class="s4">100</span><span class="s1">)</span>
+    <span class="s3">// it's been long enough since the last retry, do it again</span>
+    <span class="s0">if </span><span class="s1">(sinceAttempt &gt;= desiredDelay) {</span>
+      <span class="s1">debug(</span><span class="s2">'RETRY'</span><span class="s1">, fn.name, args)</span>
+      <span class="s1">fn.apply(</span><span class="s0">null</span><span class="s1">, args.concat([startTime]))</span>
+    <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+      <span class="s3">// if we can't do this job yet, push it to the end of the queue</span>
+      <span class="s3">// and let the next iteration check again</span>
+      <span class="s1">fs[gracefulQueue].push(elem)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// schedule our next run if one isn't already scheduled</span>
+  <span class="s0">if </span><span class="s1">(retryTimer === undefined) {</span>
+    <span class="s1">retryTimer = setTimeout(retry, </span><span class="s4">0</span><span class="s1">)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

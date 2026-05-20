@@ -1,0 +1,361 @@
+<html>
+<head>
+<title>locks.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+locks.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import { supportsLocalStorage } from </span><span class="s1">'./helpers'</span><span class="s0">;</span>
+<span class="s2">/** 
+ * @experimental 
+ */</span>
+<span class="s0">export const internals = {</span>
+    <span class="s2">/** 
+     * @experimental 
+     */</span>
+    <span class="s0">debug: !!(globalThis &amp;&amp;</span>
+        <span class="s0">supportsLocalStorage() &amp;&amp;</span>
+        <span class="s0">globalThis.localStorage &amp;&amp;</span>
+        <span class="s0">globalThis.localStorage.getItem(</span><span class="s1">'supabase.gotrue-js.locks.debug'</span><span class="s0">) === </span><span class="s1">'true'</span><span class="s0">),</span>
+<span class="s0">};</span>
+<span class="s2">/** 
+ * An error thrown when a lock cannot be acquired after some amount of time. 
+ * 
+ * Use the {@link #isAcquireTimeout} property instead of checking with `instanceof`. 
+ * 
+ * @example 
+ * ```ts 
+ * import { LockAcquireTimeoutError } from '@supabase/auth-js' 
+ * 
+ * class CustomLockError extends LockAcquireTimeoutError { 
+ *   constructor() { 
+ *     super('Lock timed out') 
+ *   } 
+ * } 
+ * ``` 
+ */</span>
+<span class="s0">export class LockAcquireTimeoutError extends Error {</span>
+    <span class="s0">constructor(message) {</span>
+        <span class="s0">super(message);</span>
+        <span class="s3">this</span><span class="s0">.isAcquireTimeout = </span><span class="s3">true</span><span class="s0">;</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">/** 
+ * Error thrown when the browser Navigator Lock API fails to acquire a lock. 
+ * 
+ * @example 
+ * ```ts 
+ * import { NavigatorLockAcquireTimeoutError } from '@supabase/auth-js' 
+ * 
+ * throw new NavigatorLockAcquireTimeoutError('Lock timed out') 
+ * ``` 
+ */</span>
+<span class="s0">export class NavigatorLockAcquireTimeoutError extends LockAcquireTimeoutError {</span>
+<span class="s0">}</span>
+<span class="s2">/** 
+ * Error thrown when the process-level lock helper cannot acquire a lock. 
+ * 
+ * @example 
+ * ```ts 
+ * import { ProcessLockAcquireTimeoutError } from '@supabase/auth-js' 
+ * 
+ * throw new ProcessLockAcquireTimeoutError('Lock timed out') 
+ * ``` 
+ */</span>
+<span class="s0">export class ProcessLockAcquireTimeoutError extends LockAcquireTimeoutError {</span>
+<span class="s0">}</span>
+<span class="s2">/** 
+ * Implements a global exclusive lock using the Navigator LockManager API. It 
+ * is available on all browsers released after 2022-03-15 with Safari being the 
+ * last one to release support. If the API is not available, this function will 
+ * throw. Make sure you check availablility before configuring {@link 
+ * GoTrueClient}. 
+ * 
+ * You can turn on debugging by setting the `supabase.gotrue-js.locks.debug` 
+ * local storage item to `true`. 
+ * 
+ * Internals: 
+ * 
+ * Since the LockManager API does not preserve stack traces for the async 
+ * function passed in the `request` method, a trick is used where acquiring the 
+ * lock releases a previously started promise to run the operation in the `fn` 
+ * function. The lock waits for that promise to finish (with or without error), 
+ * while the function will finally wait for the result anyway. 
+ * 
+ * @param name Name of the lock to be acquired. 
+ * @param acquireTimeout If negative, no timeout. If 0 an error is thrown if 
+ *                       the lock can't be acquired without waiting. If positive, the lock acquire 
+ *                       will time out after so many milliseconds. An error is 
+ *                       a timeout if it has `isAcquireTimeout` set to true. 
+ * @param fn The operation to run once the lock is acquired. 
+ * @example 
+ * ```ts 
+ * await navigatorLock('sync-user', 1000, async () =&gt; { 
+ *   await refreshSession() 
+ * }) 
+ * ``` 
+ */</span>
+<span class="s0">export async </span><span class="s3">function </span><span class="s0">navigatorLock(name, acquireTimeout, fn) {</span>
+    <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+        <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: acquire lock'</span><span class="s0">, name, acquireTimeout);</span>
+    <span class="s0">}</span>
+    <span class="s0">const abortController = </span><span class="s3">new </span><span class="s0">globalThis.AbortController();</span>
+    <span class="s0">let acquireTimeoutTimer;</span>
+    <span class="s3">if </span><span class="s0">(acquireTimeout &gt; </span><span class="s4">0</span><span class="s0">) {</span>
+        <span class="s0">acquireTimeoutTimer = setTimeout(() =&gt; {</span>
+            <span class="s0">abortController.abort();</span>
+            <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock acquire timed out'</span><span class="s0">, name);</span>
+            <span class="s0">}</span>
+        <span class="s0">}, acquireTimeout);</span>
+    <span class="s0">}</span>
+    <span class="s2">// MDN article: https://developer.mozilla.org/en-US/docs/Web/API/LockManager/request</span>
+    <span class="s2">// Wrapping navigator.locks.request() with a plain Promise is done as some</span>
+    <span class="s2">// libraries like zone.js patch the Promise object to track the execution</span>
+    <span class="s2">// context. However, it appears that most browsers use an internal promise</span>
+    <span class="s2">// implementation when using the navigator.locks.request() API causing them</span>
+    <span class="s2">// to lose context and emit confusing log messages or break certain features.</span>
+    <span class="s2">// This wrapping is believed to help zone.js track the execution context</span>
+    <span class="s2">// better.</span>
+    <span class="s0">await Promise.resolve();</span>
+    <span class="s3">try </span><span class="s0">{</span>
+        <span class="s3">return </span><span class="s0">await globalThis.navigator.locks.request(name, acquireTimeout === </span><span class="s4">0</span>
+            <span class="s0">? {</span>
+                <span class="s0">mode: </span><span class="s1">'exclusive'</span><span class="s0">,</span>
+                <span class="s0">ifAvailable: </span><span class="s3">true</span><span class="s0">,</span>
+            <span class="s0">}</span>
+            <span class="s0">: {</span>
+                <span class="s0">mode: </span><span class="s1">'exclusive'</span><span class="s0">,</span>
+                <span class="s0">signal: abortController.signal,</span>
+            <span class="s0">}, async (lock) =&gt; {</span>
+            <span class="s3">if </span><span class="s0">(lock) {</span>
+                <span class="s2">// Lock acquired — cancel the acquire-timeout timer so it cannot fire</span>
+                <span class="s2">// while fn() is running. Without this, a delayed timeout abort would</span>
+                <span class="s2">// set signal.aborted = true even though we already hold the lock,</span>
+                <span class="s2">// causing a subsequent steal to be misclassified as &quot;our timeout</span>
+                <span class="s2">// fired&quot; and triggering a spurious steal-back cascade.</span>
+                <span class="s0">clearTimeout(acquireTimeoutTimer);</span>
+                <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                    <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: acquired'</span><span class="s0">, name, lock.name);</span>
+                <span class="s0">}</span>
+                <span class="s3">try </span><span class="s0">{</span>
+                    <span class="s3">return </span><span class="s0">await fn();</span>
+                <span class="s0">}</span>
+                <span class="s3">finally </span><span class="s0">{</span>
+                    <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                        <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: released'</span><span class="s0">, name, lock.name);</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+            <span class="s3">else </span><span class="s0">{</span>
+                <span class="s3">if </span><span class="s0">(acquireTimeout === </span><span class="s4">0</span><span class="s0">) {</span>
+                    <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                        <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: not immediately available'</span><span class="s0">, name);</span>
+                    <span class="s0">}</span>
+                    <span class="s3">throw new </span><span class="s0">NavigatorLockAcquireTimeoutError(`Acquiring an exclusive Navigator LockManager lock </span><span class="s1">&quot;${name}&quot; </span><span class="s0">immediately failed`);</span>
+                <span class="s0">}</span>
+                <span class="s3">else </span><span class="s0">{</span>
+                    <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                        <span class="s3">try </span><span class="s0">{</span>
+                            <span class="s0">const result = await globalThis.navigator.locks.query();</span>
+                            <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: Navigator LockManager state'</span><span class="s0">, JSON.stringify(result, </span><span class="s3">null</span><span class="s0">, </span><span class="s1">'  '</span><span class="s0">));</span>
+                        <span class="s0">}</span>
+                        <span class="s3">catch </span><span class="s0">(e) {</span>
+                            <span class="s0">console.warn(</span><span class="s1">'@supabase/gotrue-js: Error when querying Navigator LockManager state'</span><span class="s0">, e);</span>
+                        <span class="s0">}</span>
+                    <span class="s0">}</span>
+                    <span class="s2">// Browser is not following the Navigator LockManager spec, it</span>
+                    <span class="s2">// returned a null lock when we didn't use ifAvailable. So we can</span>
+                    <span class="s2">// pretend the lock is acquired in the name of backward compatibility</span>
+                    <span class="s2">// and user experience and just run the function.</span>
+                    <span class="s0">console.warn(</span><span class="s1">'@supabase/gotrue-js: Navigator LockManager returned a null lock when using #request without ifAvailable set to true, it appears this browser is not following the LockManager spec https://developer.mozilla.org/en-US/docs/Web/API/LockManager/request'</span><span class="s0">);</span>
+                    <span class="s0">clearTimeout(acquireTimeoutTimer);</span>
+                    <span class="s3">return </span><span class="s0">await fn();</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+        <span class="s0">});</span>
+    <span class="s0">}</span>
+    <span class="s3">catch </span><span class="s0">(e) {</span>
+        <span class="s2">// Always clear the acquire timeout once the request settles, so it cannot</span>
+        <span class="s2">// fire later and incorrectly abort/log after a rejection.</span>
+        <span class="s3">if </span><span class="s0">(acquireTimeout &gt; </span><span class="s4">0</span><span class="s0">) {</span>
+            <span class="s0">clearTimeout(acquireTimeoutTimer);</span>
+        <span class="s0">}</span>
+        <span class="s2">// DOMException does not extend Error in Node.js, so use structural check</span>
+        <span class="s3">if </span><span class="s0">(e !== </span><span class="s3">null </span><span class="s0">&amp;&amp;</span>
+            <span class="s3">typeof </span><span class="s0">e === </span><span class="s1">'object' </span><span class="s0">&amp;&amp;</span>
+            <span class="s1">'name' </span><span class="s3">in </span><span class="s0">e &amp;&amp;</span>
+            <span class="s0">e.name === </span><span class="s1">'AbortError' </span><span class="s0">&amp;&amp;</span>
+            <span class="s0">acquireTimeout &gt; </span><span class="s4">0</span><span class="s0">) {</span>
+            <span class="s3">if </span><span class="s0">(abortController.signal.aborted) {</span>
+                <span class="s2">// OUR timeout fired — the lock is genuinely orphaned. Steal it.</span>
+                <span class="s2">//</span>
+                <span class="s2">// The lock acquisition was aborted because the timeout fired while the</span>
+                <span class="s2">// request was still pending. This typically means another lock holder is</span>
+                <span class="s2">// not releasing the lock, possibly due to React Strict Mode's</span>
+                <span class="s2">// double-mount/unmount behavior or a component unmounting mid-operation,</span>
+                <span class="s2">// leaving an orphaned lock.</span>
+                <span class="s2">//</span>
+                <span class="s2">// Recovery: use { steal: true } to forcefully acquire the lock. Per the</span>
+                <span class="s2">// Web Locks API spec, this releases any currently held lock with the same</span>
+                <span class="s2">// name and grants the request immediately, preempting any queued requests.</span>
+                <span class="s2">// The previous holder's callback continues running to completion but no</span>
+                <span class="s2">// longer holds the lock for exclusion purposes.</span>
+                <span class="s2">//</span>
+                <span class="s2">// See: https://github.com/supabase/supabase/issues/42505</span>
+                <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                    <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: acquire timeout, recovering by stealing lock'</span><span class="s0">, name);</span>
+                <span class="s0">}</span>
+                <span class="s0">console.warn(`@supabase/gotrue-js: Lock </span><span class="s1">&quot;${name}&quot; </span><span class="s0">was not released within ${acquireTimeout}ms. ` +</span>
+                    <span class="s1">'This may indicate an orphaned lock from a component unmount (e.g., React Strict Mode). ' </span><span class="s0">+</span>
+                    <span class="s1">'Forcefully acquiring the lock to recover.'</span><span class="s0">);</span>
+                <span class="s3">return </span><span class="s0">await Promise.resolve().then(() =&gt; globalThis.navigator.locks.request(name, {</span>
+                    <span class="s0">mode: </span><span class="s1">'exclusive'</span><span class="s0">,</span>
+                    <span class="s0">steal: </span><span class="s3">true</span><span class="s0">,</span>
+                <span class="s0">}, async (lock) =&gt; {</span>
+                    <span class="s3">if </span><span class="s0">(lock) {</span>
+                        <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                            <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: recovered (stolen)'</span><span class="s0">, name, lock.name);</span>
+                        <span class="s0">}</span>
+                        <span class="s3">try </span><span class="s0">{</span>
+                            <span class="s3">return </span><span class="s0">await fn();</span>
+                        <span class="s0">}</span>
+                        <span class="s3">finally </span><span class="s0">{</span>
+                            <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                                <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: released (stolen)'</span><span class="s0">, name, lock.name);</span>
+                            <span class="s0">}</span>
+                        <span class="s0">}</span>
+                    <span class="s0">}</span>
+                    <span class="s3">else </span><span class="s0">{</span>
+                        <span class="s2">// This should not happen with steal: true, but handle gracefully.</span>
+                        <span class="s0">console.warn(</span><span class="s1">'@supabase/gotrue-js: Navigator LockManager returned null lock even with steal: true'</span><span class="s0">);</span>
+                        <span class="s3">return </span><span class="s0">await fn();</span>
+                    <span class="s0">}</span>
+                <span class="s0">}));</span>
+            <span class="s0">}</span>
+            <span class="s3">else </span><span class="s0">{</span>
+                <span class="s2">// We HELD the lock but another request stole it from us.</span>
+                <span class="s2">// Per the Web Locks spec, our fn() callback is still running as an</span>
+                <span class="s2">// orphaned background task — do NOT steal back. Stealing back would</span>
+                <span class="s2">// cause a cascade (A steals B, B steals A, ...) and run fn() a second</span>
+                <span class="s2">// time concurrently, corrupting auth state.</span>
+                <span class="s2">// Convert to a typed error so callers (e.g. _autoRefreshTokenTick)</span>
+                <span class="s2">// can handle/filter it without it leaking to Sentry as a raw AbortError.</span>
+                <span class="s3">if </span><span class="s0">(internals.debug) {</span>
+                    <span class="s0">console.log(</span><span class="s1">'@supabase/gotrue-js: navigatorLock: lock was stolen by another request'</span><span class="s0">, name);</span>
+                <span class="s0">}</span>
+                <span class="s3">throw new </span><span class="s0">NavigatorLockAcquireTimeoutError(`Lock </span><span class="s1">&quot;${name}&quot; </span><span class="s0">was released because another request stole it`);</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s3">throw </span><span class="s0">e;</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">const PROCESS_LOCKS = {};</span>
+<span class="s2">/** 
+ * Implements a global exclusive lock that works only in the current process. 
+ * Useful for environments like React Native or other non-browser 
+ * single-process (i.e. no concept of &quot;tabs&quot;) environments. 
+ * 
+ * Use {@link #navigatorLock} in browser environments. 
+ * 
+ * @param name Name of the lock to be acquired. 
+ * @param acquireTimeout If negative, no timeout. If 0 an error is thrown if 
+ *                       the lock can't be acquired without waiting. If positive, the lock acquire 
+ *                       will time out after so many milliseconds. An error is 
+ *                       a timeout if it has `isAcquireTimeout` set to true. 
+ * @param fn The operation to run once the lock is acquired. 
+ * @example 
+ * ```ts 
+ * await processLock('migrate', 5000, async () =&gt; { 
+ *   await runMigration() 
+ * }) 
+ * ``` 
+ */</span>
+<span class="s0">export async </span><span class="s3">function </span><span class="s0">processLock(name, acquireTimeout, fn) {</span>
+    <span class="s3">var </span><span class="s0">_a;</span>
+    <span class="s0">const previousOperation = (_a = PROCESS_LOCKS[name]) !== </span><span class="s3">null </span><span class="s0">&amp;&amp; _a !== </span><span class="s3">void </span><span class="s4">0 </span><span class="s0">? _a : Promise.resolve();</span>
+    <span class="s2">// Wrap previousOperation to handle errors without using .catch()</span>
+    <span class="s2">// This avoids Firefox content script security errors</span>
+    <span class="s0">const previousOperationHandled = (async () =&gt; {</span>
+        <span class="s3">try </span><span class="s0">{</span>
+            <span class="s0">await previousOperation;</span>
+            <span class="s3">return null</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s3">catch </span><span class="s0">(e) {</span>
+            <span class="s2">// ignore error of previous operation that we're waiting to finish</span>
+            <span class="s3">return null</span><span class="s0">;</span>
+        <span class="s0">}</span>
+    <span class="s0">})();</span>
+    <span class="s0">const currentOperation = (async () =&gt; {</span>
+        <span class="s0">let timeoutId = </span><span class="s3">null</span><span class="s0">;</span>
+        <span class="s3">try </span><span class="s0">{</span>
+            <span class="s2">// Wait for either previous operation or timeout</span>
+            <span class="s0">const timeoutPromise = acquireTimeout &gt;= </span><span class="s4">0</span>
+                <span class="s0">? </span><span class="s3">new </span><span class="s0">Promise((_, reject) =&gt; {</span>
+                    <span class="s0">timeoutId = setTimeout(() =&gt; {</span>
+                        <span class="s0">console.warn(`@supabase/gotrue-js: Lock </span><span class="s1">&quot;${name}&quot; </span><span class="s0">acquisition timed out after ${acquireTimeout}ms. ` +</span>
+                            <span class="s1">'This may be caused by another operation holding the lock. ' </span><span class="s0">+</span>
+                            <span class="s1">'Consider increasing lockAcquireTimeout or checking for stuck operations.'</span><span class="s0">);</span>
+                        <span class="s0">reject(</span><span class="s3">new </span><span class="s0">ProcessLockAcquireTimeoutError(`Acquiring process lock </span><span class="s3">with </span><span class="s0">name </span><span class="s1">&quot;${name}&quot; </span><span class="s0">timed out`));</span>
+                    <span class="s0">}, acquireTimeout);</span>
+                <span class="s0">})</span>
+                <span class="s0">: </span><span class="s3">null</span><span class="s0">;</span>
+            <span class="s0">await Promise.race([previousOperationHandled, timeoutPromise].filter((x) =&gt; x));</span>
+            <span class="s2">// If we reach here, previousOperationHandled won the race</span>
+            <span class="s2">// Clear the timeout to prevent false warnings</span>
+            <span class="s3">if </span><span class="s0">(timeoutId !== </span><span class="s3">null</span><span class="s0">) {</span>
+                <span class="s0">clearTimeout(timeoutId);</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s3">catch </span><span class="s0">(e) {</span>
+            <span class="s2">// Clear the timeout on error path as well</span>
+            <span class="s3">if </span><span class="s0">(timeoutId !== </span><span class="s3">null</span><span class="s0">) {</span>
+                <span class="s0">clearTimeout(timeoutId);</span>
+            <span class="s0">}</span>
+            <span class="s2">// Re-throw timeout errors, ignore others</span>
+            <span class="s3">if </span><span class="s0">(e </span><span class="s3">instanceof </span><span class="s0">LockAcquireTimeoutError) {</span>
+                <span class="s3">throw </span><span class="s0">e;</span>
+            <span class="s0">}</span>
+            <span class="s2">// Fall through to run fn() - previous operation finished with error</span>
+        <span class="s0">}</span>
+        <span class="s2">// Previous operations finished and we didn't get a race on the acquire</span>
+        <span class="s2">// timeout, so the current operation can finally start</span>
+        <span class="s3">return </span><span class="s0">await fn();</span>
+    <span class="s0">})();</span>
+    <span class="s0">PROCESS_LOCKS[name] = (async () =&gt; {</span>
+        <span class="s3">try </span><span class="s0">{</span>
+            <span class="s3">return </span><span class="s0">await currentOperation;</span>
+        <span class="s0">}</span>
+        <span class="s3">catch </span><span class="s0">(e) {</span>
+            <span class="s3">if </span><span class="s0">(e </span><span class="s3">instanceof </span><span class="s0">LockAcquireTimeoutError) {</span>
+                <span class="s2">// if the current operation timed out, it doesn't mean that the previous</span>
+                <span class="s2">// operation finished, so we need continue waiting for it to finish</span>
+                <span class="s3">try </span><span class="s0">{</span>
+                    <span class="s0">await previousOperation;</span>
+                <span class="s0">}</span>
+                <span class="s3">catch </span><span class="s0">(prevError) {</span>
+                    <span class="s2">// Ignore previous operation errors</span>
+                <span class="s0">}</span>
+                <span class="s3">return null</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s3">throw </span><span class="s0">e;</span>
+        <span class="s0">}</span>
+    <span class="s0">})();</span>
+    <span class="s2">// finally wait for the current operation to finish successfully, with an</span>
+    <span class="s2">// error or with an acquire timeout error</span>
+    <span class="s3">return </span><span class="s0">await currentOperation;</span>
+<span class="s0">}</span>
+<span class="s2">//# sourceMappingURL=locks.js.map</span></pre>
+</body>
+</html>

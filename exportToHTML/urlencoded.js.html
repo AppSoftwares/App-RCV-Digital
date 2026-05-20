@@ -1,0 +1,320 @@
+<html>
+<head>
+<title>urlencoded.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+urlencoded.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/*! 
+ * body-parser 
+ * Copyright(c) 2014 Jonathan Ong 
+ * Copyright(c) 2014-2015 Douglas Christopher Wilson 
+ * MIT Licensed 
+ */</span>
+
+<span class="s2">'use strict'</span>
+
+<span class="s0">/** 
+ * Module dependencies. 
+ * @private 
+ */</span>
+
+<span class="s3">var </span><span class="s1">bytes = require(</span><span class="s2">'bytes'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">contentType = require(</span><span class="s2">'content-type'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">createError = require(</span><span class="s2">'http-errors'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">debug = require(</span><span class="s2">'debug'</span><span class="s1">)(</span><span class="s2">'body-parser:urlencoded'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">deprecate = require(</span><span class="s2">'depd'</span><span class="s1">)(</span><span class="s2">'body-parser'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">read = require(</span><span class="s2">'../read'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">typeis = require(</span><span class="s2">'type-is'</span><span class="s1">)</span>
+
+<span class="s0">/** 
+ * Module exports. 
+ */</span>
+
+<span class="s1">module.exports = urlencoded</span>
+
+<span class="s0">/** 
+ * Cache of parser modules. 
+ */</span>
+
+<span class="s3">var </span><span class="s1">parsers = Object.create(</span><span class="s3">null</span><span class="s1">)</span>
+
+<span class="s0">/** 
+ * Create a middleware to parse urlencoded bodies. 
+ * 
+ * @param {object} [options] 
+ * @return {function} 
+ * @public 
+ */</span>
+
+<span class="s3">function </span><span class="s1">urlencoded (options) {</span>
+  <span class="s3">var </span><span class="s1">opts = options || {}</span>
+
+  <span class="s0">// notice because option default will flip in next major</span>
+  <span class="s3">if </span><span class="s1">(opts.extended === undefined) {</span>
+    <span class="s1">deprecate(</span><span class="s2">'undefined extended: provide extended option'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">var </span><span class="s1">extended = opts.extended !== </span><span class="s3">false</span>
+  <span class="s3">var </span><span class="s1">inflate = opts.inflate !== </span><span class="s3">false</span>
+  <span class="s3">var </span><span class="s1">limit = </span><span class="s3">typeof </span><span class="s1">opts.limit !== </span><span class="s2">'number'</span>
+    <span class="s1">? bytes.parse(opts.limit || </span><span class="s2">'100kb'</span><span class="s1">)</span>
+    <span class="s1">: opts.limit</span>
+  <span class="s3">var </span><span class="s1">type = opts.type || </span><span class="s2">'application/x-www-form-urlencoded'</span>
+  <span class="s3">var </span><span class="s1">verify = opts.verify || </span><span class="s3">false</span>
+
+  <span class="s3">if </span><span class="s1">(verify !== </span><span class="s3">false </span><span class="s1">&amp;&amp; </span><span class="s3">typeof </span><span class="s1">verify !== </span><span class="s2">'function'</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'option verify must be function'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// create the appropriate query parser</span>
+  <span class="s3">var </span><span class="s1">queryparse = extended</span>
+    <span class="s1">? extendedparser(opts)</span>
+    <span class="s1">: simpleparser(opts)</span>
+
+  <span class="s0">// create the appropriate type checking function</span>
+  <span class="s3">var </span><span class="s1">shouldParse = </span><span class="s3">typeof </span><span class="s1">type !== </span><span class="s2">'function'</span>
+    <span class="s1">? typeChecker(type)</span>
+    <span class="s1">: type</span>
+
+  <span class="s3">function </span><span class="s1">parse (body) {</span>
+    <span class="s3">return </span><span class="s1">body.length</span>
+      <span class="s1">? queryparse(body)</span>
+      <span class="s1">: {}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return function </span><span class="s1">urlencodedParser (req, res, next) {</span>
+    <span class="s3">if </span><span class="s1">(req._body) {</span>
+      <span class="s1">debug(</span><span class="s2">'body already parsed'</span><span class="s1">)</span>
+      <span class="s1">next()</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s1">req.body = req.body || {}</span>
+
+    <span class="s0">// skip requests without bodies</span>
+    <span class="s3">if </span><span class="s1">(!typeis.hasBody(req)) {</span>
+      <span class="s1">debug(</span><span class="s2">'skip empty body'</span><span class="s1">)</span>
+      <span class="s1">next()</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s1">debug(</span><span class="s2">'content-type %j'</span><span class="s1">, req.headers[</span><span class="s2">'content-type'</span><span class="s1">])</span>
+
+    <span class="s0">// determine if request should be parsed</span>
+    <span class="s3">if </span><span class="s1">(!shouldParse(req)) {</span>
+      <span class="s1">debug(</span><span class="s2">'skip parsing'</span><span class="s1">)</span>
+      <span class="s1">next()</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// assert charset</span>
+    <span class="s3">var </span><span class="s1">charset = getCharset(req) || </span><span class="s2">'utf-8'</span>
+    <span class="s3">if </span><span class="s1">(charset !== </span><span class="s2">'utf-8'</span><span class="s1">) {</span>
+      <span class="s1">debug(</span><span class="s2">'invalid charset'</span><span class="s1">)</span>
+      <span class="s1">next(createError(</span><span class="s4">415</span><span class="s1">, </span><span class="s2">'unsupported charset &quot;' </span><span class="s1">+ charset.toUpperCase() + </span><span class="s2">'&quot;'</span><span class="s1">, {</span>
+        <span class="s1">charset: charset,</span>
+        <span class="s1">type: </span><span class="s2">'charset.unsupported'</span>
+      <span class="s1">}))</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// read</span>
+    <span class="s1">read(req, res, next, parse, debug, {</span>
+      <span class="s1">debug: debug,</span>
+      <span class="s1">encoding: charset,</span>
+      <span class="s1">inflate: inflate,</span>
+      <span class="s1">limit: limit,</span>
+      <span class="s1">verify: verify</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the extended query parser. 
+ * 
+ * @param {object} options 
+ */</span>
+
+<span class="s3">function </span><span class="s1">extendedparser (options) {</span>
+  <span class="s3">var </span><span class="s1">parameterLimit = options.parameterLimit !== undefined</span>
+    <span class="s1">? options.parameterLimit</span>
+    <span class="s1">: </span><span class="s4">1000</span>
+  <span class="s3">var </span><span class="s1">depth = options.depth !== undefined ? options.depth : </span><span class="s4">32</span>
+  <span class="s3">var </span><span class="s1">parse = parser(</span><span class="s2">'qs'</span><span class="s1">)</span>
+
+  <span class="s3">if </span><span class="s1">(isNaN(parameterLimit) || parameterLimit &lt; </span><span class="s4">1</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'option parameterLimit must be a positive number'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">if </span><span class="s1">(isNaN(depth) || depth &lt; </span><span class="s4">0</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'option depth must be a zero or a positive number'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">if </span><span class="s1">(isFinite(parameterLimit)) {</span>
+    <span class="s1">parameterLimit = parameterLimit | </span><span class="s4">0</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return function </span><span class="s1">queryparse (body) {</span>
+    <span class="s3">var </span><span class="s1">paramCount = parameterCount(body, parameterLimit)</span>
+
+    <span class="s3">if </span><span class="s1">(paramCount === undefined) {</span>
+      <span class="s1">debug(</span><span class="s2">'too many parameters'</span><span class="s1">)</span>
+      <span class="s3">throw </span><span class="s1">createError(</span><span class="s4">413</span><span class="s1">, </span><span class="s2">'too many parameters'</span><span class="s1">, {</span>
+        <span class="s1">type: </span><span class="s2">'parameters.too.many'</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s3">var </span><span class="s1">arrayLimit = Math.max(</span><span class="s4">100</span><span class="s1">, paramCount)</span>
+
+    <span class="s1">debug(</span><span class="s2">'parse extended urlencoding'</span><span class="s1">)</span>
+    <span class="s3">try </span><span class="s1">{</span>
+      <span class="s3">return </span><span class="s1">parse(body, {</span>
+        <span class="s1">allowPrototypes: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">arrayLimit: arrayLimit,</span>
+        <span class="s1">depth: depth,</span>
+        <span class="s1">strictDepth: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">parameterLimit: parameterLimit</span>
+      <span class="s1">})</span>
+    <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+      <span class="s3">if </span><span class="s1">(err </span><span class="s3">instanceof </span><span class="s1">RangeError) {</span>
+        <span class="s3">throw </span><span class="s1">createError(</span><span class="s4">400</span><span class="s1">, </span><span class="s2">'The input exceeded the depth'</span><span class="s1">, {</span>
+          <span class="s1">type: </span><span class="s2">'querystring.parse.rangeError'</span>
+        <span class="s1">})</span>
+      <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+        <span class="s3">throw </span><span class="s1">err</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the charset of a request. 
+ * 
+ * @param {object} req 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">getCharset (req) {</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s3">return </span><span class="s1">(contentType.parse(req).parameters.charset || </span><span class="s2">''</span><span class="s1">).toLowerCase()</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {</span>
+    <span class="s3">return </span><span class="s1">undefined</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Count the number of parameters, stopping once limit reached 
+ * 
+ * @param {string} body 
+ * @param {number} limit 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">parameterCount (body, limit) {</span>
+  <span class="s3">var </span><span class="s1">count = </span><span class="s4">0</span>
+  <span class="s3">var </span><span class="s1">index = -</span><span class="s4">1</span>
+
+  <span class="s3">do </span><span class="s1">{</span>
+    <span class="s1">count++</span>
+    <span class="s3">if </span><span class="s1">(count &gt; limit) {</span>
+      <span class="s3">return </span><span class="s1">undefined</span>
+    <span class="s1">}</span>
+    <span class="s1">index = body.indexOf(</span><span class="s2">'&amp;'</span><span class="s1">, index + </span><span class="s4">1</span><span class="s1">)</span>
+  <span class="s1">} </span><span class="s3">while </span><span class="s1">(index !== -</span><span class="s4">1</span><span class="s1">)</span>
+
+  <span class="s3">return </span><span class="s1">count</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get parser for module name dynamically. 
+ * 
+ * @param {string} name 
+ * @return {function} 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">parser (name) {</span>
+  <span class="s3">var </span><span class="s1">mod = parsers[name]</span>
+
+  <span class="s3">if </span><span class="s1">(mod !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">mod.parse</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// this uses a switch for static require analysis</span>
+  <span class="s3">switch </span><span class="s1">(name) {</span>
+    <span class="s3">case </span><span class="s2">'qs'</span><span class="s1">:</span>
+      <span class="s1">mod = require(</span><span class="s2">'qs'</span><span class="s1">)</span>
+      <span class="s3">break</span>
+    <span class="s3">case </span><span class="s2">'querystring'</span><span class="s1">:</span>
+      <span class="s1">mod = require(</span><span class="s2">'querystring'</span><span class="s1">)</span>
+      <span class="s3">break</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// store to prevent invoking require()</span>
+  <span class="s1">parsers[name] = mod</span>
+
+  <span class="s3">return </span><span class="s1">mod.parse</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the simple query parser. 
+ * 
+ * @param {object} options 
+ */</span>
+
+<span class="s3">function </span><span class="s1">simpleparser (options) {</span>
+  <span class="s3">var </span><span class="s1">parameterLimit = options.parameterLimit !== undefined</span>
+    <span class="s1">? options.parameterLimit</span>
+    <span class="s1">: </span><span class="s4">1000</span>
+  <span class="s3">var </span><span class="s1">parse = parser(</span><span class="s2">'querystring'</span><span class="s1">)</span>
+
+  <span class="s3">if </span><span class="s1">(isNaN(parameterLimit) || parameterLimit &lt; </span><span class="s4">1</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'option parameterLimit must be a positive number'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">if </span><span class="s1">(isFinite(parameterLimit)) {</span>
+    <span class="s1">parameterLimit = parameterLimit | </span><span class="s4">0</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return function </span><span class="s1">queryparse (body) {</span>
+    <span class="s3">var </span><span class="s1">paramCount = parameterCount(body, parameterLimit)</span>
+
+    <span class="s3">if </span><span class="s1">(paramCount === undefined) {</span>
+      <span class="s1">debug(</span><span class="s2">'too many parameters'</span><span class="s1">)</span>
+      <span class="s3">throw </span><span class="s1">createError(</span><span class="s4">413</span><span class="s1">, </span><span class="s2">'too many parameters'</span><span class="s1">, {</span>
+        <span class="s1">type: </span><span class="s2">'parameters.too.many'</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s1">debug(</span><span class="s2">'parse urlencoding'</span><span class="s1">)</span>
+    <span class="s3">return </span><span class="s1">parse(body, undefined, undefined, { maxKeys: parameterLimit })</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the simple type checker. 
+ * 
+ * @param {string} type 
+ * @return {function} 
+ */</span>
+
+<span class="s3">function </span><span class="s1">typeChecker (type) {</span>
+  <span class="s3">return function </span><span class="s1">checkType (req) {</span>
+    <span class="s3">return </span><span class="s1">Boolean(typeis(req, type))</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

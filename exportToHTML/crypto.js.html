@@ -1,0 +1,147 @@
+<html>
+<head>
+<title>crypto.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+crypto.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2019 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s2">/* global window */</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.BrowserCrypto = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s2">// This file implements crypto functions we need using in-browser</span>
+<span class="s2">// SubtleCrypto interface `window.crypto.subtle`.</span>
+<span class="s1">const base64js = require(</span><span class="s0">&quot;base64-js&quot;</span><span class="s1">);</span>
+<span class="s1">const shared_1 = require(</span><span class="s0">&quot;../shared&quot;</span><span class="s1">);</span>
+<span class="s1">class BrowserCrypto {</span>
+    <span class="s1">constructor() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">window === </span><span class="s0">'undefined' </span><span class="s1">||</span>
+            <span class="s1">window.crypto === undefined ||</span>
+            <span class="s1">window.crypto.subtle === undefined) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">&quot;SubtleCrypto not found. Make sure it's an https:// website.&quot;</span><span class="s1">);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async sha256DigestBase64(str) {</span>
+        <span class="s2">// SubtleCrypto digest() method is async, so we must make</span>
+        <span class="s2">// this method async as well.</span>
+        <span class="s2">// To calculate SHA256 digest using SubtleCrypto, we first</span>
+        <span class="s2">// need to convert an input string to an ArrayBuffer:</span>
+        <span class="s1">const inputBuffer = </span><span class="s3">new </span><span class="s1">TextEncoder().encode(str);</span>
+        <span class="s2">// Result is ArrayBuffer as well.</span>
+        <span class="s1">const outputBuffer = await window.crypto.subtle.digest(</span><span class="s0">'SHA-256'</span><span class="s1">, inputBuffer);</span>
+        <span class="s3">return </span><span class="s1">base64js.fromByteArray(</span><span class="s3">new </span><span class="s1">Uint8Array(outputBuffer));</span>
+    <span class="s1">}</span>
+    <span class="s1">randomBytesBase64(count) {</span>
+        <span class="s1">const array = </span><span class="s3">new </span><span class="s1">Uint8Array(count);</span>
+        <span class="s1">window.crypto.getRandomValues(array);</span>
+        <span class="s3">return </span><span class="s1">base64js.fromByteArray(array);</span>
+    <span class="s1">}</span>
+    <span class="s1">static padBase64(base64) {</span>
+        <span class="s2">// base64js requires padding, so let's add some '='</span>
+        <span class="s3">while </span><span class="s1">(base64.length % </span><span class="s4">4 </span><span class="s1">!== </span><span class="s4">0</span><span class="s1">) {</span>
+            <span class="s1">base64 += </span><span class="s0">'='</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">base64;</span>
+    <span class="s1">}</span>
+    <span class="s1">async verify(pubkey, data, signature) {</span>
+        <span class="s1">const algo = {</span>
+            <span class="s1">name: </span><span class="s0">'RSASSA-PKCS1-v1_5'</span><span class="s1">,</span>
+            <span class="s1">hash: { name: </span><span class="s0">'SHA-256' </span><span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const dataArray = </span><span class="s3">new </span><span class="s1">TextEncoder().encode(data);</span>
+        <span class="s1">const signatureArray = base64js.toByteArray(BrowserCrypto.padBase64(signature));</span>
+        <span class="s1">const cryptoKey = await window.crypto.subtle.importKey(</span><span class="s0">'jwk'</span><span class="s1">, pubkey, algo, </span><span class="s3">true</span><span class="s1">, [</span><span class="s0">'verify'</span><span class="s1">]);</span>
+        <span class="s2">// SubtleCrypto's verify method is async so we must make</span>
+        <span class="s2">// this method async as well.</span>
+        <span class="s1">const result = await window.crypto.subtle.verify(algo, cryptoKey, Buffer.from(signatureArray), dataArray);</span>
+        <span class="s3">return </span><span class="s1">result;</span>
+    <span class="s1">}</span>
+    <span class="s1">async sign(privateKey, data) {</span>
+        <span class="s1">const algo = {</span>
+            <span class="s1">name: </span><span class="s0">'RSASSA-PKCS1-v1_5'</span><span class="s1">,</span>
+            <span class="s1">hash: { name: </span><span class="s0">'SHA-256' </span><span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const dataArray = </span><span class="s3">new </span><span class="s1">TextEncoder().encode(data);</span>
+        <span class="s1">const cryptoKey = await window.crypto.subtle.importKey(</span><span class="s0">'jwk'</span><span class="s1">, privateKey, algo, </span><span class="s3">true</span><span class="s1">, [</span><span class="s0">'sign'</span><span class="s1">]);</span>
+        <span class="s2">// SubtleCrypto's sign method is async so we must make</span>
+        <span class="s2">// this method async as well.</span>
+        <span class="s1">const result = await window.crypto.subtle.sign(algo, cryptoKey, dataArray);</span>
+        <span class="s3">return </span><span class="s1">base64js.fromByteArray(</span><span class="s3">new </span><span class="s1">Uint8Array(result));</span>
+    <span class="s1">}</span>
+    <span class="s1">decodeBase64StringUtf8(base64) {</span>
+        <span class="s1">const uint8array = base64js.toByteArray(BrowserCrypto.padBase64(base64));</span>
+        <span class="s1">const result = </span><span class="s3">new </span><span class="s1">TextDecoder().decode(uint8array);</span>
+        <span class="s3">return </span><span class="s1">result;</span>
+    <span class="s1">}</span>
+    <span class="s1">encodeBase64StringUtf8(text) {</span>
+        <span class="s1">const uint8array = </span><span class="s3">new </span><span class="s1">TextEncoder().encode(text);</span>
+        <span class="s1">const result = base64js.fromByteArray(uint8array);</span>
+        <span class="s3">return </span><span class="s1">result;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Computes the SHA-256 hash of the provided string. 
+     * @param str The plain text string to hash. 
+     * @return A promise that resolves with the SHA-256 hash of the provided 
+     *   string in hexadecimal encoding. 
+     */</span>
+    <span class="s1">async sha256DigestHex(str) {</span>
+        <span class="s2">// SubtleCrypto digest() method is async, so we must make</span>
+        <span class="s2">// this method async as well.</span>
+        <span class="s2">// To calculate SHA256 digest using SubtleCrypto, we first</span>
+        <span class="s2">// need to convert an input string to an ArrayBuffer:</span>
+        <span class="s1">const inputBuffer = </span><span class="s3">new </span><span class="s1">TextEncoder().encode(str);</span>
+        <span class="s2">// Result is ArrayBuffer as well.</span>
+        <span class="s1">const outputBuffer = await window.crypto.subtle.digest(</span><span class="s0">'SHA-256'</span><span class="s1">, inputBuffer);</span>
+        <span class="s3">return </span><span class="s1">(</span><span class="s4">0</span><span class="s1">, shared_1.fromArrayBufferToHex)(outputBuffer);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Computes the HMAC hash of a message using the provided crypto key and the 
+     * SHA-256 algorithm. 
+     * @param key The secret crypto key in utf-8 or ArrayBuffer format. 
+     * @param msg The plain text message. 
+     * @return A promise that resolves with the HMAC-SHA256 hash in ArrayBuffer 
+     *   format. 
+     */</span>
+    <span class="s1">async signWithHmacSha256(key, msg) {</span>
+        <span class="s2">// Convert key, if provided in ArrayBuffer format, to string.</span>
+        <span class="s1">const rawKey = </span><span class="s3">typeof </span><span class="s1">key === </span><span class="s0">'string'</span>
+            <span class="s1">? key</span>
+            <span class="s1">: String.fromCharCode(...</span><span class="s3">new </span><span class="s1">Uint16Array(key));</span>
+        <span class="s1">const enc = </span><span class="s3">new </span><span class="s1">TextEncoder();</span>
+        <span class="s1">const cryptoKey = await window.crypto.subtle.importKey(</span><span class="s0">'raw'</span><span class="s1">, enc.encode(rawKey), {</span>
+            <span class="s1">name: </span><span class="s0">'HMAC'</span><span class="s1">,</span>
+            <span class="s1">hash: {</span>
+                <span class="s1">name: </span><span class="s0">'SHA-256'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+        <span class="s1">}, </span><span class="s3">false</span><span class="s1">, [</span><span class="s0">'sign'</span><span class="s1">]);</span>
+        <span class="s3">return </span><span class="s1">window.crypto.subtle.sign(</span><span class="s0">'HMAC'</span><span class="s1">, cryptoKey, enc.encode(msg));</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.BrowserCrypto = BrowserCrypto;</span>
+<span class="s2">//# sourceMappingURL=crypto.js.map</span></pre>
+</body>
+</html>

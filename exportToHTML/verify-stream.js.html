@@ -1,0 +1,146 @@
+<html>
+<head>
+<title>verify-stream.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+verify-stream.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/*global module*/</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s3">'safe-buffer'</span><span class="s1">).Buffer;</span>
+<span class="s2">var </span><span class="s1">DataStream = require(</span><span class="s3">'./data-stream'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">jwa = require(</span><span class="s3">'jwa'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">Stream = require(</span><span class="s3">'stream'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">toString = require(</span><span class="s3">'./tostring'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s3">'util'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">JWS_REGEX = /^[a-zA-Z0-9\-_]+?\.[a-zA-Z0-9\-_]+?\.([a-zA-Z0-9\-_]+)?$/;</span>
+
+<span class="s2">function </span><span class="s1">isObject(thing) {</span>
+  <span class="s2">return </span><span class="s1">Object.prototype.toString.call(thing) === </span><span class="s3">'[object Object]'</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">safeJsonParse(thing) {</span>
+  <span class="s2">if </span><span class="s1">(isObject(thing))</span>
+    <span class="s2">return </span><span class="s1">thing;</span>
+  <span class="s2">try </span><span class="s1">{ </span><span class="s2">return </span><span class="s1">JSON.parse(thing); }</span>
+  <span class="s2">catch </span><span class="s1">(e) { </span><span class="s2">return </span><span class="s1">undefined; }</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">headerFromJWS(jwsSig) {</span>
+  <span class="s2">var </span><span class="s1">encodedHeader = jwsSig.split(</span><span class="s3">'.'</span><span class="s1">, </span><span class="s4">1</span><span class="s1">)[</span><span class="s4">0</span><span class="s1">];</span>
+  <span class="s2">return </span><span class="s1">safeJsonParse(Buffer.from(encodedHeader, </span><span class="s3">'base64'</span><span class="s1">).toString(</span><span class="s3">'binary'</span><span class="s1">));</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">securedInputFromJWS(jwsSig) {</span>
+  <span class="s2">return </span><span class="s1">jwsSig.split(</span><span class="s3">'.'</span><span class="s1">, </span><span class="s4">2</span><span class="s1">).join(</span><span class="s3">'.'</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">signatureFromJWS(jwsSig) {</span>
+  <span class="s2">return </span><span class="s1">jwsSig.split(</span><span class="s3">'.'</span><span class="s1">)[</span><span class="s4">2</span><span class="s1">];</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">payloadFromJWS(jwsSig, encoding) {</span>
+  <span class="s1">encoding = encoding || </span><span class="s3">'utf8'</span><span class="s1">;</span>
+  <span class="s2">var </span><span class="s1">payload = jwsSig.split(</span><span class="s3">'.'</span><span class="s1">)[</span><span class="s4">1</span><span class="s1">];</span>
+  <span class="s2">return </span><span class="s1">Buffer.from(payload, </span><span class="s3">'base64'</span><span class="s1">).toString(encoding);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">isValidJws(string) {</span>
+  <span class="s2">return </span><span class="s1">JWS_REGEX.test(string) &amp;&amp; !!headerFromJWS(string);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">jwsVerify(jwsSig, algorithm, secretOrKey) {</span>
+  <span class="s2">if </span><span class="s1">(!algorithm) {</span>
+    <span class="s2">var </span><span class="s1">err = </span><span class="s2">new </span><span class="s1">Error(</span><span class="s3">&quot;Missing algorithm parameter for jws.verify&quot;</span><span class="s1">);</span>
+    <span class="s1">err.code = </span><span class="s3">&quot;MISSING_ALGORITHM&quot;</span><span class="s1">;</span>
+    <span class="s2">throw </span><span class="s1">err;</span>
+  <span class="s1">}</span>
+  <span class="s1">jwsSig = toString(jwsSig);</span>
+  <span class="s2">var </span><span class="s1">signature = signatureFromJWS(jwsSig);</span>
+  <span class="s2">var </span><span class="s1">securedInput = securedInputFromJWS(jwsSig);</span>
+  <span class="s2">var </span><span class="s1">algo = jwa(algorithm);</span>
+  <span class="s2">return </span><span class="s1">algo.verify(securedInput, signature, secretOrKey);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">jwsDecode(jwsSig, opts) {</span>
+  <span class="s1">opts = opts || {};</span>
+  <span class="s1">jwsSig = toString(jwsSig);</span>
+
+  <span class="s2">if </span><span class="s1">(!isValidJws(jwsSig))</span>
+    <span class="s2">return null</span><span class="s1">;</span>
+
+  <span class="s2">var </span><span class="s1">header = headerFromJWS(jwsSig);</span>
+
+  <span class="s2">if </span><span class="s1">(!header)</span>
+    <span class="s2">return null</span><span class="s1">;</span>
+
+  <span class="s2">var </span><span class="s1">payload = payloadFromJWS(jwsSig);</span>
+  <span class="s2">if </span><span class="s1">(header.typ === </span><span class="s3">'JWT' </span><span class="s1">|| opts.json)</span>
+    <span class="s1">payload = JSON.parse(payload, opts.encoding);</span>
+
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">header: header,</span>
+    <span class="s1">payload: payload,</span>
+    <span class="s1">signature: signatureFromJWS(jwsSig)</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">VerifyStream(opts) {</span>
+  <span class="s1">opts = opts || {};</span>
+  <span class="s2">var </span><span class="s1">secretOrKey = opts.secret;</span>
+  <span class="s1">secretOrKey = secretOrKey == </span><span class="s2">null </span><span class="s1">? opts.publicKey : secretOrKey;</span>
+  <span class="s1">secretOrKey = secretOrKey == </span><span class="s2">null </span><span class="s1">? opts.key : secretOrKey;</span>
+  <span class="s2">if </span><span class="s1">(/^hs/i.test(opts.algorithm) === </span><span class="s2">true </span><span class="s1">&amp;&amp; secretOrKey == </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s3">'secret must be a string or buffer or a KeyObject'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+  <span class="s2">var </span><span class="s1">secretStream = </span><span class="s2">new </span><span class="s1">DataStream(secretOrKey);</span>
+  <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.algorithm = opts.algorithm;</span>
+  <span class="s2">this</span><span class="s1">.encoding = opts.encoding;</span>
+  <span class="s2">this</span><span class="s1">.secret = </span><span class="s2">this</span><span class="s1">.publicKey = </span><span class="s2">this</span><span class="s1">.key = secretStream;</span>
+  <span class="s2">this</span><span class="s1">.signature = </span><span class="s2">new </span><span class="s1">DataStream(opts.signature);</span>
+  <span class="s2">this</span><span class="s1">.secret.once(</span><span class="s3">'close'</span><span class="s1">, </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.signature.writable &amp;&amp; </span><span class="s2">this</span><span class="s1">.readable)</span>
+      <span class="s2">this</span><span class="s1">.verify();</span>
+  <span class="s1">}.bind(</span><span class="s2">this</span><span class="s1">));</span>
+
+  <span class="s2">this</span><span class="s1">.signature.once(</span><span class="s3">'close'</span><span class="s1">, </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.secret.writable &amp;&amp; </span><span class="s2">this</span><span class="s1">.readable)</span>
+      <span class="s2">this</span><span class="s1">.verify();</span>
+  <span class="s1">}.bind(</span><span class="s2">this</span><span class="s1">));</span>
+<span class="s1">}</span>
+<span class="s1">util.inherits(VerifyStream, Stream);</span>
+<span class="s1">VerifyStream.prototype.verify = </span><span class="s2">function </span><span class="s1">verify() {</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s2">var </span><span class="s1">valid = jwsVerify(</span><span class="s2">this</span><span class="s1">.signature.buffer, </span><span class="s2">this</span><span class="s1">.algorithm, </span><span class="s2">this</span><span class="s1">.key.buffer);</span>
+    <span class="s2">var </span><span class="s1">obj = jwsDecode(</span><span class="s2">this</span><span class="s1">.signature.buffer, </span><span class="s2">this</span><span class="s1">.encoding);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'done'</span><span class="s1">, valid, obj);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'data'</span><span class="s1">, valid);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'end'</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">valid;</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+    <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'error'</span><span class="s1">, e);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'close'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s1">VerifyStream.decode = jwsDecode;</span>
+<span class="s1">VerifyStream.isValid = isValidJws;</span>
+<span class="s1">VerifyStream.verify = jwsVerify;</span>
+
+<span class="s1">module.exports = VerifyStream;</span>
+</pre>
+</body>
+</html>

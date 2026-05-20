@@ -1,0 +1,174 @@
+<html>
+<head>
+<title>awsclient.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+awsclient.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2021 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.AwsClient = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const awsrequestsigner_1 = require(</span><span class="s0">&quot;./awsrequestsigner&quot;</span><span class="s1">);</span>
+<span class="s1">const baseexternalclient_1 = require(</span><span class="s0">&quot;./baseexternalclient&quot;</span><span class="s1">);</span>
+<span class="s1">const defaultawssecuritycredentialssupplier_1 = require(</span><span class="s0">&quot;./defaultawssecuritycredentialssupplier&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s2">/** 
+ * AWS external account client. This is used for AWS workloads, where 
+ * AWS STS GetCallerIdentity serialized signed requests are exchanged for 
+ * GCP access token. 
+ */</span>
+<span class="s1">class AwsClient extends baseexternalclient_1.BaseExternalAccountClient {</span>
+    <span class="s1">environmentId;</span>
+    <span class="s1">awsSecurityCredentialsSupplier;</span>
+    <span class="s1">regionalCredVerificationUrl;</span>
+    <span class="s1">awsRequestSigner;</span>
+    <span class="s1">region;</span>
+    <span class="s1">static #DEFAULT_AWS_REGIONAL_CREDENTIAL_VERIFICATION_URL = </span><span class="s0">'https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&amp;Version=2011-06-15'</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * @deprecated AWS client no validates the EC2 metadata address. 
+     **/</span>
+    <span class="s1">static AWS_EC2_METADATA_IPV4_ADDRESS = </span><span class="s0">'169.254.169.254'</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * @deprecated AWS client no validates the EC2 metadata address. 
+     **/</span>
+    <span class="s1">static AWS_EC2_METADATA_IPV6_ADDRESS = </span><span class="s0">'fd00:ec2::254'</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * Instantiates an AwsClient instance using the provided JSON 
+     * object loaded from an external account credentials file. 
+     * An error is thrown if the credential is not a valid AWS credential. 
+     * @param options The external account options object typically loaded 
+     *   from the external account JSON credential file. 
+     */</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s1">super(options);</span>
+        <span class="s1">const opts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(options);</span>
+        <span class="s1">const credentialSource = opts.get(</span><span class="s0">'credential_source'</span><span class="s1">);</span>
+        <span class="s1">const awsSecurityCredentialsSupplier = opts.get(</span><span class="s0">'aws_security_credentials_supplier'</span><span class="s1">);</span>
+        <span class="s2">// Validate credential sourcing configuration.</span>
+        <span class="s3">if </span><span class="s1">(!credentialSource &amp;&amp; !awsSecurityCredentialsSupplier) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'A credential source or AWS security credentials supplier must be specified.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(credentialSource &amp;&amp; awsSecurityCredentialsSupplier) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Only one of credential source or AWS security credentials supplier can be specified.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(awsSecurityCredentialsSupplier) {</span>
+            <span class="s3">this</span><span class="s1">.awsSecurityCredentialsSupplier = awsSecurityCredentialsSupplier;</span>
+            <span class="s3">this</span><span class="s1">.regionalCredVerificationUrl =</span>
+                <span class="s1">AwsClient.#DEFAULT_AWS_REGIONAL_CREDENTIAL_VERIFICATION_URL;</span>
+            <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'programmatic'</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">const credentialSourceOpts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(credentialSource);</span>
+            <span class="s3">this</span><span class="s1">.environmentId = credentialSourceOpts.get(</span><span class="s0">'environment_id'</span><span class="s1">);</span>
+            <span class="s2">// This is only required if the AWS region is not available in the</span>
+            <span class="s2">// AWS_REGION or AWS_DEFAULT_REGION environment variables.</span>
+            <span class="s1">const regionUrl = credentialSourceOpts.get(</span><span class="s0">'region_url'</span><span class="s1">);</span>
+            <span class="s2">// This is only required if AWS security credentials are not available in</span>
+            <span class="s2">// environment variables.</span>
+            <span class="s1">const securityCredentialsUrl = credentialSourceOpts.get(</span><span class="s0">'url'</span><span class="s1">);</span>
+            <span class="s1">const imdsV2SessionTokenUrl = credentialSourceOpts.get(</span><span class="s0">'imdsv2_session_token_url'</span><span class="s1">);</span>
+            <span class="s3">this</span><span class="s1">.awsSecurityCredentialsSupplier =</span>
+                <span class="s3">new </span><span class="s1">defaultawssecuritycredentialssupplier_1.DefaultAwsSecurityCredentialsSupplier({</span>
+                    <span class="s1">regionUrl: regionUrl,</span>
+                    <span class="s1">securityCredentialsUrl: securityCredentialsUrl,</span>
+                    <span class="s1">imdsV2SessionTokenUrl: imdsV2SessionTokenUrl,</span>
+                <span class="s1">});</span>
+            <span class="s3">this</span><span class="s1">.regionalCredVerificationUrl = credentialSourceOpts.get(</span><span class="s0">'regional_cred_verification_url'</span><span class="s1">);</span>
+            <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'aws'</span><span class="s1">;</span>
+            <span class="s2">// Data validators.</span>
+            <span class="s3">this</span><span class="s1">.validateEnvironmentId();</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.awsRequestSigner = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.region = </span><span class="s0">''</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">validateEnvironmentId() {</span>
+        <span class="s1">const match = </span><span class="s3">this</span><span class="s1">.environmentId?.match(/^(aws)(\d+)$/);</span>
+        <span class="s3">if </span><span class="s1">(!match || !</span><span class="s3">this</span><span class="s1">.regionalCredVerificationUrl) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No valid AWS &quot;credential_source&quot; provided'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(parseInt(match[</span><span class="s4">2</span><span class="s1">], </span><span class="s4">10</span><span class="s1">) !== </span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(`aws version </span><span class="s0">&quot;${match[2]}&quot; </span><span class="s1">is not supported </span><span class="s3">in </span><span class="s1">the current build.`);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Triggered when an external subject token is needed to be exchanged for a 
+     * GCP access token via GCP STS endpoint. This will call the 
+     * {@link AwsSecurityCredentialsSupplier} to retrieve an AWS region and AWS 
+     * Security Credentials, then use them to create a signed AWS STS request that 
+     * can be exchanged for a GCP access token. 
+     * @return A promise that resolves with the external subject token. 
+     */</span>
+    <span class="s1">async retrieveSubjectToken() {</span>
+        <span class="s2">// Initialize AWS request signer if not already initialized.</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.awsRequestSigner) {</span>
+            <span class="s3">this</span><span class="s1">.region = await </span><span class="s3">this</span><span class="s1">.awsSecurityCredentialsSupplier.getAwsRegion(</span><span class="s3">this</span><span class="s1">.supplierContext);</span>
+            <span class="s3">this</span><span class="s1">.awsRequestSigner = </span><span class="s3">new </span><span class="s1">awsrequestsigner_1.AwsRequestSigner(async () =&gt; {</span>
+                <span class="s3">return this</span><span class="s1">.awsSecurityCredentialsSupplier.getAwsSecurityCredentials(</span><span class="s3">this</span><span class="s1">.supplierContext);</span>
+            <span class="s1">}, </span><span class="s3">this</span><span class="s1">.region);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Generate signed request to AWS STS GetCallerIdentity API.</span>
+        <span class="s2">// Use the required regional endpoint. Otherwise, the request will fail.</span>
+        <span class="s1">const options = await </span><span class="s3">this</span><span class="s1">.awsRequestSigner.getRequestOptions({</span>
+            <span class="s1">...AwsClient.RETRY_CONFIG,</span>
+            <span class="s1">url: </span><span class="s3">this</span><span class="s1">.regionalCredVerificationUrl.replace(</span><span class="s0">'{region}'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.region),</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s2">// The GCP STS endpoint expects the headers to be formatted as:</span>
+        <span class="s2">// [</span>
+        <span class="s2">//   {key: 'x-amz-date', value: '...'},</span>
+        <span class="s2">//   {key: 'authorization', value: '...'},</span>
+        <span class="s2">//   ...</span>
+        <span class="s2">// ]</span>
+        <span class="s2">// And then serialized as:</span>
+        <span class="s2">// encodeURIComponent(JSON.stringify({</span>
+        <span class="s2">//   url: '...',</span>
+        <span class="s2">//   method: 'POST',</span>
+        <span class="s2">//   headers: [{key: 'x-amz-date', value: '...'}, ...]</span>
+        <span class="s2">// }))</span>
+        <span class="s1">const reformattedHeader = [];</span>
+        <span class="s1">const extendedHeaders = gaxios_1.Gaxios.mergeHeaders({</span>
+            <span class="s2">// The full, canonical resource name of the workload identity pool</span>
+            <span class="s2">// provider, with or without the HTTPS prefix.</span>
+            <span class="s2">// Including this header as part of the signature is recommended to</span>
+            <span class="s2">// ensure data integrity.</span>
+            <span class="s0">'x-goog-cloud-target-resource'</span><span class="s1">: </span><span class="s3">this</span><span class="s1">.audience,</span>
+        <span class="s1">}, options.headers);</span>
+        <span class="s2">// Reformat header to GCP STS expected format.</span>
+        <span class="s1">extendedHeaders.forEach((value, key) =&gt; reformattedHeader.push({ key, value }));</span>
+        <span class="s2">// Serialize the reformatted signed request.</span>
+        <span class="s3">return </span><span class="s1">encodeURIComponent(JSON.stringify({</span>
+            <span class="s1">url: options.url,</span>
+            <span class="s1">method: options.method,</span>
+            <span class="s1">headers: reformattedHeader,</span>
+        <span class="s1">}));</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.AwsClient = AwsClient;</span>
+<span class="s2">//# sourceMappingURL=awsclient.js.map</span></pre>
+</body>
+</html>

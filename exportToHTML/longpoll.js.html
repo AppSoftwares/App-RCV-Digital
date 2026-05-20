@@ -1,0 +1,214 @@
+<html>
+<head>
+<title>longpoll.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+longpoll.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import {</span>
+  <span class="s0">SOCKET_STATES,</span>
+  <span class="s0">TRANSPORTS,</span>
+  <span class="s0">AUTH_TOKEN_PREFIX</span>
+<span class="s0">} from </span><span class="s1">&quot;./constants&quot;</span>
+
+<span class="s0">import Ajax from </span><span class="s1">&quot;./ajax&quot;</span>
+
+<span class="s0">let arrayBufferToBase64 = (buffer) =&gt; {</span>
+  <span class="s0">let binary = </span><span class="s1">&quot;&quot;</span>
+  <span class="s0">let bytes = </span><span class="s2">new </span><span class="s0">Uint8Array(buffer)</span>
+  <span class="s0">let len = bytes.byteLength</span>
+  <span class="s2">for</span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; len; i++){ binary += String.fromCharCode(bytes[i]) }</span>
+  <span class="s2">return </span><span class="s0">btoa(binary)</span>
+<span class="s0">}</span>
+
+<span class="s0">export </span><span class="s2">default </span><span class="s0">class LongPoll {</span>
+
+  <span class="s0">constructor(endPoint, protocols){</span>
+    <span class="s4">// we only support subprotocols for authToken</span>
+    <span class="s4">// [&quot;phoenix&quot;, &quot;base64url.bearer.phx.BASE64_ENCODED_TOKEN&quot;]</span>
+    <span class="s2">if</span><span class="s0">(protocols &amp;&amp; protocols.length === </span><span class="s3">2 </span><span class="s0">&amp;&amp; protocols[</span><span class="s3">1</span><span class="s0">].startsWith(AUTH_TOKEN_PREFIX)){</span>
+      <span class="s2">this</span><span class="s0">.authToken = atob(protocols[</span><span class="s3">1</span><span class="s0">].slice(AUTH_TOKEN_PREFIX.length))</span>
+    <span class="s0">}</span>
+    <span class="s2">this</span><span class="s0">.endPoint = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s0">.token = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s0">.skipHeartbeat = </span><span class="s2">true</span>
+    <span class="s2">this</span><span class="s0">.reqs = </span><span class="s2">new </span><span class="s0">Set()</span>
+    <span class="s2">this</span><span class="s0">.awaitingBatchAck = </span><span class="s2">false</span>
+    <span class="s2">this</span><span class="s0">.currentBatch = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s0">.currentBatchTimer = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s0">.batchBuffer = []</span>
+    <span class="s2">this</span><span class="s0">.onopen = </span><span class="s2">function </span><span class="s0">(){ } </span><span class="s4">// noop</span>
+    <span class="s2">this</span><span class="s0">.onerror = </span><span class="s2">function </span><span class="s0">(){ } </span><span class="s4">// noop</span>
+    <span class="s2">this</span><span class="s0">.onmessage = </span><span class="s2">function </span><span class="s0">(){ } </span><span class="s4">// noop</span>
+    <span class="s2">this</span><span class="s0">.onclose = </span><span class="s2">function </span><span class="s0">(){ } </span><span class="s4">// noop</span>
+    <span class="s2">this</span><span class="s0">.pollEndpoint = </span><span class="s2">this</span><span class="s0">.normalizeEndpoint(endPoint)</span>
+    <span class="s2">this</span><span class="s0">.readyState = SOCKET_STATES.connecting</span>
+    <span class="s4">// we must wait for the caller to finish setting up our callbacks and timeout properties</span>
+    <span class="s0">setTimeout(() =&gt; </span><span class="s2">this</span><span class="s0">.poll(), </span><span class="s3">0</span><span class="s0">)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">normalizeEndpoint(endPoint){</span>
+    <span class="s2">return </span><span class="s0">(endPoint</span>
+      <span class="s0">.replace(</span><span class="s1">&quot;ws://&quot;</span><span class="s0">, </span><span class="s1">&quot;http://&quot;</span><span class="s0">)</span>
+      <span class="s0">.replace(</span><span class="s1">&quot;wss://&quot;</span><span class="s0">, </span><span class="s1">&quot;https://&quot;</span><span class="s0">)</span>
+      <span class="s0">.replace(</span><span class="s2">new </span><span class="s0">RegExp(</span><span class="s1">&quot;(.*)</span><span class="s5">\/</span><span class="s1">&quot; </span><span class="s0">+ TRANSPORTS.websocket), </span><span class="s1">&quot;$1/&quot; </span><span class="s0">+ TRANSPORTS.longpoll))</span>
+  <span class="s0">}</span>
+
+  <span class="s0">endpointURL(){</span>
+    <span class="s2">return </span><span class="s0">Ajax.appendParams(</span><span class="s2">this</span><span class="s0">.pollEndpoint, {token: </span><span class="s2">this</span><span class="s0">.token})</span>
+  <span class="s0">}</span>
+
+  <span class="s0">closeAndRetry(code, reason, wasClean){</span>
+    <span class="s2">this</span><span class="s0">.close(code, reason, wasClean)</span>
+    <span class="s2">this</span><span class="s0">.readyState = SOCKET_STATES.connecting</span>
+  <span class="s0">}</span>
+
+  <span class="s0">ontimeout(){</span>
+    <span class="s2">this</span><span class="s0">.onerror(</span><span class="s1">&quot;timeout&quot;</span><span class="s0">)</span>
+    <span class="s2">this</span><span class="s0">.closeAndRetry(</span><span class="s3">1005</span><span class="s0">, </span><span class="s1">&quot;timeout&quot;</span><span class="s0">, </span><span class="s2">false</span><span class="s0">)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">isActive(){ </span><span class="s2">return this</span><span class="s0">.readyState === SOCKET_STATES.open || </span><span class="s2">this</span><span class="s0">.readyState === SOCKET_STATES.connecting }</span>
+
+  <span class="s0">poll(){</span>
+    <span class="s0">const headers = {</span><span class="s1">&quot;Accept&quot;</span><span class="s0">: </span><span class="s1">&quot;application/json&quot;</span><span class="s0">}</span>
+    <span class="s2">if</span><span class="s0">(</span><span class="s2">this</span><span class="s0">.authToken){</span>
+      <span class="s0">headers[</span><span class="s1">&quot;X-Phoenix-AuthToken&quot;</span><span class="s0">] = </span><span class="s2">this</span><span class="s0">.authToken</span>
+    <span class="s0">}</span>
+    <span class="s2">this</span><span class="s0">.ajax(</span><span class="s1">&quot;GET&quot;</span><span class="s0">, headers, </span><span class="s2">null</span><span class="s0">, () =&gt; </span><span class="s2">this</span><span class="s0">.ontimeout(), resp =&gt; {</span>
+      <span class="s2">if</span><span class="s0">(resp){</span>
+        <span class="s2">var </span><span class="s0">{status, token, messages} = resp</span>
+        <span class="s2">if</span><span class="s0">(status === </span><span class="s3">410 </span><span class="s0">&amp;&amp; </span><span class="s2">this</span><span class="s0">.token !== </span><span class="s2">null</span><span class="s0">){</span>
+          <span class="s4">// In case we already have a token, this means that our existing session</span>
+          <span class="s4">// is gone. We fail so that the client rejoins its channels.</span>
+          <span class="s2">this</span><span class="s0">.onerror(</span><span class="s3">410</span><span class="s0">)</span>
+          <span class="s2">this</span><span class="s0">.closeAndRetry(</span><span class="s3">3410</span><span class="s0">, </span><span class="s1">&quot;session_gone&quot;</span><span class="s0">, </span><span class="s2">false</span><span class="s0">)</span>
+          <span class="s2">return</span>
+        <span class="s0">}</span>
+        <span class="s2">this</span><span class="s0">.token = token</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">status = </span><span class="s3">0</span>
+      <span class="s0">}</span>
+
+      <span class="s2">switch</span><span class="s0">(status){</span>
+        <span class="s2">case </span><span class="s3">200</span><span class="s0">:</span>
+          <span class="s0">messages.forEach(msg =&gt; {</span>
+            <span class="s4">// Tasks are what things like event handlers, setTimeout callbacks,</span>
+            <span class="s4">// promise resolves and more are run within.</span>
+            <span class="s4">// In modern browsers, there are two different kinds of tasks,</span>
+            <span class="s4">// microtasks and macrotasks.</span>
+            <span class="s4">// Microtasks are mainly used for Promises, while macrotasks are</span>
+            <span class="s4">// used for everything else.</span>
+            <span class="s4">// Microtasks always have priority over macrotasks. If the JS engine</span>
+            <span class="s4">// is looking for a task to run, it will always try to empty the</span>
+            <span class="s4">// microtask queue before attempting to run anything from the</span>
+            <span class="s4">// macrotask queue.</span>
+            <span class="s4">//</span>
+            <span class="s4">// For the WebSocket transport, messages always arrive in their own</span>
+            <span class="s4">// event. This means that if any promises are resolved from within,</span>
+            <span class="s4">// their callbacks will always finish execution by the time the</span>
+            <span class="s4">// next message event handler is run.</span>
+            <span class="s4">//</span>
+            <span class="s4">// In order to emulate this behaviour, we need to make sure each</span>
+            <span class="s4">// onmessage handler is run within its own macrotask.</span>
+            <span class="s0">setTimeout(() =&gt; </span><span class="s2">this</span><span class="s0">.onmessage({data: msg}), </span><span class="s3">0</span><span class="s0">)</span>
+          <span class="s0">})</span>
+          <span class="s2">this</span><span class="s0">.poll()</span>
+          <span class="s2">break</span>
+        <span class="s2">case </span><span class="s3">204</span><span class="s0">:</span>
+          <span class="s2">this</span><span class="s0">.poll()</span>
+          <span class="s2">break</span>
+        <span class="s2">case </span><span class="s3">410</span><span class="s0">:</span>
+          <span class="s2">this</span><span class="s0">.readyState = SOCKET_STATES.open</span>
+          <span class="s2">this</span><span class="s0">.onopen({})</span>
+          <span class="s2">this</span><span class="s0">.poll()</span>
+          <span class="s2">break</span>
+        <span class="s2">case </span><span class="s3">403</span><span class="s0">:</span>
+          <span class="s2">this</span><span class="s0">.onerror(</span><span class="s3">403</span><span class="s0">)</span>
+          <span class="s2">this</span><span class="s0">.close(</span><span class="s3">1008</span><span class="s0">, </span><span class="s1">&quot;forbidden&quot;</span><span class="s0">, </span><span class="s2">false</span><span class="s0">)</span>
+          <span class="s2">break</span>
+        <span class="s2">case </span><span class="s3">0</span><span class="s0">:</span>
+        <span class="s2">case </span><span class="s3">500</span><span class="s0">:</span>
+          <span class="s2">this</span><span class="s0">.onerror(</span><span class="s3">500</span><span class="s0">)</span>
+          <span class="s2">this</span><span class="s0">.closeAndRetry(</span><span class="s3">1011</span><span class="s0">, </span><span class="s1">&quot;internal server error&quot;</span><span class="s0">, </span><span class="s3">500</span><span class="s0">)</span>
+          <span class="s2">break</span>
+        <span class="s2">default</span><span class="s0">: </span><span class="s2">throw new </span><span class="s0">Error(`unhandled poll status ${status}`)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s4">// we collect all pushes within the current event loop by</span>
+  <span class="s4">// setTimeout 0, which optimizes back-to-back procedural</span>
+  <span class="s4">// pushes against an empty buffer</span>
+
+  <span class="s0">send(body){</span>
+    <span class="s2">if</span><span class="s0">(</span><span class="s2">typeof</span><span class="s0">(body) !== </span><span class="s1">&quot;string&quot;</span><span class="s0">){ body = arrayBufferToBase64(body) }</span>
+    <span class="s2">if</span><span class="s0">(</span><span class="s2">this</span><span class="s0">.currentBatch){</span>
+      <span class="s2">this</span><span class="s0">.currentBatch.push(body)</span>
+    <span class="s0">} </span><span class="s2">else if</span><span class="s0">(</span><span class="s2">this</span><span class="s0">.awaitingBatchAck){</span>
+      <span class="s2">this</span><span class="s0">.batchBuffer.push(body)</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s2">this</span><span class="s0">.currentBatch = [body]</span>
+      <span class="s2">this</span><span class="s0">.currentBatchTimer = setTimeout(() =&gt; {</span>
+        <span class="s2">this</span><span class="s0">.batchSend(</span><span class="s2">this</span><span class="s0">.currentBatch)</span>
+        <span class="s2">this</span><span class="s0">.currentBatch = </span><span class="s2">null</span>
+      <span class="s0">}, </span><span class="s3">0</span><span class="s0">)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">batchSend(messages){</span>
+    <span class="s2">this</span><span class="s0">.awaitingBatchAck = </span><span class="s2">true</span>
+    <span class="s2">this</span><span class="s0">.ajax(</span><span class="s1">&quot;POST&quot;</span><span class="s0">, {</span><span class="s1">&quot;Content-Type&quot;</span><span class="s0">: </span><span class="s1">&quot;application/x-ndjson&quot;</span><span class="s0">}, messages.join(</span><span class="s1">&quot;</span><span class="s2">\n</span><span class="s1">&quot;</span><span class="s0">), () =&gt; </span><span class="s2">this</span><span class="s0">.onerror(</span><span class="s1">&quot;timeout&quot;</span><span class="s0">), resp =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.awaitingBatchAck = </span><span class="s2">false</span>
+      <span class="s2">if</span><span class="s0">(!resp || resp.status !== </span><span class="s3">200</span><span class="s0">){</span>
+        <span class="s2">this</span><span class="s0">.onerror(resp &amp;&amp; resp.status)</span>
+        <span class="s2">this</span><span class="s0">.closeAndRetry(</span><span class="s3">1011</span><span class="s0">, </span><span class="s1">&quot;internal server error&quot;</span><span class="s0">, </span><span class="s2">false</span><span class="s0">)</span>
+      <span class="s0">} </span><span class="s2">else if</span><span class="s0">(</span><span class="s2">this</span><span class="s0">.batchBuffer.length &gt; </span><span class="s3">0</span><span class="s0">){</span>
+        <span class="s2">this</span><span class="s0">.batchSend(</span><span class="s2">this</span><span class="s0">.batchBuffer)</span>
+        <span class="s2">this</span><span class="s0">.batchBuffer = []</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s0">close(code, reason, wasClean){</span>
+    <span class="s2">for</span><span class="s0">(let req of </span><span class="s2">this</span><span class="s0">.reqs){ req.abort() }</span>
+    <span class="s2">this</span><span class="s0">.readyState = SOCKET_STATES.closed</span>
+    <span class="s0">let opts = Object.assign({code: </span><span class="s3">1000</span><span class="s0">, reason: undefined, wasClean: </span><span class="s2">true</span><span class="s0">}, {code, reason, wasClean})</span>
+    <span class="s2">this</span><span class="s0">.batchBuffer = []</span>
+    <span class="s0">clearTimeout(</span><span class="s2">this</span><span class="s0">.currentBatchTimer)</span>
+    <span class="s2">this</span><span class="s0">.currentBatchTimer = </span><span class="s2">null</span>
+    <span class="s2">if</span><span class="s0">(</span><span class="s2">typeof</span><span class="s0">(CloseEvent) !== </span><span class="s1">&quot;undefined&quot;</span><span class="s0">){</span>
+      <span class="s2">this</span><span class="s0">.onclose(</span><span class="s2">new </span><span class="s0">CloseEvent(</span><span class="s1">&quot;close&quot;</span><span class="s0">, opts))</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s2">this</span><span class="s0">.onclose(opts)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">ajax(method, headers, body, onCallerTimeout, callback){</span>
+    <span class="s0">let req</span>
+    <span class="s0">let ontimeout = () =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.reqs.</span><span class="s2">delete</span><span class="s0">(req)</span>
+      <span class="s0">onCallerTimeout()</span>
+    <span class="s0">}</span>
+    <span class="s0">req = Ajax.request(method, </span><span class="s2">this</span><span class="s0">.endpointURL(), headers, body, </span><span class="s2">this</span><span class="s0">.timeout, ontimeout, resp =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.reqs.</span><span class="s2">delete</span><span class="s0">(req)</span>
+      <span class="s2">if</span><span class="s0">(</span><span class="s2">this</span><span class="s0">.isActive()){ callback(resp) }</span>
+    <span class="s0">})</span>
+    <span class="s2">this</span><span class="s0">.reqs.add(req)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,397 @@
+<html>
+<head>
+<title>map-generator.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+map-generator.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span>
+
+<span class="s1">let { dirname, relative, resolve, sep } = require(</span><span class="s0">'path'</span><span class="s1">)</span>
+<span class="s1">let { SourceMapConsumer, SourceMapGenerator } = require(</span><span class="s0">'source-map-js'</span><span class="s1">)</span>
+<span class="s1">let { pathToFileURL } = require(</span><span class="s0">'url'</span><span class="s1">)</span>
+
+<span class="s1">let Input = require(</span><span class="s0">'./input'</span><span class="s1">)</span>
+
+<span class="s1">let sourceMapAvailable = Boolean(SourceMapConsumer &amp;&amp; SourceMapGenerator)</span>
+<span class="s1">let pathAvailable = Boolean(dirname &amp;&amp; resolve &amp;&amp; relative &amp;&amp; sep)</span>
+
+<span class="s1">class MapGenerator {</span>
+  <span class="s1">constructor(stringify, root, opts, cssString) {</span>
+    <span class="s2">this</span><span class="s1">.stringify = stringify</span>
+    <span class="s2">this</span><span class="s1">.mapOpts = opts.map || {}</span>
+    <span class="s2">this</span><span class="s1">.root = root</span>
+    <span class="s2">this</span><span class="s1">.opts = opts</span>
+    <span class="s2">this</span><span class="s1">.css = cssString</span>
+    <span class="s2">this</span><span class="s1">.originalCSS = cssString</span>
+    <span class="s2">this</span><span class="s1">.usesFileUrls = !</span><span class="s2">this</span><span class="s1">.mapOpts.from &amp;&amp; </span><span class="s2">this</span><span class="s1">.mapOpts.absolute</span>
+
+    <span class="s2">this</span><span class="s1">.memoizedFileURLs = </span><span class="s2">new </span><span class="s1">Map()</span>
+    <span class="s2">this</span><span class="s1">.memoizedPaths = </span><span class="s2">new </span><span class="s1">Map()</span>
+    <span class="s2">this</span><span class="s1">.memoizedURLs = </span><span class="s2">new </span><span class="s1">Map()</span>
+  <span class="s1">}</span>
+
+  <span class="s1">addAnnotation() {</span>
+    <span class="s1">let content</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isInline()) {</span>
+      <span class="s1">content =</span>
+        <span class="s0">'data:application/json;base64,' </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.toBase64(</span><span class="s2">this</span><span class="s1">.map.toString())</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.annotation === </span><span class="s0">'string'</span><span class="s1">) {</span>
+      <span class="s1">content = </span><span class="s2">this</span><span class="s1">.mapOpts.annotation</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.annotation === </span><span class="s0">'function'</span><span class="s1">) {</span>
+      <span class="s1">content = </span><span class="s2">this</span><span class="s1">.mapOpts.annotation(</span><span class="s2">this</span><span class="s1">.opts.to, </span><span class="s2">this</span><span class="s1">.root)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">content = </span><span class="s2">this</span><span class="s1">.outputFile() + </span><span class="s0">'.map'</span>
+    <span class="s1">}</span>
+    <span class="s1">let eol = </span><span class="s0">'</span><span class="s2">\n</span><span class="s0">'</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.css.includes(</span><span class="s0">'</span><span class="s2">\r\n</span><span class="s0">'</span><span class="s1">)) eol = </span><span class="s0">'</span><span class="s2">\r\n</span><span class="s0">'</span>
+
+    <span class="s2">this</span><span class="s1">.css += eol + </span><span class="s0">'/*# sourceMappingURL=' </span><span class="s1">+ content + </span><span class="s0">' */'</span>
+  <span class="s1">}</span>
+
+  <span class="s1">applyPrevMaps() {</span>
+    <span class="s2">for </span><span class="s1">(let prev of </span><span class="s2">this</span><span class="s1">.previous()) {</span>
+      <span class="s1">let from = </span><span class="s2">this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(prev.file))</span>
+      <span class="s1">let root = prev.root || dirname(prev.file)</span>
+      <span class="s1">let map</span>
+
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.mapOpts.sourcesContent === </span><span class="s2">false</span><span class="s1">) {</span>
+        <span class="s1">map = </span><span class="s2">new </span><span class="s1">SourceMapConsumer(prev.text)</span>
+        <span class="s2">if </span><span class="s1">(map.sourcesContent) {</span>
+          <span class="s1">map.sourcesContent = </span><span class="s2">null</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">map = prev.consumer()</span>
+      <span class="s1">}</span>
+
+      <span class="s2">this</span><span class="s1">.map.applySourceMap(map, from, </span><span class="s2">this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(root)))</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">clearAnnotation() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.mapOpts.annotation === </span><span class="s2">false</span><span class="s1">) </span><span class="s2">return</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.root) {</span>
+      <span class="s1">let node</span>
+      <span class="s2">for </span><span class="s1">(let i = </span><span class="s2">this</span><span class="s1">.root.nodes.length - </span><span class="s3">1</span><span class="s1">; i &gt;= </span><span class="s3">0</span><span class="s1">; i--) {</span>
+        <span class="s1">node = </span><span class="s2">this</span><span class="s1">.root.nodes[i]</span>
+        <span class="s2">if </span><span class="s1">(node.type !== </span><span class="s0">'comment'</span><span class="s1">) </span><span class="s2">continue</span>
+        <span class="s2">if </span><span class="s1">(node.text.startsWith(</span><span class="s0">'# sourceMappingURL='</span><span class="s1">)) {</span>
+          <span class="s2">this</span><span class="s1">.root.removeChild(i)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.css) {</span>
+      <span class="s1">let startIndex</span>
+      <span class="s2">while </span><span class="s1">((startIndex = </span><span class="s2">this</span><span class="s1">.css.lastIndexOf(</span><span class="s0">'/*#'</span><span class="s1">)) !== -</span><span class="s3">1</span><span class="s1">) {</span>
+        <span class="s1">let endIndex = </span><span class="s2">this</span><span class="s1">.css.indexOf(</span><span class="s0">'*/'</span><span class="s1">, startIndex + </span><span class="s3">3</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">(endIndex === -</span><span class="s3">1</span><span class="s1">) </span><span class="s2">break</span>
+        <span class="s2">while </span><span class="s1">(startIndex &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; </span><span class="s2">this</span><span class="s1">.css[startIndex - </span><span class="s3">1</span><span class="s1">] === </span><span class="s0">'</span><span class="s2">\n</span><span class="s0">'</span><span class="s1">) {</span>
+          <span class="s1">startIndex--</span>
+        <span class="s1">}</span>
+        <span class="s2">this</span><span class="s1">.css = </span><span class="s2">this</span><span class="s1">.css.slice(</span><span class="s3">0</span><span class="s1">, startIndex) + </span><span class="s2">this</span><span class="s1">.css.slice(endIndex + </span><span class="s3">2</span><span class="s1">)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">generate() {</span>
+    <span class="s2">this</span><span class="s1">.clearAnnotation()</span>
+    <span class="s2">if </span><span class="s1">(pathAvailable &amp;&amp; sourceMapAvailable &amp;&amp; </span><span class="s2">this</span><span class="s1">.isMap()) {</span>
+      <span class="s2">return this</span><span class="s1">.generateMap()</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">let result = </span><span class="s0">''</span>
+      <span class="s2">this</span><span class="s1">.stringify(</span><span class="s2">this</span><span class="s1">.root, i =&gt; {</span>
+        <span class="s1">result += i</span>
+      <span class="s1">})</span>
+      <span class="s2">return </span><span class="s1">[result]</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">generateMap() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.root) {</span>
+      <span class="s2">this</span><span class="s1">.generateString()</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.previous().length === </span><span class="s3">1</span><span class="s1">) {</span>
+      <span class="s1">let prev = </span><span class="s2">this</span><span class="s1">.previous()[</span><span class="s3">0</span><span class="s1">].consumer()</span>
+      <span class="s1">prev.file = </span><span class="s2">this</span><span class="s1">.outputFile()</span>
+      <span class="s2">this</span><span class="s1">.map = SourceMapGenerator.fromSourceMap(prev, {</span>
+        <span class="s1">ignoreInvalidMapping: </span><span class="s2">true</span>
+      <span class="s1">})</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">this</span><span class="s1">.map = </span><span class="s2">new </span><span class="s1">SourceMapGenerator({</span>
+        <span class="s1">file: </span><span class="s2">this</span><span class="s1">.outputFile(),</span>
+        <span class="s1">ignoreInvalidMapping: </span><span class="s2">true</span>
+      <span class="s1">})</span>
+      <span class="s2">this</span><span class="s1">.map.addMapping({</span>
+        <span class="s1">generated: { column: </span><span class="s3">0</span><span class="s1">, line: </span><span class="s3">1 </span><span class="s1">},</span>
+        <span class="s1">original: { column: </span><span class="s3">0</span><span class="s1">, line: </span><span class="s3">1 </span><span class="s1">},</span>
+        <span class="s1">source: </span><span class="s2">this</span><span class="s1">.opts.from</span>
+          <span class="s1">? </span><span class="s2">this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(</span><span class="s2">this</span><span class="s1">.opts.from))</span>
+          <span class="s1">: </span><span class="s0">'&lt;no source&gt;'</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isSourcesContent()) </span><span class="s2">this</span><span class="s1">.setSourcesContent()</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.root &amp;&amp; </span><span class="s2">this</span><span class="s1">.previous().length &gt; </span><span class="s3">0</span><span class="s1">) </span><span class="s2">this</span><span class="s1">.applyPrevMaps()</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isAnnotation()) </span><span class="s2">this</span><span class="s1">.addAnnotation()</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isInline()) {</span>
+      <span class="s2">return </span><span class="s1">[</span><span class="s2">this</span><span class="s1">.css]</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s1">[</span><span class="s2">this</span><span class="s1">.css, </span><span class="s2">this</span><span class="s1">.map]</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">generateString() {</span>
+    <span class="s2">this</span><span class="s1">.css = </span><span class="s0">''</span>
+    <span class="s2">this</span><span class="s1">.map = </span><span class="s2">new </span><span class="s1">SourceMapGenerator({</span>
+      <span class="s1">file: </span><span class="s2">this</span><span class="s1">.outputFile(),</span>
+      <span class="s1">ignoreInvalidMapping: </span><span class="s2">true</span>
+    <span class="s1">})</span>
+
+    <span class="s1">let line = </span><span class="s3">1</span>
+    <span class="s1">let column = </span><span class="s3">1</span>
+
+    <span class="s1">let noSource = </span><span class="s0">'&lt;no source&gt;'</span>
+    <span class="s1">let mapping = {</span>
+      <span class="s1">generated: { column: </span><span class="s3">0</span><span class="s1">, line: </span><span class="s3">0 </span><span class="s1">},</span>
+      <span class="s1">original: { column: </span><span class="s3">0</span><span class="s1">, line: </span><span class="s3">0 </span><span class="s1">},</span>
+      <span class="s1">source: </span><span class="s0">''</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let last, lines</span>
+    <span class="s2">this</span><span class="s1">.stringify(</span><span class="s2">this</span><span class="s1">.root, (str, node, type) =&gt; {</span>
+      <span class="s2">this</span><span class="s1">.css += str</span>
+
+      <span class="s2">if </span><span class="s1">(node &amp;&amp; type !== </span><span class="s0">'end'</span><span class="s1">) {</span>
+        <span class="s1">mapping.generated.line = line</span>
+        <span class="s1">mapping.generated.column = column - </span><span class="s3">1</span>
+        <span class="s2">if </span><span class="s1">(node.source &amp;&amp; node.source.start) {</span>
+          <span class="s1">mapping.source = </span><span class="s2">this</span><span class="s1">.sourcePath(node)</span>
+          <span class="s1">mapping.original.line = node.source.start.line</span>
+          <span class="s1">mapping.original.column = node.source.start.column - </span><span class="s3">1</span>
+          <span class="s2">this</span><span class="s1">.map.addMapping(mapping)</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">mapping.source = noSource</span>
+          <span class="s1">mapping.original.line = </span><span class="s3">1</span>
+          <span class="s1">mapping.original.column = </span><span class="s3">0</span>
+          <span class="s2">this</span><span class="s1">.map.addMapping(mapping)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s1">lines = str.match(/\n/g)</span>
+      <span class="s2">if </span><span class="s1">(lines) {</span>
+        <span class="s1">line += lines.length</span>
+        <span class="s1">last = str.lastIndexOf(</span><span class="s0">'</span><span class="s2">\n</span><span class="s0">'</span><span class="s1">)</span>
+        <span class="s1">column = str.length - last</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">column += str.length</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(node &amp;&amp; type !== </span><span class="s0">'start'</span><span class="s1">) {</span>
+        <span class="s1">let p = node.parent || { raws: {} }</span>
+        <span class="s1">let childless =</span>
+          <span class="s1">node.type === </span><span class="s0">'decl' </span><span class="s1">|| (node.type === </span><span class="s0">'atrule' </span><span class="s1">&amp;&amp; !node.nodes)</span>
+        <span class="s2">if </span><span class="s1">(!childless || node !== p.last || p.raws.semicolon) {</span>
+          <span class="s2">if </span><span class="s1">(node.source &amp;&amp; node.source.end) {</span>
+            <span class="s1">mapping.source = </span><span class="s2">this</span><span class="s1">.sourcePath(node)</span>
+            <span class="s1">mapping.original.line = node.source.end.line</span>
+            <span class="s1">mapping.original.column = node.source.end.column - </span><span class="s3">1</span>
+            <span class="s1">mapping.generated.line = line</span>
+            <span class="s1">mapping.generated.column = column - </span><span class="s3">2</span>
+            <span class="s2">this</span><span class="s1">.map.addMapping(mapping)</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">mapping.source = noSource</span>
+            <span class="s1">mapping.original.line = </span><span class="s3">1</span>
+            <span class="s1">mapping.original.column = </span><span class="s3">0</span>
+            <span class="s1">mapping.generated.line = line</span>
+            <span class="s1">mapping.generated.column = column - </span><span class="s3">1</span>
+            <span class="s2">this</span><span class="s1">.map.addMapping(mapping)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isAnnotation() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isInline()) {</span>
+      <span class="s2">return true</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.annotation !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+      <span class="s2">return this</span><span class="s1">.mapOpts.annotation</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.previous().length) {</span>
+      <span class="s2">return this</span><span class="s1">.previous().some(i =&gt; i.annotation)</span>
+    <span class="s1">}</span>
+    <span class="s2">return true</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isInline() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.inline !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+      <span class="s2">return this</span><span class="s1">.mapOpts.inline</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let annotation = </span><span class="s2">this</span><span class="s1">.mapOpts.annotation</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">annotation !== </span><span class="s0">'undefined' </span><span class="s1">&amp;&amp; annotation !== </span><span class="s2">true</span><span class="s1">) {</span>
+      <span class="s2">return false</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.previous().length) {</span>
+      <span class="s2">return this</span><span class="s1">.previous().some(i =&gt; i.inline)</span>
+    <span class="s1">}</span>
+    <span class="s2">return true</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isMap() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.opts.map !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">!!</span><span class="s2">this</span><span class="s1">.opts.map</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.previous().length &gt; </span><span class="s3">0</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isSourcesContent() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.sourcesContent !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+      <span class="s2">return this</span><span class="s1">.mapOpts.sourcesContent</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.previous().length) {</span>
+      <span class="s2">return this</span><span class="s1">.previous().some(i =&gt; i.withContent())</span>
+    <span class="s1">}</span>
+    <span class="s2">return true</span>
+  <span class="s1">}</span>
+
+  <span class="s1">outputFile() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.opts.to) {</span>
+      <span class="s2">return this</span><span class="s1">.path(</span><span class="s2">this</span><span class="s1">.opts.to)</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.opts.from) {</span>
+      <span class="s2">return this</span><span class="s1">.path(</span><span class="s2">this</span><span class="s1">.opts.from)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s0">'to.css'</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">path(file) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.mapOpts.absolute) </span><span class="s2">return </span><span class="s1">file</span>
+    <span class="s2">if </span><span class="s1">(file.charCodeAt(</span><span class="s3">0</span><span class="s1">) === </span><span class="s3">60 </span><span class="s4">/* `&lt;` */</span><span class="s1">) </span><span class="s2">return </span><span class="s1">file</span>
+    <span class="s2">if </span><span class="s1">(/^\w+:\/\</span><span class="s4">//.test(file)) return file</span>
+    <span class="s1">let cached = </span><span class="s2">this</span><span class="s1">.memoizedPaths.get(file)</span>
+    <span class="s2">if </span><span class="s1">(cached) </span><span class="s2">return </span><span class="s1">cached</span>
+
+    <span class="s1">let from = </span><span class="s2">this</span><span class="s1">.opts.to ? dirname(</span><span class="s2">this</span><span class="s1">.opts.to) : </span><span class="s0">'.'</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof this</span><span class="s1">.mapOpts.annotation === </span><span class="s0">'string'</span><span class="s1">) {</span>
+      <span class="s1">from = dirname(resolve(from, </span><span class="s2">this</span><span class="s1">.mapOpts.annotation))</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let path = relative(from, file)</span>
+    <span class="s2">this</span><span class="s1">.memoizedPaths.set(file, path)</span>
+
+    <span class="s2">return </span><span class="s1">path</span>
+  <span class="s1">}</span>
+
+  <span class="s1">previous() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.previousMaps) {</span>
+      <span class="s2">this</span><span class="s1">.previousMaps = []</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.root) {</span>
+        <span class="s2">this</span><span class="s1">.root.walk(node =&gt; {</span>
+          <span class="s2">if </span><span class="s1">(node.source &amp;&amp; node.source.input.map) {</span>
+            <span class="s1">let map = node.source.input.map</span>
+            <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.previousMaps.includes(map)) {</span>
+              <span class="s2">this</span><span class="s1">.previousMaps.push(map)</span>
+            <span class="s1">}</span>
+          <span class="s1">}</span>
+        <span class="s1">})</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">let input = </span><span class="s2">new </span><span class="s1">Input(</span><span class="s2">this</span><span class="s1">.originalCSS, </span><span class="s2">this</span><span class="s1">.opts)</span>
+        <span class="s2">if </span><span class="s1">(input.map) </span><span class="s2">this</span><span class="s1">.previousMaps.push(input.map)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return this</span><span class="s1">.previousMaps</span>
+  <span class="s1">}</span>
+
+  <span class="s1">setSourcesContent() {</span>
+    <span class="s1">let already = {}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.root) {</span>
+      <span class="s2">this</span><span class="s1">.root.walk(node =&gt; {</span>
+        <span class="s2">if </span><span class="s1">(node.source) {</span>
+          <span class="s1">let from = node.source.input.from</span>
+          <span class="s2">if </span><span class="s1">(from &amp;&amp; !already[from]) {</span>
+            <span class="s1">already[from] = </span><span class="s2">true</span>
+            <span class="s1">let fromUrl = </span><span class="s2">this</span><span class="s1">.usesFileUrls</span>
+              <span class="s1">? </span><span class="s2">this</span><span class="s1">.toFileUrl(from)</span>
+              <span class="s1">: </span><span class="s2">this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(from))</span>
+            <span class="s2">this</span><span class="s1">.map.setSourceContent(fromUrl, node.source.input.css)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">})</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.css) {</span>
+      <span class="s1">let from = </span><span class="s2">this</span><span class="s1">.opts.from</span>
+        <span class="s1">? </span><span class="s2">this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(</span><span class="s2">this</span><span class="s1">.opts.from))</span>
+        <span class="s1">: </span><span class="s0">'&lt;no source&gt;'</span>
+      <span class="s2">this</span><span class="s1">.map.setSourceContent(from, </span><span class="s2">this</span><span class="s1">.css)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">sourcePath(node) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.mapOpts.from) {</span>
+      <span class="s2">return this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.mapOpts.from)</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.usesFileUrls) {</span>
+      <span class="s2">return this</span><span class="s1">.toFileUrl(node.source.input.from)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return this</span><span class="s1">.toUrl(</span><span class="s2">this</span><span class="s1">.path(node.source.input.from))</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">toBase64(str) {</span>
+    <span class="s2">if </span><span class="s1">(Buffer) {</span>
+      <span class="s2">return </span><span class="s1">Buffer.from(str).toString(</span><span class="s0">'base64'</span><span class="s1">)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s1">window.btoa(unescape(encodeURIComponent(str)))</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">toFileUrl(path) {</span>
+    <span class="s1">let cached = </span><span class="s2">this</span><span class="s1">.memoizedFileURLs.get(path)</span>
+    <span class="s2">if </span><span class="s1">(cached) </span><span class="s2">return </span><span class="s1">cached</span>
+
+    <span class="s2">if </span><span class="s1">(pathToFileURL) {</span>
+      <span class="s1">let fileURL = pathToFileURL(path).toString()</span>
+      <span class="s2">this</span><span class="s1">.memoizedFileURLs.set(path, fileURL)</span>
+
+      <span class="s2">return </span><span class="s1">fileURL</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span>
+        <span class="s0">'`map.absolute` option is not available in this PostCSS build'</span>
+      <span class="s1">)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">toUrl(path) {</span>
+    <span class="s1">let cached = </span><span class="s2">this</span><span class="s1">.memoizedURLs.get(path)</span>
+    <span class="s2">if </span><span class="s1">(cached) </span><span class="s2">return </span><span class="s1">cached</span>
+
+    <span class="s2">if </span><span class="s1">(sep === </span><span class="s0">'</span><span class="s2">\\</span><span class="s0">'</span><span class="s1">) {</span>
+      <span class="s1">path = path.replace(/\\/g, </span><span class="s0">'/'</span><span class="s1">)</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let url = encodeURI(path).replace(/[#?]/g, encodeURIComponent)</span>
+    <span class="s2">this</span><span class="s1">.memoizedURLs.set(path, url)</span>
+
+    <span class="s2">return </span><span class="s1">url</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = MapGenerator</span>
+</pre>
+</body>
+</html>

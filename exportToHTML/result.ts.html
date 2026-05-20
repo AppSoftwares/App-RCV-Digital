@@ -1,0 +1,571 @@
+<html>
+<head>
+<title>result.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+result.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ Ast, ParseQuery } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./parser</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">AggregateFunctions,</span>
+  <span class="s2">ExtractFirstProperty,</span>
+  <span class="s2">GenericSchema,</span>
+  <span class="s2">IsNonEmptyArray,</span>
+  <span class="s2">Prettify,</span>
+  <span class="s2">TablesAndViews,</span>
+  <span class="s2">TypeScriptTypes,</span>
+  <span class="s2">ContainsNull,</span>
+  <span class="s2">GenericRelationship,</span>
+  <span class="s2">PostgreSQLTypes,</span>
+  <span class="s2">GenericTable,</span>
+  <span class="s2">ClientServerOptions,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">CheckDuplicateEmbededReference,</span>
+  <span class="s2">GetComputedFields,</span>
+  <span class="s2">GetFieldNodeResultName,</span>
+  <span class="s2">IsAny,</span>
+  <span class="s2">IsRelationNullable,</span>
+  <span class="s2">IsStringUnion,</span>
+  <span class="s2">JsonPathToType,</span>
+  <span class="s2">ResolveRelationship,</span>
+  <span class="s2">SelectQueryError,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{ SpreadOnManyEnabled } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../types/feature-flags</span><span class="s2">'</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Main entry point for constructing the result type of a PostgREST query. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Query </span><span class="s4">- The select query string literal to parse. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">GetResult&lt;</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName,</span>
+  <span class="s2">Relationships,</span>
+  <span class="s2">Query </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">IsAny&lt;Schema&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+    <span class="s2">? ParseQuery&lt;Query&gt; </span><span class="s0">extends </span><span class="s2">infer ParsedQuery</span>
+      <span class="s2">? ParsedQuery </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+        <span class="s2">? RelationName </span><span class="s0">extends </span><span class="s2">string</span>
+          <span class="s2">? ProcessNodesWithoutSchema&lt;ParsedQuery&gt;</span>
+          <span class="s2">: any</span>
+        <span class="s2">: ParsedQuery</span>
+      <span class="s2">: any</span>
+    <span class="s2">: Relationships </span><span class="s0">extends </span><span class="s2">null // </span><span class="s4">For .rpc calls the passed relationships will be null in that case, the result will always be the function return type</span>
+      <span class="s2">? ParseQuery&lt;Query&gt; </span><span class="s0">extends </span><span class="s2">infer ParsedQuery</span>
+        <span class="s2">? ParsedQuery </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+          <span class="s2">? RPCCallNodes&lt;ParsedQuery, RelationName </span><span class="s0">extends </span><span class="s2">string ? RelationName : '</span><span class="s3">rpc_call</span><span class="s2">', Row&gt;</span>
+          <span class="s2">: ParsedQuery</span>
+        <span class="s2">: Row</span>
+      <span class="s2">: ParseQuery&lt;Query&gt; </span><span class="s0">extends </span><span class="s2">infer ParsedQuery</span>
+        <span class="s2">? ParsedQuery </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+          <span class="s2">? RelationName </span><span class="s0">extends </span><span class="s2">string</span>
+            <span class="s2">? Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span>
+              <span class="s2">? ProcessNodes&lt;ClientOptions, Schema, Row, RelationName, Relationships, ParsedQuery&gt;</span>
+              <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid Relationships cannot infer result type</span><span class="s2">'&gt;</span>
+            <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid RelationName cannot infer result type</span><span class="s2">'&gt;</span>
+          <span class="s2">: ParsedQuery</span>
+        <span class="s2">: never</span>
+
+<span class="s0">type </span><span class="s2">ProcessSimpleFieldWithoutSchema&lt;Field </span><span class="s0">extends </span><span class="s2">Ast.FieldNode&gt; =</span>
+  <span class="s2">Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">aggregateFunction</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">AggregateFunctions</span>
+    <span class="s2">? {</span>
+        <span class="s2">// </span><span class="s4">An aggregate function will always override the column name id.sum() will become sum</span>
+        <span class="s2">// </span><span class="s4">except if it has been aliased</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes</span>
+          <span class="s2">? TypeScriptTypes&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span>
+          <span class="s2">: number</span>
+      <span class="s2">}</span>
+    <span class="s2">: {</span>
+        <span class="s2">// </span><span class="s4">Aliases override the property name in the result</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes // </span><span class="s4">We apply the detected casted as the result type</span>
+          <span class="s2">? TypeScriptTypes&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span>
+          <span class="s2">: any</span>
+      <span class="s2">}</span>
+
+<span class="s0">type </span><span class="s2">ProcessFieldNodeWithoutSchema&lt;Node </span><span class="s0">extends </span><span class="s2">Ast.FieldNode&gt; =</span>
+  <span class="s2">IsNonEmptyArray&lt;Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+    <span class="s2">? {</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Node&gt;</span><span class="s1">]</span><span class="s2">: Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+          <span class="s2">? ProcessNodesWithoutSchema&lt;Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span><span class="s1">[]</span>
+          <span class="s2">: ProcessSimpleFieldWithoutSchema&lt;Node&gt;</span>
+      <span class="s2">}</span>
+    <span class="s2">: ProcessSimpleFieldWithoutSchema&lt;Node&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a single Node without schema and returns the resulting TypeScript type. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessNodeWithoutSchema&lt;Node </span><span class="s0">extends </span><span class="s2">Ast.Node&gt; = Node </span><span class="s0">extends </span><span class="s2">Ast.StarNode</span>
+  <span class="s2">? any</span>
+  <span class="s2">: Node </span><span class="s0">extends </span><span class="s2">Ast.SpreadNode</span>
+    <span class="s2">? Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.StarNode</span><span class="s1">[]</span>
+      <span class="s2">? any</span>
+      <span class="s2">: Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.FieldNode</span><span class="s1">[]</span>
+        <span class="s2">? {</span>
+            <span class="s1">[</span><span class="s2">P in Node</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">][</span><span class="s2">number</span><span class="s1">] </span><span class="s0">as </span><span class="s2">GetFieldNodeResultName&lt;P&gt;</span><span class="s1">]</span><span class="s2">: P</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes</span>
+              <span class="s2">? TypeScriptTypes&lt;P</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span>
+              <span class="s2">: any</span>
+          <span class="s2">}</span>
+        <span class="s2">: any</span>
+    <span class="s2">: Node </span><span class="s0">extends </span><span class="s2">Ast.FieldNode</span>
+      <span class="s2">? ProcessFieldNodeWithoutSchema&lt;Node&gt;</span>
+      <span class="s2">: any</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes nodes when Schema is any, providing basic type inference 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessNodesWithoutSchema&lt;</span>
+  <span class="s2">Nodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Acc </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt; = {},</span>
+<span class="s2">&gt; = Nodes </span><span class="s0">extends </span><span class="s1">[</span><span class="s2">infer FirstNode, ...infer RestNodes</span><span class="s1">]</span>
+  <span class="s2">? FirstNode </span><span class="s0">extends </span><span class="s2">Ast.Node</span>
+    <span class="s2">? RestNodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+      <span class="s2">? ProcessNodeWithoutSchema&lt;FirstNode&gt; </span><span class="s0">extends </span><span class="s2">infer FieldResult</span>
+        <span class="s2">? FieldResult </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;</span>
+          <span class="s2">? ProcessNodesWithoutSchema&lt;RestNodes, Acc &amp; FieldResult&gt;</span>
+          <span class="s2">: FieldResult</span>
+        <span class="s2">: any</span>
+      <span class="s2">: any</span>
+    <span class="s2">: any</span>
+  <span class="s2">: Prettify&lt;Acc&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a single Node from a select chained after a rpc call 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current rpc function 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">NodeType </span><span class="s4">- The Node to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ProcessRPCNode&lt;</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">NodeType </span><span class="s0">extends </span><span class="s2">Ast.Node,</span>
+<span class="s2">&gt; = NodeType</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.StarNode</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s2">// </span><span class="s4">If the selection is *</span>
+  <span class="s2">? Row</span>
+  <span class="s2">: NodeType</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.FieldNode</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">]</span>
+    <span class="s2">? ProcessSimpleField&lt;Row, RelationName, Extract&lt;NodeType, Ast.FieldNode&gt;&gt;</span>
+    <span class="s2">: SelectQueryError&lt;'</span><span class="s3">RPC Unsupported node type.</span><span class="s2">'&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Process select call that can be chained after an rpc call 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">RPCCallNodes&lt;</span>
+  <span class="s2">Nodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">Acc </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt; = {}, // </span><span class="s4">Acc is now an object</span>
+<span class="s2">&gt; = Nodes </span><span class="s0">extends </span><span class="s1">[</span><span class="s2">infer FirstNode, ...infer RestNodes</span><span class="s1">]</span>
+  <span class="s2">? FirstNode </span><span class="s0">extends </span><span class="s2">Ast.Node</span>
+    <span class="s2">? RestNodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+      <span class="s2">? ProcessRPCNode&lt;Row, RelationName, FirstNode&gt; </span><span class="s0">extends </span><span class="s2">infer FieldResult</span>
+        <span class="s2">? FieldResult </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;</span>
+          <span class="s2">? RPCCallNodes&lt;RestNodes, RelationName, Row, Acc &amp; FieldResult&gt;</span>
+          <span class="s2">: FieldResult </span><span class="s0">extends </span><span class="s2">SelectQueryError&lt;infer E&gt;</span>
+            <span class="s2">? SelectQueryError&lt;E&gt;</span>
+            <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Could not retrieve a valid record or error value</span><span class="s2">'&gt;</span>
+        <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Processing node failed.</span><span class="s2">'&gt;</span>
+      <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid rest nodes array in RPC call</span><span class="s2">'&gt;</span>
+    <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid first node in RPC call</span><span class="s2">'&gt;</span>
+  <span class="s2">: Prettify&lt;Acc&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Recursively processes an array of Nodes and accumulates the resulting TypeScript type. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Nodes </span><span class="s4">- An array of AST nodes to process. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Acc </span><span class="s4">- Accumulator for the constructed type. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ProcessNodes&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Nodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Acc </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt; = {}, // </span><span class="s4">Acc is now an object</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">CheckDuplicateEmbededReference&lt;Schema, RelationName, Relationships, Nodes&gt; </span><span class="s0">extends </span><span class="s2">false</span>
+    <span class="s2">? Nodes </span><span class="s0">extends </span><span class="s1">[</span><span class="s2">infer FirstNode, ...infer RestNodes</span><span class="s1">]</span>
+      <span class="s2">? FirstNode </span><span class="s0">extends </span><span class="s2">Ast.Node</span>
+        <span class="s2">? RestNodes </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+          <span class="s2">? ProcessNode&lt;</span>
+              <span class="s2">ClientOptions,</span>
+              <span class="s2">Schema,</span>
+              <span class="s2">Row,</span>
+              <span class="s2">RelationName,</span>
+              <span class="s2">Relationships,</span>
+              <span class="s2">FirstNode</span>
+            <span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">infer FieldResult</span>
+            <span class="s2">? FieldResult </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;</span>
+              <span class="s2">? ProcessNodes&lt;</span>
+                  <span class="s2">ClientOptions,</span>
+                  <span class="s2">Schema,</span>
+                  <span class="s2">Row,</span>
+                  <span class="s2">RelationName,</span>
+                  <span class="s2">Relationships,</span>
+                  <span class="s2">RestNodes,</span>
+                  <span class="s2">// </span><span class="s4">TODO:</span>
+                  <span class="s2">// </span><span class="s4">This SHOULD be `Omit&lt;Acc, keyof FieldResult&gt; &amp; FieldResult` since in the case where the key</span>
+                  <span class="s2">// </span><span class="s4">is present in the Acc already, the intersection will create bad intersection types</span>
+                  <span class="s2">// </span><span class="s4">(eg: `{ a: number } &amp; { a: { property } }` will become `{ a: number &amp; { property } }`)</span>
+                  <span class="s2">// </span><span class="s4">but using Omit here explode the inference complexity resulting in &quot;infinite recursion error&quot; from typescript</span>
+                  <span class="s2">// </span><span class="s4">very early (see: 'Check that selecting many fields doesn't yield an possibly infinite recursion error') test</span>
+                  <span class="s2">// </span><span class="s4">in this case we can't get above ~10 fields before reaching the recursion error</span>
+                  <span class="s2">// </span><span class="s4">If someone find a better way to do this, please do it !</span>
+                  <span class="s2">// </span><span class="s4">It'll also allow to fix those two tests:</span>
+                  <span class="s2">// </span><span class="s4">- `'join over a 1-M relation with both nullables and non-nullables fields using column name hinting on nested relation'`</span>
+                  <span class="s2">// </span><span class="s4">- `'self reference relation via column''`</span>
+                  <span class="s2">Acc &amp; FieldResult</span>
+                <span class="s2">&gt;</span>
+              <span class="s2">: FieldResult </span><span class="s0">extends </span><span class="s2">SelectQueryError&lt;infer E&gt;</span>
+                <span class="s2">? SelectQueryError&lt;E&gt;</span>
+                <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Could not retrieve a valid record or error value</span><span class="s2">'&gt;</span>
+            <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Processing node failed.</span><span class="s2">'&gt;</span>
+          <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid rest nodes array type in ProcessNodes</span><span class="s2">'&gt;</span>
+        <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Invalid first node type in ProcessNodes</span><span class="s2">'&gt;</span>
+      <span class="s2">: Prettify&lt;Acc&gt;</span>
+    <span class="s2">: Prettify&lt;CheckDuplicateEmbededReference&lt;Schema, RelationName, Relationships, Nodes&gt;&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a single Node and returns the resulting TypeScript type. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">NodeType </span><span class="s4">- The Node to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ProcessNode&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">NodeType </span><span class="s0">extends </span><span class="s2">Ast.Node,</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">// </span><span class="s4">TODO: figure out why comparing the `type` property is necessary vs. `NodeType extends Ast.StarNode`</span>
+  <span class="s2">NodeType</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.StarNode</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s2">// </span><span class="s4">If the selection is *</span>
+    <span class="s2">? // </span><span class="s4">If the row has computed field, postgrest will omit them from star selection per default</span>
+      <span class="s2">GetComputedFields&lt;Schema, RelationName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+      <span class="s2">? // </span><span class="s4">If no computed fields are detected on the row, we can return it as is</span>
+        <span class="s2">Row</span>
+      <span class="s2">: // </span><span class="s4">otherwise we omit all the computed field from the star result return</span>
+        <span class="s2">Omit&lt;Row, GetComputedFields&lt;Schema, RelationName&gt;&gt;</span>
+    <span class="s2">: NodeType</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.SpreadNode</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s2">// </span><span class="s4">If the selection is a ...spread</span>
+      <span class="s2">? ProcessSpreadNode&lt;</span>
+          <span class="s2">ClientOptions,</span>
+          <span class="s2">Schema,</span>
+          <span class="s2">Row,</span>
+          <span class="s2">RelationName,</span>
+          <span class="s2">Relationships,</span>
+          <span class="s2">Extract&lt;NodeType, Ast.SpreadNode&gt;</span>
+        <span class="s2">&gt;</span>
+      <span class="s2">: NodeType</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">Ast.FieldNode</span><span class="s1">[</span><span class="s2">'</span><span class="s3">type</span><span class="s2">'</span><span class="s1">]</span>
+        <span class="s2">? ProcessFieldNode&lt;</span>
+            <span class="s2">ClientOptions,</span>
+            <span class="s2">Schema,</span>
+            <span class="s2">Row,</span>
+            <span class="s2">RelationName,</span>
+            <span class="s2">Relationships,</span>
+            <span class="s2">Extract&lt;NodeType, Ast.FieldNode&gt;</span>
+          <span class="s2">&gt;</span>
+        <span class="s2">: SelectQueryError&lt;'</span><span class="s3">Unsupported node type.</span><span class="s2">'&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a FieldNode and returns the resulting TypeScript type. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Field </span><span class="s4">- The FieldNode to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessFieldNode&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Field </span><span class="s0">extends </span><span class="s2">Ast.FieldNode,</span>
+<span class="s2">&gt; = Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s1">[]</span>
+  <span class="s2">? // </span><span class="s4">Empty `()` — could be a scalar computed column (e.g. `user_count()`).</span>
+    <span class="s2">// </span><span class="s4">Route through ProcessEmbeddedResource so the scalar path returns the correct</span>
+    <span class="s2">// </span><span class="s4">primitive type. For non-scalar embedded resources with empty selection,</span>
+    <span class="s2">// </span><span class="s4">ProcessEmbeddedResource returns {} (no contribution to result type).</span>
+    <span class="s2">ProcessEmbeddedResource&lt;ClientOptions, Schema, Relationships, Field, RelationName&gt;</span>
+  <span class="s2">: IsNonEmptyArray&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">true // </span><span class="s4">Has embedded resource?</span>
+    <span class="s2">? ProcessEmbeddedResource&lt;ClientOptions, Schema, Relationships, Field, RelationName&gt;</span>
+    <span class="s2">: ProcessSimpleField&lt;Row, RelationName, Field&gt;</span>
+
+<span class="s0">type </span><span class="s2">ResolveJsonPathType&lt;</span>
+  <span class="s2">Value,</span>
+  <span class="s2">Path </span><span class="s0">extends </span><span class="s2">string | undefined,</span>
+  <span class="s2">CastType </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes,</span>
+<span class="s2">&gt; = Path </span><span class="s0">extends </span><span class="s2">string</span>
+  <span class="s2">? JsonPathToType&lt;Value, Path&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+    <span class="s2">? // </span><span class="s4">Always fallback if JsonPathToType returns never</span>
+      <span class="s2">TypeScriptTypes&lt;CastType&gt;</span>
+    <span class="s2">: JsonPathToType&lt;Value, Path&gt; </span><span class="s0">extends </span><span class="s2">infer PathResult</span>
+      <span class="s2">? PathResult </span><span class="s0">extends </span><span class="s2">string</span>
+        <span class="s2">? // </span><span class="s4">Use the result if it's a string as we know that even with the string accessor -&gt;&gt; it's a valid type</span>
+          <span class="s2">PathResult</span>
+        <span class="s2">: IsStringUnion&lt;PathResult&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+          <span class="s2">? // </span><span class="s4">Use the result if it's a union of strings</span>
+            <span class="s2">PathResult</span>
+          <span class="s2">: CastType </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">json</span><span class="s2">'</span>
+            <span class="s2">? // </span><span class="s4">If the type is not a string, ensure it was accessed with json accessor -&gt;</span>
+              <span class="s2">PathResult</span>
+            <span class="s2">: // </span><span class="s4">Otherwise it means non-string value accessed with string accessor -&gt;&gt; use the TypeScriptTypes result</span>
+              <span class="s2">TypeScriptTypes&lt;CastType&gt;</span>
+      <span class="s2">: TypeScriptTypes&lt;CastType&gt;</span>
+  <span class="s2">: // </span><span class="s4">No json path, use regular type casting</span>
+    <span class="s2">TypeScriptTypes&lt;CastType&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a simple field (without embedded resources). 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Field </span><span class="s4">- The FieldNode to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessSimpleField&lt;</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Field </span><span class="s0">extends </span><span class="s2">Ast.FieldNode,</span>
+<span class="s2">&gt; = Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">keyof Row | '</span><span class="s3">count</span><span class="s2">'</span>
+  <span class="s2">? Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">aggregateFunction</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">AggregateFunctions</span>
+    <span class="s2">? {</span>
+        <span class="s2">// </span><span class="s4">An aggregate function will always override the column name id.sum() will become sum</span>
+        <span class="s2">// </span><span class="s4">except if it has been aliased</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes</span>
+          <span class="s2">? TypeScriptTypes&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span>
+          <span class="s2">: number</span>
+      <span class="s2">}</span>
+    <span class="s2">: {</span>
+        <span class="s2">// </span><span class="s4">Aliases override the property name in the result</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">PostgreSQLTypes</span>
+          <span class="s2">? ResolveJsonPathType&lt;Row</span><span class="s1">[</span><span class="s2">Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]]</span><span class="s2">, Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">jsonPath</span><span class="s2">'</span><span class="s1">]</span><span class="s2">, Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">castType</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt;</span>
+          <span class="s2">: Row</span><span class="s1">[</span><span class="s2">Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]]</span>
+      <span class="s2">}</span>
+  <span class="s2">: SelectQueryError&lt;`</span><span class="s3">column '</span><span class="s2">${Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]</span><span class="s2">}</span><span class="s3">' does not exist on '</span><span class="s2">${RelationName}</span><span class="s3">'.</span><span class="s2">`&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes an embedded resource (relation). 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Field </span><span class="s4">- The FieldNode to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ProcessEmbeddedResource&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Field </span><span class="s0">extends </span><span class="s2">Ast.FieldNode,</span>
+  <span class="s2">CurrentTableOrView </span><span class="s0">extends </span><span class="s2">keyof TablesAndViews&lt;Schema&gt; &amp; string,</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">ResolveRelationship&lt;Schema, Relationships, Field, CurrentTableOrView&gt; </span><span class="s0">extends </span><span class="s2">infer Resolved</span>
+    <span class="s2">? Resolved </span><span class="s0">extends </span><span class="s2">{</span>
+        <span class="s2">scalarType: infer ScalarType</span>
+        <span class="s2">relation: { isSetofReturn?: boolean; isNotNullable?: boolean }</span>
+      <span class="s2">}</span>
+      <span class="s2">? // </span><span class="s4">Scalar computed column: bypass ProcessNodes and return the primitive type directly.</span>
+        <span class="s2">{</span>
+          <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isSetofReturn</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+            <span class="s2">? ScalarType</span>
+            <span class="s2">: Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isNotNullable</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+              <span class="s2">? ScalarType</span>
+              <span class="s2">: ScalarType | null</span>
+        <span class="s2">}</span>
+      <span class="s2">: Resolved </span><span class="s0">extends </span><span class="s2">{</span>
+            <span class="s2">referencedTable: Pick&lt;GenericTable, '</span><span class="s3">Row</span><span class="s2">' | '</span><span class="s3">Relationships</span><span class="s2">'&gt;</span>
+            <span class="s2">relation: GenericRelationship &amp; { match: '</span><span class="s3">refrel</span><span class="s2">' | '</span><span class="s3">col</span><span class="s2">' | '</span><span class="s3">fkname</span><span class="s2">' | '</span><span class="s3">func</span><span class="s2">' }</span>
+            <span class="s2">direction: string</span>
+          <span class="s2">}</span>
+        <span class="s2">? Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s1">[]</span>
+          <span class="s2">? // </span><span class="s4">Empty `()` on a regular table embed — no fields selected, contribute nothing.</span>
+            <span class="s2">// </span><span class="s4">This preserves the prior behavior: `users()` does not add a `users` key to the result.</span>
+            <span class="s2">{}</span>
+          <span class="s2">: ProcessEmbeddedResourceResult&lt;</span>
+              <span class="s2">ClientOptions,</span>
+              <span class="s2">Schema,</span>
+              <span class="s2">Resolved,</span>
+              <span class="s2">Field,</span>
+              <span class="s2">CurrentTableOrView</span>
+            <span class="s2">&gt;</span>
+        <span class="s2">: // </span><span class="s4">Otherwise the Resolved is a SelectQueryError return it</span>
+          <span class="s2">{ </span><span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Resolved }</span>
+    <span class="s2">: {</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: SelectQueryError&lt;'</span><span class="s3">Failed to resolve relationship.</span><span class="s2">'&gt; &amp;</span>
+          <span class="s2">string</span>
+      <span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Helper type to process the result of an embedded resource. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessEmbeddedResourceResult&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Resolved </span><span class="s0">extends </span><span class="s2">{</span>
+    <span class="s2">referencedTable: Pick&lt;GenericTable, '</span><span class="s3">Row</span><span class="s2">' | '</span><span class="s3">Relationships</span><span class="s2">'&gt;</span>
+    <span class="s2">relation: GenericRelationship &amp; {</span>
+      <span class="s2">match: '</span><span class="s3">refrel</span><span class="s2">' | '</span><span class="s3">col</span><span class="s2">' | '</span><span class="s3">fkname</span><span class="s2">' | '</span><span class="s3">func</span><span class="s2">'</span>
+      <span class="s2">isNotNullable?: boolean</span>
+      <span class="s2">referencedRelation: string</span>
+      <span class="s2">isSetofReturn?: boolean</span>
+    <span class="s2">}</span>
+    <span class="s2">direction: string</span>
+  <span class="s2">},</span>
+  <span class="s2">Field </span><span class="s0">extends </span><span class="s2">Ast.FieldNode,</span>
+  <span class="s2">CurrentTableOrView </span><span class="s0">extends </span><span class="s2">keyof TablesAndViews&lt;Schema&gt;,</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">ProcessNodes&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">referencedTable</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">// </span><span class="s4">For embeded function selection, the source of truth is the 'referencedRelation'</span>
+    <span class="s2">// </span><span class="s4">coming from the SetofOptions.to parameter</span>
+    <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">match</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">func</span><span class="s2">'</span>
+      <span class="s2">? Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">referencedRelation</span><span class="s2">'</span><span class="s1">]</span>
+      <span class="s2">: Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">referencedTable</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Relationships</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">undefined</span>
+      <span class="s2">? </span><span class="s1">[]</span>
+      <span class="s2">: Exclude&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">]</span><span class="s2">, undefined&gt; </span><span class="s0">extends </span><span class="s2">Ast.Node</span><span class="s1">[]</span>
+        <span class="s2">? Exclude&lt;Field</span><span class="s1">[</span><span class="s2">'</span><span class="s3">children</span><span class="s2">'</span><span class="s1">]</span><span class="s2">, undefined&gt;</span>
+        <span class="s2">: </span><span class="s1">[]</span>
+  <span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">infer ProcessedChildren</span>
+    <span class="s2">? {</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">direction</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">forward</span><span class="s2">'</span>
+          <span class="s2">? Field </span><span class="s0">extends </span><span class="s2">{ innerJoin: true }</span>
+            <span class="s2">? Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isOneToOne</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+              <span class="s2">? ProcessedChildren</span>
+              <span class="s2">: ProcessedChildren</span><span class="s1">[]</span>
+            <span class="s2">: Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isOneToOne</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+              <span class="s2">? Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">match</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">func</span><span class="s2">'</span>
+                <span class="s2">? Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isNotNullable</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+                  <span class="s2">? Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">isSetofReturn</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">true</span>
+                    <span class="s2">? ProcessedChildren</span>
+                    <span class="s2">: // </span><span class="s4">TODO: This shouldn't be necessary but is due in an inconsitency in PostgREST v12/13 where if a function</span>
+                      <span class="s2">// </span><span class="s4">is declared with RETURNS &lt;table-name&gt; instead of RETURNS SETOF &lt;table-name&gt; ROWS 1</span>
+                      <span class="s2">// </span><span class="s4">In case where there is no object matching the relations, the object will be returned with all the properties within it</span>
+                      <span class="s2">// </span><span class="s4">set to null, we mimic this buggy behavior for type safety an issue is opened on postgREST here:</span>
+                      <span class="s2">// </span><span class="s4">https://github.com/PostgREST/postgrest/issues/4234</span>
+                      <span class="s2">{ </span><span class="s1">[</span><span class="s2">P in keyof ProcessedChildren</span><span class="s1">]</span><span class="s2">: ProcessedChildren</span><span class="s1">[</span><span class="s2">P</span><span class="s1">] </span><span class="s2">| null }</span>
+                  <span class="s2">: ProcessedChildren | null</span>
+                <span class="s2">: ProcessedChildren | null</span>
+              <span class="s2">: ProcessedChildren</span><span class="s1">[]</span>
+          <span class="s2">: // </span><span class="s4">If the relation is a self-reference it'll always be considered as reverse relationship</span>
+            <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">referencedRelation</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">CurrentTableOrView</span>
+            <span class="s2">? // </span><span class="s4">It can either be a reverse reference via a column inclusion (eg: parent_id(*))</span>
+              <span class="s2">// </span><span class="s4">in such case the result will be a single object</span>
+              <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">match</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">col</span><span class="s2">'</span>
+              <span class="s2">? IsRelationNullable&lt;</span>
+                  <span class="s2">TablesAndViews&lt;Schema&gt;</span><span class="s1">[</span><span class="s2">CurrentTableOrView</span><span class="s1">]</span><span class="s2">,</span>
+                  <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">]</span>
+                <span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+                <span class="s2">? ProcessedChildren | null</span>
+                <span class="s2">: ProcessedChildren</span>
+              <span class="s2">: // </span><span class="s4">Or it can be a reference via the reference relation (eg: collections(*))</span>
+                <span class="s2">// </span><span class="s4">in such case, the result will be an array of all the values (all collection with parent_id being the current id)</span>
+                <span class="s2">ProcessedChildren</span><span class="s1">[]</span>
+            <span class="s2">: // </span><span class="s4">Otherwise if it's a non self-reference reverse relationship it's a single object</span>
+              <span class="s2">IsRelationNullable&lt;</span>
+                  <span class="s2">TablesAndViews&lt;Schema&gt;</span><span class="s1">[</span><span class="s2">CurrentTableOrView</span><span class="s1">]</span><span class="s2">,</span>
+                  <span class="s2">Resolved</span><span class="s1">[</span><span class="s2">'</span><span class="s3">relation</span><span class="s2">'</span><span class="s1">]</span>
+                <span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+              <span class="s2">? Field </span><span class="s0">extends </span><span class="s2">{ innerJoin: true }</span>
+                <span class="s2">? ProcessedChildren</span>
+                <span class="s2">: ProcessedChildren | null</span>
+              <span class="s2">: ProcessedChildren</span>
+      <span class="s2">}</span>
+    <span class="s2">: {</span>
+        <span class="s1">[</span><span class="s2">K in GetFieldNodeResultName&lt;Field&gt;</span><span class="s1">]</span><span class="s2">: SelectQueryError&lt;'</span><span class="s3">Failed to process embedded resource nodes.</span><span class="s2">'&gt; &amp;</span>
+          <span class="s2">string</span>
+      <span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Processes a SpreadNode by processing its target node. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Schema </span><span class="s4">- Database schema. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Row </span><span class="s4">- The type of a row in the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">RelationName </span><span class="s4">- The name of the current table or view. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Relationships </span><span class="s4">- Relationships of the current table. 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">Spread </span><span class="s4">- The SpreadNode to process. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessSpreadNode&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">RelationName </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">Relationships </span><span class="s0">extends </span><span class="s2">GenericRelationship</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">Spread </span><span class="s0">extends </span><span class="s2">Ast.SpreadNode,</span>
+<span class="s2">&gt; =</span>
+  <span class="s2">ProcessNode&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Row,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">Spread</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">]</span>
+  <span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">infer Result</span>
+    <span class="s2">? Result </span><span class="s0">extends </span><span class="s2">SelectQueryError&lt;infer E&gt;</span>
+      <span class="s2">? SelectQueryError&lt;E&gt;</span>
+      <span class="s2">: ExtractFirstProperty&lt;Result&gt; </span><span class="s0">extends </span><span class="s2">unknown</span><span class="s1">[]</span>
+        <span class="s2">? SpreadOnManyEnabled&lt;ClientOptions</span><span class="s1">[</span><span class="s2">'</span><span class="s3">PostgrestVersion</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">true // </span><span class="s4">Spread over an many-to-many relationship, turn all the result fields into correlated arrays</span>
+          <span class="s2">? ProcessManyToManySpreadNodeResult&lt;Result&gt;</span>
+          <span class="s2">: {</span>
+              <span class="s1">[</span><span class="s2">K in Spread</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]]</span><span class="s2">: SelectQueryError&lt;`</span><span class="s3">&quot;</span><span class="s2">${RelationName}</span><span class="s3">&quot; and &quot;</span><span class="s2">${Spread</span><span class="s1">[</span><span class="s2">'</span><span class="s3">target</span><span class="s2">'</span><span class="s1">][</span><span class="s2">'</span><span class="s3">name</span><span class="s2">'</span><span class="s1">]</span><span class="s2">}</span><span class="s3">&quot; do not form a many-to-one or one-to-one relationship spread not possible</span><span class="s2">`&gt;</span>
+            <span class="s2">}</span>
+        <span class="s2">: ProcessSpreadNodeResult&lt;Result&gt;</span>
+    <span class="s2">: never</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Helper type to process the result of a many-to-many spread node. 
+ * Converts all fields in the spread object into arrays. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessManyToManySpreadNodeResult&lt;Result&gt; =</span>
+  <span class="s2">Result </span><span class="s0">extends </span><span class="s2">Record&lt;string, SelectQueryError&lt;string&gt; | null&gt;</span>
+    <span class="s2">? Result</span>
+    <span class="s2">: ExtractFirstProperty&lt;Result&gt; </span><span class="s0">extends </span><span class="s2">infer SpreadedObject</span>
+      <span class="s2">? SpreadedObject </span><span class="s0">extends </span><span class="s2">Array&lt;Record&lt;string, unknown&gt;&gt;</span>
+        <span class="s2">? { </span><span class="s1">[</span><span class="s2">K in keyof SpreadedObject</span><span class="s1">[</span><span class="s2">number</span><span class="s1">]]</span><span class="s2">: Array&lt;SpreadedObject</span><span class="s1">[</span><span class="s2">number</span><span class="s1">][</span><span class="s2">K</span><span class="s1">]</span><span class="s2">&gt; }</span>
+        <span class="s2">: SelectQueryError&lt;'</span><span class="s3">An error occurred spreading the many-to-many object</span><span class="s2">'&gt;</span>
+      <span class="s2">: SelectQueryError&lt;'</span><span class="s3">An error occurred spreading the many-to-many object</span><span class="s2">'&gt;</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Helper type to process the result of a spread node. 
+ </span><span class="s2">*/</span>
+<span class="s0">type </span><span class="s2">ProcessSpreadNodeResult&lt;Result&gt; =</span>
+  <span class="s2">Result </span><span class="s0">extends </span><span class="s2">Record&lt;string, SelectQueryError&lt;string&gt; | null&gt;</span>
+    <span class="s2">? Result</span>
+    <span class="s2">: ExtractFirstProperty&lt;Result&gt; </span><span class="s0">extends </span><span class="s2">infer SpreadedObject</span>
+      <span class="s2">? ContainsNull&lt;SpreadedObject&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+        <span class="s2">? Exclude&lt;{ </span><span class="s1">[</span><span class="s2">K in keyof SpreadedObject</span><span class="s1">]</span><span class="s2">: SpreadedObject</span><span class="s1">[</span><span class="s2">K</span><span class="s1">] </span><span class="s2">| null }, null&gt;</span>
+        <span class="s2">: Exclude&lt;{ </span><span class="s1">[</span><span class="s2">K in keyof SpreadedObject</span><span class="s1">]</span><span class="s2">: SpreadedObject</span><span class="s1">[</span><span class="s2">K</span><span class="s1">] </span><span class="s2">}, null&gt;</span>
+      <span class="s2">: SelectQueryError&lt;'</span><span class="s3">An error occurred spreading the object</span><span class="s2">'&gt;</span>
+</pre>
+</body>
+</html>

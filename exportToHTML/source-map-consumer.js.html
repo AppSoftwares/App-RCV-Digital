@@ -1,0 +1,1209 @@
+<html>
+<head>
+<title>source-map-consumer.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+source-map-consumer.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* -*- Mode: js; js-indent-level: 2; -*- */</span>
+<span class="s0">/* 
+ * Copyright 2011 Mozilla Foundation and contributors 
+ * Licensed under the New BSD license. See LICENSE or: 
+ * http://opensource.org/licenses/BSD-3-Clause 
+ */</span>
+
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s3">'./util'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">binarySearch = require(</span><span class="s3">'./binary-search'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">ArraySet = require(</span><span class="s3">'./array-set'</span><span class="s1">).ArraySet;</span>
+<span class="s2">var </span><span class="s1">base64VLQ = require(</span><span class="s3">'./base64-vlq'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">quickSort = require(</span><span class="s3">'./quick-sort'</span><span class="s1">).quickSort;</span>
+
+<span class="s2">function </span><span class="s1">SourceMapConsumer(aSourceMap, aSourceMapURL) {</span>
+  <span class="s2">var </span><span class="s1">sourceMap = aSourceMap;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">aSourceMap === </span><span class="s3">'string'</span><span class="s1">) {</span>
+    <span class="s1">sourceMap = util.parseSourceMapInput(aSourceMap);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">sourceMap.sections != </span><span class="s2">null</span>
+    <span class="s1">? </span><span class="s2">new </span><span class="s1">IndexedSourceMapConsumer(sourceMap, aSourceMapURL)</span>
+    <span class="s1">: </span><span class="s2">new </span><span class="s1">BasicSourceMapConsumer(sourceMap, aSourceMapURL);</span>
+<span class="s1">}</span>
+
+<span class="s1">SourceMapConsumer.fromSourceMap = </span><span class="s2">function</span><span class="s1">(aSourceMap, aSourceMapURL) {</span>
+  <span class="s2">return </span><span class="s1">BasicSourceMapConsumer.fromSourceMap(aSourceMap, aSourceMapURL);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The version of the source mapping spec that we are consuming. 
+ */</span>
+<span class="s1">SourceMapConsumer.prototype._version = </span><span class="s4">3</span><span class="s1">;</span>
+
+<span class="s0">// `__generatedMappings` and `__originalMappings` are arrays that hold the</span>
+<span class="s0">// parsed mapping coordinates from the source map's &quot;mappings&quot; attribute. They</span>
+<span class="s0">// are lazily instantiated, accessed via the `_generatedMappings` and</span>
+<span class="s0">// `_originalMappings` getters respectively, and we only parse the mappings</span>
+<span class="s0">// and create these arrays once queried for a source location. We jump through</span>
+<span class="s0">// these hoops because there can be many thousands of mappings, and parsing</span>
+<span class="s0">// them is expensive, so we only want to do it if we must.</span>
+<span class="s0">//</span>
+<span class="s0">// Each object in the arrays is of the form:</span>
+<span class="s0">//</span>
+<span class="s0">//     {</span>
+<span class="s0">//       generatedLine: The line number in the generated code,</span>
+<span class="s0">//       generatedColumn: The column number in the generated code,</span>
+<span class="s0">//       source: The path to the original source file that generated this</span>
+<span class="s0">//               chunk of code,</span>
+<span class="s0">//       originalLine: The line number in the original source that</span>
+<span class="s0">//                     corresponds to this chunk of generated code,</span>
+<span class="s0">//       originalColumn: The column number in the original source that</span>
+<span class="s0">//                       corresponds to this chunk of generated code,</span>
+<span class="s0">//       name: The name of the original symbol which generated this chunk of</span>
+<span class="s0">//             code.</span>
+<span class="s0">//     }</span>
+<span class="s0">//</span>
+<span class="s0">// All properties except for `generatedLine` and `generatedColumn` can be</span>
+<span class="s0">// `null`.</span>
+<span class="s0">//</span>
+<span class="s0">// `_generatedMappings` is ordered by the generated positions.</span>
+<span class="s0">//</span>
+<span class="s0">// `_originalMappings` is ordered by the original positions.</span>
+
+<span class="s1">SourceMapConsumer.prototype.__generatedMappings = </span><span class="s2">null</span><span class="s1">;</span>
+<span class="s1">Object.defineProperty(SourceMapConsumer.prototype, </span><span class="s3">'_generatedMappings'</span><span class="s1">, {</span>
+  <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">enumerable: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">get: </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.__generatedMappings) {</span>
+      <span class="s2">this</span><span class="s1">._parseMappings(</span><span class="s2">this</span><span class="s1">._mappings, </span><span class="s2">this</span><span class="s1">.sourceRoot);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return this</span><span class="s1">.__generatedMappings;</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s1">SourceMapConsumer.prototype.__originalMappings = </span><span class="s2">null</span><span class="s1">;</span>
+<span class="s1">Object.defineProperty(SourceMapConsumer.prototype, </span><span class="s3">'_originalMappings'</span><span class="s1">, {</span>
+  <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">enumerable: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">get: </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.__originalMappings) {</span>
+      <span class="s2">this</span><span class="s1">._parseMappings(</span><span class="s2">this</span><span class="s1">._mappings, </span><span class="s2">this</span><span class="s1">.sourceRoot);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return this</span><span class="s1">.__originalMappings;</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s1">SourceMapConsumer.prototype._charIsMappingSeparator =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_charIsMappingSeparator(aStr, index) {</span>
+    <span class="s2">var </span><span class="s1">c = aStr.charAt(index);</span>
+    <span class="s2">return </span><span class="s1">c === </span><span class="s3">&quot;;&quot; </span><span class="s1">|| c === </span><span class="s3">&quot;,&quot;</span><span class="s1">;</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Parse the mappings in a string in to a data structure which we can easily 
+ * query (the ordered arrays in the `this.__generatedMappings` and 
+ * `this.__originalMappings` properties). 
+ */</span>
+<span class="s1">SourceMapConsumer.prototype._parseMappings =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_parseMappings(aStr, aSourceRoot) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">&quot;Subclasses must implement _parseMappings&quot;</span><span class="s1">);</span>
+  <span class="s1">};</span>
+
+<span class="s1">SourceMapConsumer.GENERATED_ORDER = </span><span class="s4">1</span><span class="s1">;</span>
+<span class="s1">SourceMapConsumer.ORIGINAL_ORDER = </span><span class="s4">2</span><span class="s1">;</span>
+
+<span class="s1">SourceMapConsumer.GREATEST_LOWER_BOUND = </span><span class="s4">1</span><span class="s1">;</span>
+<span class="s1">SourceMapConsumer.LEAST_UPPER_BOUND = </span><span class="s4">2</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * Iterate over each mapping between an original source/line/column and a 
+ * generated line/column in this source map. 
+ * 
+ * @param Function aCallback 
+ *        The function that is called with each mapping. 
+ * @param Object aContext 
+ *        Optional. If specified, this object will be the value of `this` every 
+ *        time that `aCallback` is called. 
+ * @param aOrder 
+ *        Either `SourceMapConsumer.GENERATED_ORDER` or 
+ *        `SourceMapConsumer.ORIGINAL_ORDER`. Specifies whether you want to 
+ *        iterate over the mappings sorted by the generated file's line/column 
+ *        order or the original's source/line/column order, respectively. Defaults to 
+ *        `SourceMapConsumer.GENERATED_ORDER`. 
+ */</span>
+<span class="s1">SourceMapConsumer.prototype.eachMapping =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_eachMapping(aCallback, aContext, aOrder) {</span>
+    <span class="s2">var </span><span class="s1">context = aContext || </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">order = aOrder || SourceMapConsumer.GENERATED_ORDER;</span>
+
+    <span class="s2">var </span><span class="s1">mappings;</span>
+    <span class="s2">switch </span><span class="s1">(order) {</span>
+    <span class="s2">case </span><span class="s1">SourceMapConsumer.GENERATED_ORDER:</span>
+      <span class="s1">mappings = </span><span class="s2">this</span><span class="s1">._generatedMappings;</span>
+      <span class="s2">break</span><span class="s1">;</span>
+    <span class="s2">case </span><span class="s1">SourceMapConsumer.ORIGINAL_ORDER:</span>
+      <span class="s1">mappings = </span><span class="s2">this</span><span class="s1">._originalMappings;</span>
+      <span class="s2">break</span><span class="s1">;</span>
+    <span class="s2">default</span><span class="s1">:</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">&quot;Unknown order of iteration.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">sourceRoot = </span><span class="s2">this</span><span class="s1">.sourceRoot;</span>
+    <span class="s2">var </span><span class="s1">boundCallback = aCallback.bind(context);</span>
+    <span class="s2">var </span><span class="s1">names = </span><span class="s2">this</span><span class="s1">._names;</span>
+    <span class="s2">var </span><span class="s1">sources = </span><span class="s2">this</span><span class="s1">._sources;</span>
+    <span class="s2">var </span><span class="s1">sourceMapURL = </span><span class="s2">this</span><span class="s1">._sourceMapURL;</span>
+
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">, n = mappings.length; i &lt; n; i++) {</span>
+      <span class="s2">var </span><span class="s1">mapping = mappings[i];</span>
+      <span class="s2">var </span><span class="s1">source = mapping.source === </span><span class="s2">null </span><span class="s1">? </span><span class="s2">null </span><span class="s1">: sources.at(mapping.source);</span>
+      <span class="s2">if</span><span class="s1">(source !== </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">source = util.computeSourceURL(sourceRoot, source, sourceMapURL);</span>
+      <span class="s1">}</span>
+      <span class="s1">boundCallback({</span>
+        <span class="s1">source: source,</span>
+        <span class="s1">generatedLine: mapping.generatedLine,</span>
+        <span class="s1">generatedColumn: mapping.generatedColumn,</span>
+        <span class="s1">originalLine: mapping.originalLine,</span>
+        <span class="s1">originalColumn: mapping.originalColumn,</span>
+        <span class="s1">name: mapping.name === </span><span class="s2">null </span><span class="s1">? </span><span class="s2">null </span><span class="s1">: names.at(mapping.name)</span>
+      <span class="s1">});</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns all generated line and column information for the original source, 
+ * line, and column provided. If no column is provided, returns all mappings 
+ * corresponding to a either the line we are searching for or the next 
+ * closest line that has any mappings. Otherwise, returns all mappings 
+ * corresponding to the given line and either the column we are searching for 
+ * or the next closest column that has any offsets. 
+ * 
+ * The only argument is an object with the following properties: 
+ * 
+ *   - source: The filename of the original source. 
+ *   - line: The line number in the original source.  The line number is 1-based. 
+ *   - column: Optional. the column number in the original source. 
+ *    The column number is 0-based. 
+ * 
+ * and an array of objects is returned, each with the following properties: 
+ * 
+ *   - line: The line number in the generated source, or null.  The 
+ *    line number is 1-based. 
+ *   - column: The column number in the generated source, or null. 
+ *    The column number is 0-based. 
+ */</span>
+<span class="s1">SourceMapConsumer.prototype.allGeneratedPositionsFor =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_allGeneratedPositionsFor(aArgs) {</span>
+    <span class="s2">var </span><span class="s1">line = util.getArg(aArgs, </span><span class="s3">'line'</span><span class="s1">);</span>
+
+    <span class="s0">// When there is no exact match, BasicSourceMapConsumer.prototype._findMapping</span>
+    <span class="s0">// returns the index of the closest mapping less than the needle. By</span>
+    <span class="s0">// setting needle.originalColumn to 0, we thus find the last mapping for</span>
+    <span class="s0">// the given line, provided such a mapping exists.</span>
+    <span class="s2">var </span><span class="s1">needle = {</span>
+      <span class="s1">source: util.getArg(aArgs, </span><span class="s3">'source'</span><span class="s1">),</span>
+      <span class="s1">originalLine: line,</span>
+      <span class="s1">originalColumn: util.getArg(aArgs, </span><span class="s3">'column'</span><span class="s1">, </span><span class="s4">0</span><span class="s1">)</span>
+    <span class="s1">};</span>
+
+    <span class="s1">needle.source = </span><span class="s2">this</span><span class="s1">._findSourceIndex(needle.source);</span>
+    <span class="s2">if </span><span class="s1">(needle.source &lt; </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">[];</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">mappings = [];</span>
+
+    <span class="s2">var </span><span class="s1">index = </span><span class="s2">this</span><span class="s1">._findMapping(needle,</span>
+                                  <span class="s2">this</span><span class="s1">._originalMappings,</span>
+                                  <span class="s3">&quot;originalLine&quot;</span><span class="s1">,</span>
+                                  <span class="s3">&quot;originalColumn&quot;</span><span class="s1">,</span>
+                                  <span class="s1">util.compareByOriginalPositions,</span>
+                                  <span class="s1">binarySearch.LEAST_UPPER_BOUND);</span>
+    <span class="s2">if </span><span class="s1">(index &gt;= </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">var </span><span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._originalMappings[index];</span>
+
+      <span class="s2">if </span><span class="s1">(aArgs.column === undefined) {</span>
+        <span class="s2">var </span><span class="s1">originalLine = mapping.originalLine;</span>
+
+        <span class="s0">// Iterate until either we run out of mappings, or we run into</span>
+        <span class="s0">// a mapping for a different line than the one we found. Since</span>
+        <span class="s0">// mappings are sorted, this is guaranteed to find all mappings for</span>
+        <span class="s0">// the line we found.</span>
+        <span class="s2">while </span><span class="s1">(mapping &amp;&amp; mapping.originalLine === originalLine) {</span>
+          <span class="s1">mappings.push({</span>
+            <span class="s1">line: util.getArg(mapping, </span><span class="s3">'generatedLine'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+            <span class="s1">column: util.getArg(mapping, </span><span class="s3">'generatedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+            <span class="s1">lastColumn: util.getArg(mapping, </span><span class="s3">'lastGeneratedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">)</span>
+          <span class="s1">});</span>
+
+          <span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._originalMappings[++index];</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">var </span><span class="s1">originalColumn = mapping.originalColumn;</span>
+
+        <span class="s0">// Iterate until either we run out of mappings, or we run into</span>
+        <span class="s0">// a mapping for a different line than the one we were searching for.</span>
+        <span class="s0">// Since mappings are sorted, this is guaranteed to find all mappings for</span>
+        <span class="s0">// the line we are searching for.</span>
+        <span class="s2">while </span><span class="s1">(mapping &amp;&amp;</span>
+               <span class="s1">mapping.originalLine === line &amp;&amp;</span>
+               <span class="s1">mapping.originalColumn == originalColumn) {</span>
+          <span class="s1">mappings.push({</span>
+            <span class="s1">line: util.getArg(mapping, </span><span class="s3">'generatedLine'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+            <span class="s1">column: util.getArg(mapping, </span><span class="s3">'generatedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+            <span class="s1">lastColumn: util.getArg(mapping, </span><span class="s3">'lastGeneratedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">)</span>
+          <span class="s1">});</span>
+
+          <span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._originalMappings[++index];</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">mappings;</span>
+  <span class="s1">};</span>
+
+<span class="s1">exports.SourceMapConsumer = SourceMapConsumer;</span>
+
+<span class="s0">/** 
+ * A BasicSourceMapConsumer instance represents a parsed source map which we can 
+ * query for information about the original file positions by giving it a file 
+ * position in the generated source. 
+ * 
+ * The first parameter is the raw source map (either as a JSON string, or 
+ * already parsed to an object). According to the spec, source maps have the 
+ * following attributes: 
+ * 
+ *   - version: Which version of the source map spec this map is following. 
+ *   - sources: An array of URLs to the original source files. 
+ *   - names: An array of identifiers which can be referrenced by individual mappings. 
+ *   - sourceRoot: Optional. The URL root from which all sources are relative. 
+ *   - sourcesContent: Optional. An array of contents of the original source files. 
+ *   - mappings: A string of base64 VLQs which contain the actual mappings. 
+ *   - file: Optional. The generated file this source map is associated with. 
+ * 
+ * Here is an example source map, taken from the source map spec[0]: 
+ * 
+ *     { 
+ *       version : 3, 
+ *       file: &quot;out.js&quot;, 
+ *       sourceRoot : &quot;&quot;, 
+ *       sources: [&quot;foo.js&quot;, &quot;bar.js&quot;], 
+ *       names: [&quot;src&quot;, &quot;maps&quot;, &quot;are&quot;, &quot;fun&quot;], 
+ *       mappings: &quot;AA,AB;;ABCDE;&quot; 
+ *     } 
+ * 
+ * The second parameter, if given, is a string whose value is the URL 
+ * at which the source map was found.  This URL is used to compute the 
+ * sources array. 
+ * 
+ * [0]: https://docs.google.com/document/d/1U1RGAehQwRypUTovF1KRlpiOFze0b-_2gc6fAH0KY0k/edit?pli=1# 
+ */</span>
+<span class="s2">function </span><span class="s1">BasicSourceMapConsumer(aSourceMap, aSourceMapURL) {</span>
+  <span class="s2">var </span><span class="s1">sourceMap = aSourceMap;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">aSourceMap === </span><span class="s3">'string'</span><span class="s1">) {</span>
+    <span class="s1">sourceMap = util.parseSourceMapInput(aSourceMap);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">var </span><span class="s1">version = util.getArg(sourceMap, </span><span class="s3">'version'</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">sources = util.getArg(sourceMap, </span><span class="s3">'sources'</span><span class="s1">);</span>
+  <span class="s0">// Sass 3.3 leaves out the 'names' array, so we deviate from the spec (which</span>
+  <span class="s0">// requires the array) to play nice here.</span>
+  <span class="s2">var </span><span class="s1">names = util.getArg(sourceMap, </span><span class="s3">'names'</span><span class="s1">, []);</span>
+  <span class="s2">var </span><span class="s1">sourceRoot = util.getArg(sourceMap, </span><span class="s3">'sourceRoot'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">sourcesContent = util.getArg(sourceMap, </span><span class="s3">'sourcesContent'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">mappings = util.getArg(sourceMap, </span><span class="s3">'mappings'</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">file = util.getArg(sourceMap, </span><span class="s3">'file'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+
+  <span class="s0">// Once again, Sass deviates from the spec and supplies the version as a</span>
+  <span class="s0">// string rather than a number, so we use loose equality checking here.</span>
+  <span class="s2">if </span><span class="s1">(version != </span><span class="s2">this</span><span class="s1">._version) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Unsupported version: ' </span><span class="s1">+ version);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(sourceRoot) {</span>
+    <span class="s1">sourceRoot = util.normalize(sourceRoot);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">sources = sources</span>
+    <span class="s1">.map(String)</span>
+    <span class="s0">// Some source maps produce relative source paths like &quot;./foo.js&quot; instead of</span>
+    <span class="s0">// &quot;foo.js&quot;.  Normalize these first so that future comparisons will succeed.</span>
+    <span class="s0">// See bugzil.la/1090768.</span>
+    <span class="s1">.map(util.normalize)</span>
+    <span class="s0">// Always ensure that absolute sources are internally stored relative to</span>
+    <span class="s0">// the source root, if the source root is absolute. Not doing this would</span>
+    <span class="s0">// be particularly problematic when the source root is a prefix of the</span>
+    <span class="s0">// source (valid, but why??). See github issue #199 and bugzil.la/1188982.</span>
+    <span class="s1">.map(</span><span class="s2">function </span><span class="s1">(source) {</span>
+      <span class="s2">return </span><span class="s1">sourceRoot &amp;&amp; util.isAbsolute(sourceRoot) &amp;&amp; util.isAbsolute(source)</span>
+        <span class="s1">? util.relative(sourceRoot, source)</span>
+        <span class="s1">: source;</span>
+    <span class="s1">});</span>
+
+  <span class="s0">// Pass `true` below to allow duplicate names and sources. While source maps</span>
+  <span class="s0">// are intended to be compressed and deduplicated, the TypeScript compiler</span>
+  <span class="s0">// sometimes generates source maps with duplicates in them. See Github issue</span>
+  <span class="s0">// #72 and bugzil.la/889492.</span>
+  <span class="s2">this</span><span class="s1">._names = ArraySet.fromArray(names.map(String), </span><span class="s2">true</span><span class="s1">);</span>
+  <span class="s2">this</span><span class="s1">._sources = ArraySet.fromArray(sources, </span><span class="s2">true</span><span class="s1">);</span>
+
+  <span class="s2">this</span><span class="s1">._absoluteSources = </span><span class="s2">this</span><span class="s1">._sources.toArray().map(</span><span class="s2">function </span><span class="s1">(s) {</span>
+    <span class="s2">return </span><span class="s1">util.computeSourceURL(sourceRoot, s, aSourceMapURL);</span>
+  <span class="s1">});</span>
+
+  <span class="s2">this</span><span class="s1">.sourceRoot = sourceRoot;</span>
+  <span class="s2">this</span><span class="s1">.sourcesContent = sourcesContent;</span>
+  <span class="s2">this</span><span class="s1">._mappings = mappings;</span>
+  <span class="s2">this</span><span class="s1">._sourceMapURL = aSourceMapURL;</span>
+  <span class="s2">this</span><span class="s1">.file = file;</span>
+<span class="s1">}</span>
+
+<span class="s1">BasicSourceMapConsumer.prototype = Object.create(SourceMapConsumer.prototype);</span>
+<span class="s1">BasicSourceMapConsumer.prototype.consumer = SourceMapConsumer;</span>
+
+<span class="s0">/** 
+ * Utility function to find the index of a source.  Returns -1 if not 
+ * found. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype._findSourceIndex = </span><span class="s2">function</span><span class="s1">(aSource) {</span>
+  <span class="s2">var </span><span class="s1">relativeSource = aSource;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.sourceRoot != </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s1">relativeSource = util.relative(</span><span class="s2">this</span><span class="s1">.sourceRoot, relativeSource);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._sources.has(relativeSource)) {</span>
+    <span class="s2">return this</span><span class="s1">._sources.indexOf(relativeSource);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Maybe aSource is an absolute URL as returned by |sources|.  In</span>
+  <span class="s0">// this case we can't simply undo the transform.</span>
+  <span class="s2">var </span><span class="s1">i;</span>
+  <span class="s2">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._absoluteSources.length; ++i) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._absoluteSources[i] == aSource) {</span>
+      <span class="s2">return </span><span class="s1">i;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">-</span><span class="s4">1</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Create a BasicSourceMapConsumer from a SourceMapGenerator. 
+ * 
+ * @param SourceMapGenerator aSourceMap 
+ *        The source map that will be consumed. 
+ * @param String aSourceMapURL 
+ *        The URL at which the source map can be found (optional) 
+ * @returns BasicSourceMapConsumer 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.fromSourceMap =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_fromSourceMap(aSourceMap, aSourceMapURL) {</span>
+    <span class="s2">var </span><span class="s1">smc = Object.create(BasicSourceMapConsumer.prototype);</span>
+
+    <span class="s2">var </span><span class="s1">names = smc._names = ArraySet.fromArray(aSourceMap._names.toArray(), </span><span class="s2">true</span><span class="s1">);</span>
+    <span class="s2">var </span><span class="s1">sources = smc._sources = ArraySet.fromArray(aSourceMap._sources.toArray(), </span><span class="s2">true</span><span class="s1">);</span>
+    <span class="s1">smc.sourceRoot = aSourceMap._sourceRoot;</span>
+    <span class="s1">smc.sourcesContent = aSourceMap._generateSourcesContent(smc._sources.toArray(),</span>
+                                                            <span class="s1">smc.sourceRoot);</span>
+    <span class="s1">smc.file = aSourceMap._file;</span>
+    <span class="s1">smc._sourceMapURL = aSourceMapURL;</span>
+    <span class="s1">smc._absoluteSources = smc._sources.toArray().map(</span><span class="s2">function </span><span class="s1">(s) {</span>
+      <span class="s2">return </span><span class="s1">util.computeSourceURL(smc.sourceRoot, s, aSourceMapURL);</span>
+    <span class="s1">});</span>
+
+    <span class="s0">// Because we are modifying the entries (by converting string sources and</span>
+    <span class="s0">// names to indices into the sources and names ArraySets), we have to make</span>
+    <span class="s0">// a copy of the entry or else bad things happen. Shared mutable state</span>
+    <span class="s0">// strikes again! See github issue #191.</span>
+
+    <span class="s2">var </span><span class="s1">generatedMappings = aSourceMap._mappings.toArray().slice();</span>
+    <span class="s2">var </span><span class="s1">destGeneratedMappings = smc.__generatedMappings = [];</span>
+    <span class="s2">var </span><span class="s1">destOriginalMappings = smc.__originalMappings = [];</span>
+
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">, length = generatedMappings.length; i &lt; length; i++) {</span>
+      <span class="s2">var </span><span class="s1">srcMapping = generatedMappings[i];</span>
+      <span class="s2">var </span><span class="s1">destMapping = </span><span class="s2">new </span><span class="s1">Mapping;</span>
+      <span class="s1">destMapping.generatedLine = srcMapping.generatedLine;</span>
+      <span class="s1">destMapping.generatedColumn = srcMapping.generatedColumn;</span>
+
+      <span class="s2">if </span><span class="s1">(srcMapping.source) {</span>
+        <span class="s1">destMapping.source = sources.indexOf(srcMapping.source);</span>
+        <span class="s1">destMapping.originalLine = srcMapping.originalLine;</span>
+        <span class="s1">destMapping.originalColumn = srcMapping.originalColumn;</span>
+
+        <span class="s2">if </span><span class="s1">(srcMapping.name) {</span>
+          <span class="s1">destMapping.name = names.indexOf(srcMapping.name);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">destOriginalMappings.push(destMapping);</span>
+      <span class="s1">}</span>
+
+      <span class="s1">destGeneratedMappings.push(destMapping);</span>
+    <span class="s1">}</span>
+
+    <span class="s1">quickSort(smc.__originalMappings, util.compareByOriginalPositions);</span>
+
+    <span class="s2">return </span><span class="s1">smc;</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * The version of the source mapping spec that we are consuming. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype._version = </span><span class="s4">3</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * The list of original sources. 
+ */</span>
+<span class="s1">Object.defineProperty(BasicSourceMapConsumer.prototype, </span><span class="s3">'sources'</span><span class="s1">, {</span>
+  <span class="s1">get: </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">return this</span><span class="s1">._absoluteSources.slice();</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * Provide the JIT with a nice shape / hidden class. 
+ */</span>
+<span class="s2">function </span><span class="s1">Mapping() {</span>
+  <span class="s2">this</span><span class="s1">.generatedLine = </span><span class="s4">0</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.generatedColumn = </span><span class="s4">0</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.source = </span><span class="s2">null</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.originalLine = </span><span class="s2">null</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.originalColumn = </span><span class="s2">null</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.name = </span><span class="s2">null</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Parse the mappings in a string in to a data structure which we can easily 
+ * query (the ordered arrays in the `this.__generatedMappings` and 
+ * `this.__originalMappings` properties). 
+ */</span>
+
+<span class="s1">const compareGenerated = util.compareByGeneratedPositionsDeflatedNoLine;</span>
+<span class="s2">function </span><span class="s1">sortGenerated(array, start) {</span>
+  <span class="s1">let l = array.length;</span>
+  <span class="s1">let n = array.length - start;</span>
+  <span class="s2">if </span><span class="s1">(n &lt;= </span><span class="s4">1</span><span class="s1">) {</span>
+    <span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(n == </span><span class="s4">2</span><span class="s1">) {</span>
+    <span class="s1">let a = array[start];</span>
+    <span class="s1">let b = array[start + </span><span class="s4">1</span><span class="s1">];</span>
+    <span class="s2">if </span><span class="s1">(compareGenerated(a, b) &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s1">array[start] = b;</span>
+      <span class="s1">array[start + </span><span class="s4">1</span><span class="s1">] = a;</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(n &lt; </span><span class="s4">20</span><span class="s1">) {</span>
+    <span class="s2">for </span><span class="s1">(let i = start; i &lt; l; i++) {</span>
+      <span class="s2">for </span><span class="s1">(let j = i; j &gt; start; j--) {</span>
+        <span class="s1">let a = array[j - </span><span class="s4">1</span><span class="s1">];</span>
+        <span class="s1">let b = array[j];</span>
+        <span class="s2">if </span><span class="s1">(compareGenerated(a, b) &lt;= </span><span class="s4">0</span><span class="s1">) {</span>
+          <span class="s2">break</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">array[j - </span><span class="s4">1</span><span class="s1">] = b;</span>
+        <span class="s1">array[j] = a;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">quickSort(array, compareGenerated, start);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">BasicSourceMapConsumer.prototype._parseMappings =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_parseMappings(aStr, aSourceRoot) {</span>
+    <span class="s2">var </span><span class="s1">generatedLine = </span><span class="s4">1</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">previousGeneratedColumn = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">previousOriginalLine = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">previousOriginalColumn = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">previousSource = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">previousName = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">length = aStr.length;</span>
+    <span class="s2">var </span><span class="s1">index = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">var </span><span class="s1">cachedSegments = {};</span>
+    <span class="s2">var </span><span class="s1">temp = {};</span>
+    <span class="s2">var </span><span class="s1">originalMappings = [];</span>
+    <span class="s2">var </span><span class="s1">generatedMappings = [];</span>
+    <span class="s2">var </span><span class="s1">mapping, str, segment, end, value;</span>
+
+    <span class="s1">let subarrayStart = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">while </span><span class="s1">(index &lt; length) {</span>
+      <span class="s2">if </span><span class="s1">(aStr.charAt(index) === </span><span class="s3">';'</span><span class="s1">) {</span>
+        <span class="s1">generatedLine++;</span>
+        <span class="s1">index++;</span>
+        <span class="s1">previousGeneratedColumn = </span><span class="s4">0</span><span class="s1">;</span>
+
+        <span class="s1">sortGenerated(generatedMappings, subarrayStart);</span>
+        <span class="s1">subarrayStart = generatedMappings.length;</span>
+      <span class="s1">}</span>
+      <span class="s2">else if </span><span class="s1">(aStr.charAt(index) === </span><span class="s3">','</span><span class="s1">) {</span>
+        <span class="s1">index++;</span>
+      <span class="s1">}</span>
+      <span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">mapping = </span><span class="s2">new </span><span class="s1">Mapping();</span>
+        <span class="s1">mapping.generatedLine = generatedLine;</span>
+
+        <span class="s2">for </span><span class="s1">(end = index; end &lt; length; end++) {</span>
+          <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._charIsMappingSeparator(aStr, end)) {</span>
+            <span class="s2">break</span><span class="s1">;</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s1">str = aStr.slice(index, end);</span>
+
+        <span class="s1">segment = [];</span>
+        <span class="s2">while </span><span class="s1">(index &lt; end) {</span>
+          <span class="s1">base64VLQ.decode(aStr, index, temp);</span>
+          <span class="s1">value = temp.value;</span>
+          <span class="s1">index = temp.rest;</span>
+          <span class="s1">segment.push(value);</span>
+        <span class="s1">}</span>
+
+        <span class="s2">if </span><span class="s1">(segment.length === </span><span class="s4">2</span><span class="s1">) {</span>
+          <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Found a source, but no line and column'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+
+        <span class="s2">if </span><span class="s1">(segment.length === </span><span class="s4">3</span><span class="s1">) {</span>
+          <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Found a source and line, but no column'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+
+        <span class="s0">// Generated column.</span>
+        <span class="s1">mapping.generatedColumn = previousGeneratedColumn + segment[</span><span class="s4">0</span><span class="s1">];</span>
+        <span class="s1">previousGeneratedColumn = mapping.generatedColumn;</span>
+
+        <span class="s2">if </span><span class="s1">(segment.length &gt; </span><span class="s4">1</span><span class="s1">) {</span>
+          <span class="s0">// Original source.</span>
+          <span class="s1">mapping.source = previousSource + segment[</span><span class="s4">1</span><span class="s1">];</span>
+          <span class="s1">previousSource += segment[</span><span class="s4">1</span><span class="s1">];</span>
+
+          <span class="s0">// Original line.</span>
+          <span class="s1">mapping.originalLine = previousOriginalLine + segment[</span><span class="s4">2</span><span class="s1">];</span>
+          <span class="s1">previousOriginalLine = mapping.originalLine;</span>
+          <span class="s0">// Lines are stored 0-based</span>
+          <span class="s1">mapping.originalLine += </span><span class="s4">1</span><span class="s1">;</span>
+
+          <span class="s0">// Original column.</span>
+          <span class="s1">mapping.originalColumn = previousOriginalColumn + segment[</span><span class="s4">3</span><span class="s1">];</span>
+          <span class="s1">previousOriginalColumn = mapping.originalColumn;</span>
+
+          <span class="s2">if </span><span class="s1">(segment.length &gt; </span><span class="s4">4</span><span class="s1">) {</span>
+            <span class="s0">// Original name.</span>
+            <span class="s1">mapping.name = previousName + segment[</span><span class="s4">4</span><span class="s1">];</span>
+            <span class="s1">previousName += segment[</span><span class="s4">4</span><span class="s1">];</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+
+        <span class="s1">generatedMappings.push(mapping);</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">mapping.originalLine === </span><span class="s3">'number'</span><span class="s1">) {</span>
+          <span class="s1">let currentSource = mapping.source;</span>
+          <span class="s2">while </span><span class="s1">(originalMappings.length &lt;= currentSource) {</span>
+            <span class="s1">originalMappings.push(</span><span class="s2">null</span><span class="s1">);</span>
+          <span class="s1">}</span>
+          <span class="s2">if </span><span class="s1">(originalMappings[currentSource] === </span><span class="s2">null</span><span class="s1">) {</span>
+            <span class="s1">originalMappings[currentSource] = [];</span>
+          <span class="s1">}</span>
+          <span class="s1">originalMappings[currentSource].push(mapping);</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">sortGenerated(generatedMappings, subarrayStart);</span>
+    <span class="s2">this</span><span class="s1">.__generatedMappings = generatedMappings;</span>
+
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; originalMappings.length; i++) {</span>
+      <span class="s2">if </span><span class="s1">(originalMappings[i] != </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">quickSort(originalMappings[i], util.compareByOriginalPositionsNoSource);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.__originalMappings = [].concat(...originalMappings);</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Find the mapping that best matches the hypothetical &quot;needle&quot; mapping that 
+ * we are searching for in the given &quot;haystack&quot; of mappings. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype._findMapping =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_findMapping(aNeedle, aMappings, aLineName,</span>
+                                         <span class="s1">aColumnName, aComparator, aBias) {</span>
+    <span class="s0">// To return the position we are searching for, we must first find the</span>
+    <span class="s0">// mapping for the given position and then return the opposite position it</span>
+    <span class="s0">// points to. Because the mappings are sorted, we can use binary search to</span>
+    <span class="s0">// find the best mapping.</span>
+
+    <span class="s2">if </span><span class="s1">(aNeedle[aLineName] &lt;= </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s3">'Line must be greater than or equal to 1, got '</span>
+                          <span class="s1">+ aNeedle[aLineName]);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(aNeedle[aColumnName] &lt; </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s3">'Column must be greater than or equal to 0, got '</span>
+                          <span class="s1">+ aNeedle[aColumnName]);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">binarySearch.search(aNeedle, aMappings, aComparator, aBias);</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Compute the last column for each generated mapping. The last column is 
+ * inclusive. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype.computeColumnSpans =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_computeColumnSpans() {</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">index = </span><span class="s4">0</span><span class="s1">; index &lt; </span><span class="s2">this</span><span class="s1">._generatedMappings.length; ++index) {</span>
+      <span class="s2">var </span><span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._generatedMappings[index];</span>
+
+      <span class="s0">// Mappings do not contain a field for the last generated columnt. We</span>
+      <span class="s0">// can come up with an optimistic estimate, however, by assuming that</span>
+      <span class="s0">// mappings are contiguous (i.e. given two consecutive mappings, the</span>
+      <span class="s0">// first mapping ends where the second one starts).</span>
+      <span class="s2">if </span><span class="s1">(index + </span><span class="s4">1 </span><span class="s1">&lt; </span><span class="s2">this</span><span class="s1">._generatedMappings.length) {</span>
+        <span class="s2">var </span><span class="s1">nextMapping = </span><span class="s2">this</span><span class="s1">._generatedMappings[index + </span><span class="s4">1</span><span class="s1">];</span>
+
+        <span class="s2">if </span><span class="s1">(mapping.generatedLine === nextMapping.generatedLine) {</span>
+          <span class="s1">mapping.lastGeneratedColumn = nextMapping.generatedColumn - </span><span class="s4">1</span><span class="s1">;</span>
+          <span class="s2">continue</span><span class="s1">;</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s0">// The last mapping for each line spans the entire line.</span>
+      <span class="s1">mapping.lastGeneratedColumn = Infinity;</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the original source, line, and column information for the generated 
+ * source's line and column positions provided. The only argument is an object 
+ * with the following properties: 
+ * 
+ *   - line: The line number in the generated source.  The line number 
+ *     is 1-based. 
+ *   - column: The column number in the generated source.  The column 
+ *     number is 0-based. 
+ *   - bias: Either 'SourceMapConsumer.GREATEST_LOWER_BOUND' or 
+ *     'SourceMapConsumer.LEAST_UPPER_BOUND'. Specifies whether to return the 
+ *     closest element that is smaller than or greater than the one we are 
+ *     searching for, respectively, if the exact element cannot be found. 
+ *     Defaults to 'SourceMapConsumer.GREATEST_LOWER_BOUND'. 
+ * 
+ * and an object is returned with the following properties: 
+ * 
+ *   - source: The original source file, or null. 
+ *   - line: The line number in the original source, or null.  The 
+ *     line number is 1-based. 
+ *   - column: The column number in the original source, or null.  The 
+ *     column number is 0-based. 
+ *   - name: The original identifier, or null. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype.originalPositionFor =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_originalPositionFor(aArgs) {</span>
+    <span class="s2">var </span><span class="s1">needle = {</span>
+      <span class="s1">generatedLine: util.getArg(aArgs, </span><span class="s3">'line'</span><span class="s1">),</span>
+      <span class="s1">generatedColumn: util.getArg(aArgs, </span><span class="s3">'column'</span><span class="s1">)</span>
+    <span class="s1">};</span>
+
+    <span class="s2">var </span><span class="s1">index = </span><span class="s2">this</span><span class="s1">._findMapping(</span>
+      <span class="s1">needle,</span>
+      <span class="s2">this</span><span class="s1">._generatedMappings,</span>
+      <span class="s3">&quot;generatedLine&quot;</span><span class="s1">,</span>
+      <span class="s3">&quot;generatedColumn&quot;</span><span class="s1">,</span>
+      <span class="s1">util.compareByGeneratedPositionsDeflated,</span>
+      <span class="s1">util.getArg(aArgs, </span><span class="s3">'bias'</span><span class="s1">, SourceMapConsumer.GREATEST_LOWER_BOUND)</span>
+    <span class="s1">);</span>
+
+    <span class="s2">if </span><span class="s1">(index &gt;= </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">var </span><span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._generatedMappings[index];</span>
+
+      <span class="s2">if </span><span class="s1">(mapping.generatedLine === needle.generatedLine) {</span>
+        <span class="s2">var </span><span class="s1">source = util.getArg(mapping, </span><span class="s3">'source'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+        <span class="s2">if </span><span class="s1">(source !== </span><span class="s2">null</span><span class="s1">) {</span>
+          <span class="s1">source = </span><span class="s2">this</span><span class="s1">._sources.at(source);</span>
+          <span class="s1">source = util.computeSourceURL(</span><span class="s2">this</span><span class="s1">.sourceRoot, source, </span><span class="s2">this</span><span class="s1">._sourceMapURL);</span>
+        <span class="s1">}</span>
+        <span class="s2">var </span><span class="s1">name = util.getArg(mapping, </span><span class="s3">'name'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+        <span class="s2">if </span><span class="s1">(name !== </span><span class="s2">null</span><span class="s1">) {</span>
+          <span class="s1">name = </span><span class="s2">this</span><span class="s1">._names.at(name);</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">{</span>
+          <span class="s1">source: source,</span>
+          <span class="s1">line: util.getArg(mapping, </span><span class="s3">'originalLine'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+          <span class="s1">column: util.getArg(mapping, </span><span class="s3">'originalColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+          <span class="s1">name: name</span>
+        <span class="s1">};</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">source: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">line: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">column: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">name: </span><span class="s2">null</span>
+    <span class="s1">};</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Return true if we have the source content for every source in the source 
+ * map, false otherwise. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype.hasContentsOfAllSources =</span>
+  <span class="s2">function </span><span class="s1">BasicSourceMapConsumer_hasContentsOfAllSources() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.sourcesContent) {</span>
+      <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.sourcesContent.length &gt;= </span><span class="s2">this</span><span class="s1">._sources.size() &amp;&amp;</span>
+      <span class="s1">!</span><span class="s2">this</span><span class="s1">.sourcesContent.some(</span><span class="s2">function </span><span class="s1">(sc) { </span><span class="s2">return </span><span class="s1">sc == </span><span class="s2">null</span><span class="s1">; });</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the original source content. The only argument is the url of the 
+ * original source file. Returns null if no original source content is 
+ * available. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype.sourceContentFor =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_sourceContentFor(aSource, nullOnMissing) {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.sourcesContent) {</span>
+      <span class="s2">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">index = </span><span class="s2">this</span><span class="s1">._findSourceIndex(aSource);</span>
+    <span class="s2">if </span><span class="s1">(index &gt;= </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">return this</span><span class="s1">.sourcesContent[index];</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">relativeSource = aSource;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.sourceRoot != </span><span class="s2">null</span><span class="s1">) {</span>
+      <span class="s1">relativeSource = util.relative(</span><span class="s2">this</span><span class="s1">.sourceRoot, relativeSource);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">url;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.sourceRoot != </span><span class="s2">null</span>
+        <span class="s1">&amp;&amp; (url = util.urlParse(</span><span class="s2">this</span><span class="s1">.sourceRoot))) {</span>
+      <span class="s0">// XXX: file:// URIs and absolute paths lead to unexpected behavior for</span>
+      <span class="s0">// many users. We can help them out when they expect file:// URIs to</span>
+      <span class="s0">// behave like it would if they were running a local HTTP server. See</span>
+      <span class="s0">// https://bugzilla.mozilla.org/show_bug.cgi?id=885597.</span>
+      <span class="s2">var </span><span class="s1">fileUriAbsPath = relativeSource.replace(/^file:\/\</span><span class="s0">//, &quot;&quot;);</span>
+      <span class="s2">if </span><span class="s1">(url.scheme == </span><span class="s3">&quot;file&quot;</span>
+          <span class="s1">&amp;&amp; </span><span class="s2">this</span><span class="s1">._sources.has(fileUriAbsPath)) {</span>
+        <span class="s2">return this</span><span class="s1">.sourcesContent[</span><span class="s2">this</span><span class="s1">._sources.indexOf(fileUriAbsPath)]</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">((!url.path || url.path == </span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+          <span class="s1">&amp;&amp; </span><span class="s2">this</span><span class="s1">._sources.has(</span><span class="s3">&quot;/&quot; </span><span class="s1">+ relativeSource)) {</span>
+        <span class="s2">return this</span><span class="s1">.sourcesContent[</span><span class="s2">this</span><span class="s1">._sources.indexOf(</span><span class="s3">&quot;/&quot; </span><span class="s1">+ relativeSource)];</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// This function is used recursively from</span>
+    <span class="s0">// IndexedSourceMapConsumer.prototype.sourceContentFor. In that case, we</span>
+    <span class="s0">// don't want to throw if we can't find the source - we just want to</span>
+    <span class="s0">// return null, so we provide a flag to exit gracefully.</span>
+    <span class="s2">if </span><span class="s1">(nullOnMissing) {</span>
+      <span class="s2">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'&quot;' </span><span class="s1">+ relativeSource + </span><span class="s3">'&quot; is not in the SourceMap.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the generated line and column information for the original source, 
+ * line, and column positions provided. The only argument is an object with 
+ * the following properties: 
+ * 
+ *   - source: The filename of the original source. 
+ *   - line: The line number in the original source.  The line number 
+ *     is 1-based. 
+ *   - column: The column number in the original source.  The column 
+ *     number is 0-based. 
+ *   - bias: Either 'SourceMapConsumer.GREATEST_LOWER_BOUND' or 
+ *     'SourceMapConsumer.LEAST_UPPER_BOUND'. Specifies whether to return the 
+ *     closest element that is smaller than or greater than the one we are 
+ *     searching for, respectively, if the exact element cannot be found. 
+ *     Defaults to 'SourceMapConsumer.GREATEST_LOWER_BOUND'. 
+ * 
+ * and an object is returned with the following properties: 
+ * 
+ *   - line: The line number in the generated source, or null.  The 
+ *     line number is 1-based. 
+ *   - column: The column number in the generated source, or null. 
+ *     The column number is 0-based. 
+ */</span>
+<span class="s1">BasicSourceMapConsumer.prototype.generatedPositionFor =</span>
+  <span class="s2">function </span><span class="s1">SourceMapConsumer_generatedPositionFor(aArgs) {</span>
+    <span class="s2">var </span><span class="s1">source = util.getArg(aArgs, </span><span class="s3">'source'</span><span class="s1">);</span>
+    <span class="s1">source = </span><span class="s2">this</span><span class="s1">._findSourceIndex(source);</span>
+    <span class="s2">if </span><span class="s1">(source &lt; </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">{</span>
+        <span class="s1">line: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">column: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">lastColumn: </span><span class="s2">null</span>
+      <span class="s1">};</span>
+    <span class="s1">}</span>
+
+    <span class="s2">var </span><span class="s1">needle = {</span>
+      <span class="s1">source: source,</span>
+      <span class="s1">originalLine: util.getArg(aArgs, </span><span class="s3">'line'</span><span class="s1">),</span>
+      <span class="s1">originalColumn: util.getArg(aArgs, </span><span class="s3">'column'</span><span class="s1">)</span>
+    <span class="s1">};</span>
+
+    <span class="s2">var </span><span class="s1">index = </span><span class="s2">this</span><span class="s1">._findMapping(</span>
+      <span class="s1">needle,</span>
+      <span class="s2">this</span><span class="s1">._originalMappings,</span>
+      <span class="s3">&quot;originalLine&quot;</span><span class="s1">,</span>
+      <span class="s3">&quot;originalColumn&quot;</span><span class="s1">,</span>
+      <span class="s1">util.compareByOriginalPositions,</span>
+      <span class="s1">util.getArg(aArgs, </span><span class="s3">'bias'</span><span class="s1">, SourceMapConsumer.GREATEST_LOWER_BOUND)</span>
+    <span class="s1">);</span>
+
+    <span class="s2">if </span><span class="s1">(index &gt;= </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s2">var </span><span class="s1">mapping = </span><span class="s2">this</span><span class="s1">._originalMappings[index];</span>
+
+      <span class="s2">if </span><span class="s1">(mapping.source === needle.source) {</span>
+        <span class="s2">return </span><span class="s1">{</span>
+          <span class="s1">line: util.getArg(mapping, </span><span class="s3">'generatedLine'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+          <span class="s1">column: util.getArg(mapping, </span><span class="s3">'generatedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">),</span>
+          <span class="s1">lastColumn: util.getArg(mapping, </span><span class="s3">'lastGeneratedColumn'</span><span class="s1">, </span><span class="s2">null</span><span class="s1">)</span>
+        <span class="s1">};</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">line: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">column: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">lastColumn: </span><span class="s2">null</span>
+    <span class="s1">};</span>
+  <span class="s1">};</span>
+
+<span class="s1">exports.BasicSourceMapConsumer = BasicSourceMapConsumer;</span>
+
+<span class="s0">/** 
+ * An IndexedSourceMapConsumer instance represents a parsed source map which 
+ * we can query for information. It differs from BasicSourceMapConsumer in 
+ * that it takes &quot;indexed&quot; source maps (i.e. ones with a &quot;sections&quot; field) as 
+ * input. 
+ * 
+ * The first parameter is a raw source map (either as a JSON string, or already 
+ * parsed to an object). According to the spec for indexed source maps, they 
+ * have the following attributes: 
+ * 
+ *   - version: Which version of the source map spec this map is following. 
+ *   - file: Optional. The generated file this source map is associated with. 
+ *   - sections: A list of section definitions. 
+ * 
+ * Each value under the &quot;sections&quot; field has two fields: 
+ *   - offset: The offset into the original specified at which this section 
+ *       begins to apply, defined as an object with a &quot;line&quot; and &quot;column&quot; 
+ *       field. 
+ *   - map: A source map definition. This source map could also be indexed, 
+ *       but doesn't have to be. 
+ * 
+ * Instead of the &quot;map&quot; field, it's also possible to have a &quot;url&quot; field 
+ * specifying a URL to retrieve a source map from, but that's currently 
+ * unsupported. 
+ * 
+ * Here's an example source map, taken from the source map spec[0], but 
+ * modified to omit a section which uses the &quot;url&quot; field. 
+ * 
+ *  { 
+ *    version : 3, 
+ *    file: &quot;app.js&quot;, 
+ *    sections: [{ 
+ *      offset: {line:100, column:10}, 
+ *      map: { 
+ *        version : 3, 
+ *        file: &quot;section.js&quot;, 
+ *        sources: [&quot;foo.js&quot;, &quot;bar.js&quot;], 
+ *        names: [&quot;src&quot;, &quot;maps&quot;, &quot;are&quot;, &quot;fun&quot;], 
+ *        mappings: &quot;AAAA,E;;ABCDE;&quot; 
+ *      } 
+ *    }], 
+ *  } 
+ * 
+ * The second parameter, if given, is a string whose value is the URL 
+ * at which the source map was found.  This URL is used to compute the 
+ * sources array. 
+ * 
+ * [0]: https://docs.google.com/document/d/1U1RGAehQwRypUTovF1KRlpiOFze0b-_2gc6fAH0KY0k/edit#heading=h.535es3xeprgt 
+ */</span>
+<span class="s2">function </span><span class="s1">IndexedSourceMapConsumer(aSourceMap, aSourceMapURL) {</span>
+  <span class="s2">var </span><span class="s1">sourceMap = aSourceMap;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">aSourceMap === </span><span class="s3">'string'</span><span class="s1">) {</span>
+    <span class="s1">sourceMap = util.parseSourceMapInput(aSourceMap);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">var </span><span class="s1">version = util.getArg(sourceMap, </span><span class="s3">'version'</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">sections = util.getArg(sourceMap, </span><span class="s3">'sections'</span><span class="s1">);</span>
+
+  <span class="s2">if </span><span class="s1">(version != </span><span class="s2">this</span><span class="s1">._version) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Unsupported version: ' </span><span class="s1">+ version);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">this</span><span class="s1">._sources = </span><span class="s2">new </span><span class="s1">ArraySet();</span>
+  <span class="s2">this</span><span class="s1">._names = </span><span class="s2">new </span><span class="s1">ArraySet();</span>
+
+  <span class="s2">var </span><span class="s1">lastOffset = {</span>
+    <span class="s1">line: -</span><span class="s4">1</span><span class="s1">,</span>
+    <span class="s1">column: </span><span class="s4">0</span>
+  <span class="s1">};</span>
+  <span class="s2">this</span><span class="s1">._sections = sections.map(</span><span class="s2">function </span><span class="s1">(s) {</span>
+    <span class="s2">if </span><span class="s1">(s.url) {</span>
+      <span class="s0">// The url field will require support for asynchronicity.</span>
+      <span class="s0">// See https://github.com/mozilla/source-map/issues/16</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Support for url field in sections not implemented.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">var </span><span class="s1">offset = util.getArg(s, </span><span class="s3">'offset'</span><span class="s1">);</span>
+    <span class="s2">var </span><span class="s1">offsetLine = util.getArg(offset, </span><span class="s3">'line'</span><span class="s1">);</span>
+    <span class="s2">var </span><span class="s1">offsetColumn = util.getArg(offset, </span><span class="s3">'column'</span><span class="s1">);</span>
+
+    <span class="s2">if </span><span class="s1">(offsetLine &lt; lastOffset.line ||</span>
+        <span class="s1">(offsetLine === lastOffset.line &amp;&amp; offsetColumn &lt; lastOffset.column)) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Section offsets must be ordered and non-overlapping.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s1">lastOffset = offset;</span>
+
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">generatedOffset: {</span>
+        <span class="s0">// The offset fields are 0-based, but we use 1-based indices when</span>
+        <span class="s0">// encoding/decoding from VLQ.</span>
+        <span class="s1">generatedLine: offsetLine + </span><span class="s4">1</span><span class="s1">,</span>
+        <span class="s1">generatedColumn: offsetColumn + </span><span class="s4">1</span>
+      <span class="s1">},</span>
+      <span class="s1">consumer: </span><span class="s2">new </span><span class="s1">SourceMapConsumer(util.getArg(s, </span><span class="s3">'map'</span><span class="s1">), aSourceMapURL)</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+
+<span class="s1">IndexedSourceMapConsumer.prototype = Object.create(SourceMapConsumer.prototype);</span>
+<span class="s1">IndexedSourceMapConsumer.prototype.constructor = SourceMapConsumer;</span>
+
+<span class="s0">/** 
+ * The version of the source mapping spec that we are consuming. 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype._version = </span><span class="s4">3</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * The list of original sources. 
+ */</span>
+<span class="s1">Object.defineProperty(IndexedSourceMapConsumer.prototype, </span><span class="s3">'sources'</span><span class="s1">, {</span>
+  <span class="s1">get: </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">var </span><span class="s1">sources = [];</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._sections.length; i++) {</span>
+      <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">j = </span><span class="s4">0</span><span class="s1">; j &lt; </span><span class="s2">this</span><span class="s1">._sections[i].consumer.sources.length; j++) {</span>
+        <span class="s1">sources.push(</span><span class="s2">this</span><span class="s1">._sections[i].consumer.sources[j]);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">sources;</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * Returns the original source, line, and column information for the generated 
+ * source's line and column positions provided. The only argument is an object 
+ * with the following properties: 
+ * 
+ *   - line: The line number in the generated source.  The line number 
+ *     is 1-based. 
+ *   - column: The column number in the generated source.  The column 
+ *     number is 0-based. 
+ * 
+ * and an object is returned with the following properties: 
+ * 
+ *   - source: The original source file, or null. 
+ *   - line: The line number in the original source, or null.  The 
+ *     line number is 1-based. 
+ *   - column: The column number in the original source, or null.  The 
+ *     column number is 0-based. 
+ *   - name: The original identifier, or null. 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype.originalPositionFor =</span>
+  <span class="s2">function </span><span class="s1">IndexedSourceMapConsumer_originalPositionFor(aArgs) {</span>
+    <span class="s2">var </span><span class="s1">needle = {</span>
+      <span class="s1">generatedLine: util.getArg(aArgs, </span><span class="s3">'line'</span><span class="s1">),</span>
+      <span class="s1">generatedColumn: util.getArg(aArgs, </span><span class="s3">'column'</span><span class="s1">)</span>
+    <span class="s1">};</span>
+
+    <span class="s0">// Find the section containing the generated position we're trying to map</span>
+    <span class="s0">// to an original position.</span>
+    <span class="s2">var </span><span class="s1">sectionIndex = binarySearch.search(needle, </span><span class="s2">this</span><span class="s1">._sections,</span>
+      <span class="s2">function</span><span class="s1">(needle, section) {</span>
+        <span class="s2">var </span><span class="s1">cmp = needle.generatedLine - section.generatedOffset.generatedLine;</span>
+        <span class="s2">if </span><span class="s1">(cmp) {</span>
+          <span class="s2">return </span><span class="s1">cmp;</span>
+        <span class="s1">}</span>
+
+        <span class="s2">return </span><span class="s1">(needle.generatedColumn -</span>
+                <span class="s1">section.generatedOffset.generatedColumn);</span>
+      <span class="s1">});</span>
+    <span class="s2">var </span><span class="s1">section = </span><span class="s2">this</span><span class="s1">._sections[sectionIndex];</span>
+
+    <span class="s2">if </span><span class="s1">(!section) {</span>
+      <span class="s2">return </span><span class="s1">{</span>
+        <span class="s1">source: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">line: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">column: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">name: </span><span class="s2">null</span>
+      <span class="s1">};</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">section.consumer.originalPositionFor({</span>
+      <span class="s1">line: needle.generatedLine -</span>
+        <span class="s1">(section.generatedOffset.generatedLine - </span><span class="s4">1</span><span class="s1">),</span>
+      <span class="s1">column: needle.generatedColumn -</span>
+        <span class="s1">(section.generatedOffset.generatedLine === needle.generatedLine</span>
+         <span class="s1">? section.generatedOffset.generatedColumn - </span><span class="s4">1</span>
+         <span class="s1">: </span><span class="s4">0</span><span class="s1">),</span>
+      <span class="s1">bias: aArgs.bias</span>
+    <span class="s1">});</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Return true if we have the source content for every source in the source 
+ * map, false otherwise. 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype.hasContentsOfAllSources =</span>
+  <span class="s2">function </span><span class="s1">IndexedSourceMapConsumer_hasContentsOfAllSources() {</span>
+    <span class="s2">return this</span><span class="s1">._sections.every(</span><span class="s2">function </span><span class="s1">(s) {</span>
+      <span class="s2">return </span><span class="s1">s.consumer.hasContentsOfAllSources();</span>
+    <span class="s1">});</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the original source content. The only argument is the url of the 
+ * original source file. Returns null if no original source content is 
+ * available. 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype.sourceContentFor =</span>
+  <span class="s2">function </span><span class="s1">IndexedSourceMapConsumer_sourceContentFor(aSource, nullOnMissing) {</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._sections.length; i++) {</span>
+      <span class="s2">var </span><span class="s1">section = </span><span class="s2">this</span><span class="s1">._sections[i];</span>
+
+      <span class="s2">var </span><span class="s1">content = section.consumer.sourceContentFor(aSource, </span><span class="s2">true</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(content || content === </span><span class="s3">''</span><span class="s1">) {</span>
+        <span class="s2">return </span><span class="s1">content;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(nullOnMissing) {</span>
+      <span class="s2">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'&quot;' </span><span class="s1">+ aSource + </span><span class="s3">'&quot; is not in the SourceMap.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the generated line and column information for the original source, 
+ * line, and column positions provided. The only argument is an object with 
+ * the following properties: 
+ * 
+ *   - source: The filename of the original source. 
+ *   - line: The line number in the original source.  The line number 
+ *     is 1-based. 
+ *   - column: The column number in the original source.  The column 
+ *     number is 0-based. 
+ * 
+ * and an object is returned with the following properties: 
+ * 
+ *   - line: The line number in the generated source, or null.  The 
+ *     line number is 1-based.  
+ *   - column: The column number in the generated source, or null. 
+ *     The column number is 0-based. 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype.generatedPositionFor =</span>
+  <span class="s2">function </span><span class="s1">IndexedSourceMapConsumer_generatedPositionFor(aArgs) {</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._sections.length; i++) {</span>
+      <span class="s2">var </span><span class="s1">section = </span><span class="s2">this</span><span class="s1">._sections[i];</span>
+
+      <span class="s0">// Only consider this section if the requested source is in the list of</span>
+      <span class="s0">// sources of the consumer.</span>
+      <span class="s2">if </span><span class="s1">(section.consumer._findSourceIndex(util.getArg(aArgs, </span><span class="s3">'source'</span><span class="s1">)) === -</span><span class="s4">1</span><span class="s1">) {</span>
+        <span class="s2">continue</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s2">var </span><span class="s1">generatedPosition = section.consumer.generatedPositionFor(aArgs);</span>
+      <span class="s2">if </span><span class="s1">(generatedPosition) {</span>
+        <span class="s2">var </span><span class="s1">ret = {</span>
+          <span class="s1">line: generatedPosition.line +</span>
+            <span class="s1">(section.generatedOffset.generatedLine - </span><span class="s4">1</span><span class="s1">),</span>
+          <span class="s1">column: generatedPosition.column +</span>
+            <span class="s1">(section.generatedOffset.generatedLine === generatedPosition.line</span>
+             <span class="s1">? section.generatedOffset.generatedColumn - </span><span class="s4">1</span>
+             <span class="s1">: </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">};</span>
+        <span class="s2">return </span><span class="s1">ret;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">line: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">column: </span><span class="s2">null</span>
+    <span class="s1">};</span>
+  <span class="s1">};</span>
+
+<span class="s0">/** 
+ * Parse the mappings in a string in to a data structure which we can easily 
+ * query (the ordered arrays in the `this.__generatedMappings` and 
+ * `this.__originalMappings` properties). 
+ */</span>
+<span class="s1">IndexedSourceMapConsumer.prototype._parseMappings =</span>
+  <span class="s2">function </span><span class="s1">IndexedSourceMapConsumer_parseMappings(aStr, aSourceRoot) {</span>
+    <span class="s2">this</span><span class="s1">.__generatedMappings = [];</span>
+    <span class="s2">this</span><span class="s1">.__originalMappings = [];</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">._sections.length; i++) {</span>
+      <span class="s2">var </span><span class="s1">section = </span><span class="s2">this</span><span class="s1">._sections[i];</span>
+      <span class="s2">var </span><span class="s1">sectionMappings = section.consumer._generatedMappings;</span>
+      <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">j = </span><span class="s4">0</span><span class="s1">; j &lt; sectionMappings.length; j++) {</span>
+        <span class="s2">var </span><span class="s1">mapping = sectionMappings[j];</span>
+
+        <span class="s2">var </span><span class="s1">source = section.consumer._sources.at(mapping.source);</span>
+        <span class="s2">if</span><span class="s1">(source !== </span><span class="s2">null</span><span class="s1">) {</span>
+          <span class="s1">source = util.computeSourceURL(section.consumer.sourceRoot, source, </span><span class="s2">this</span><span class="s1">._sourceMapURL);</span>
+        <span class="s1">}</span>
+        <span class="s2">this</span><span class="s1">._sources.add(source);</span>
+        <span class="s1">source = </span><span class="s2">this</span><span class="s1">._sources.indexOf(source);</span>
+
+        <span class="s2">var </span><span class="s1">name = </span><span class="s2">null</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(mapping.name) {</span>
+          <span class="s1">name = section.consumer._names.at(mapping.name);</span>
+          <span class="s2">this</span><span class="s1">._names.add(name);</span>
+          <span class="s1">name = </span><span class="s2">this</span><span class="s1">._names.indexOf(name);</span>
+        <span class="s1">}</span>
+
+        <span class="s0">// The mappings coming from the consumer for the section have</span>
+        <span class="s0">// generated positions relative to the start of the section, so we</span>
+        <span class="s0">// need to offset them to be relative to the start of the concatenated</span>
+        <span class="s0">// generated file.</span>
+        <span class="s2">var </span><span class="s1">adjustedMapping = {</span>
+          <span class="s1">source: source,</span>
+          <span class="s1">generatedLine: mapping.generatedLine +</span>
+            <span class="s1">(section.generatedOffset.generatedLine - </span><span class="s4">1</span><span class="s1">),</span>
+          <span class="s1">generatedColumn: mapping.generatedColumn +</span>
+            <span class="s1">(section.generatedOffset.generatedLine === mapping.generatedLine</span>
+            <span class="s1">? section.generatedOffset.generatedColumn - </span><span class="s4">1</span>
+            <span class="s1">: </span><span class="s4">0</span><span class="s1">),</span>
+          <span class="s1">originalLine: mapping.originalLine,</span>
+          <span class="s1">originalColumn: mapping.originalColumn,</span>
+          <span class="s1">name: name</span>
+        <span class="s1">};</span>
+
+        <span class="s2">this</span><span class="s1">.__generatedMappings.push(adjustedMapping);</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">adjustedMapping.originalLine === </span><span class="s3">'number'</span><span class="s1">) {</span>
+          <span class="s2">this</span><span class="s1">.__originalMappings.push(adjustedMapping);</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">quickSort(</span><span class="s2">this</span><span class="s1">.__generatedMappings, util.compareByGeneratedPositionsDeflated);</span>
+    <span class="s1">quickSort(</span><span class="s2">this</span><span class="s1">.__originalMappings, util.compareByOriginalPositions);</span>
+  <span class="s1">};</span>
+
+<span class="s1">exports.IndexedSourceMapConsumer = IndexedSourceMapConsumer;</span>
+</pre>
+</body>
+</html>

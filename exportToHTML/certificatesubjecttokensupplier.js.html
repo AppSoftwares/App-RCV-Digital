@@ -1,0 +1,243 @@
+<html>
+<head>
+<title>certificatesubjecttokensupplier.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+certificatesubjecttokensupplier.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2025 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.CertificateSubjectTokenSupplier = exports.InvalidConfigurationError = exports.CertificateSourceUnavailableError = exports.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const fs = require(</span><span class="s0">&quot;fs&quot;</span><span class="s1">);</span>
+<span class="s1">const crypto_1 = require(</span><span class="s0">&quot;crypto&quot;</span><span class="s1">);</span>
+<span class="s1">const https = require(</span><span class="s0">&quot;https&quot;</span><span class="s1">);</span>
+<span class="s1">exports.CERTIFICATE_CONFIGURATION_ENV_VARIABLE = </span><span class="s0">'GOOGLE_API_CERTIFICATE_CONFIG'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Thrown when the certificate source cannot be located or accessed. 
+ */</span>
+<span class="s1">class CertificateSourceUnavailableError extends Error {</span>
+    <span class="s1">constructor(message) {</span>
+        <span class="s1">super(message);</span>
+        <span class="s3">this</span><span class="s1">.name = </span><span class="s0">'CertificateSourceUnavailableError'</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.CertificateSourceUnavailableError = CertificateSourceUnavailableError;</span>
+<span class="s2">/** 
+ * Thrown for invalid configuration that is not related to file availability. 
+ */</span>
+<span class="s1">class InvalidConfigurationError extends Error {</span>
+    <span class="s1">constructor(message) {</span>
+        <span class="s1">super(message);</span>
+        <span class="s3">this</span><span class="s1">.name = </span><span class="s0">'InvalidConfigurationError'</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.InvalidConfigurationError = InvalidConfigurationError;</span>
+<span class="s2">/** 
+ * A subject token supplier that uses a client certificate for authentication. 
+ * It provides the certificate chain as the subject token for identity federation. 
+ */</span>
+<span class="s1">class CertificateSubjectTokenSupplier {</span>
+    <span class="s1">certificateConfigPath;</span>
+    <span class="s1">trustChainPath;</span>
+    <span class="s1">cert;</span>
+    <span class="s1">key;</span>
+    <span class="s2">/** 
+     * Initializes a new instance of the CertificateSubjectTokenSupplier. 
+     * @param opts The configuration options for the supplier. 
+     */</span>
+    <span class="s1">constructor(opts) {</span>
+        <span class="s3">if </span><span class="s1">(!opts.useDefaultCertificateConfig &amp;&amp; !opts.certificateConfigLocation) {</span>
+            <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(</span><span class="s0">'Either `useDefaultCertificateConfig` must be true or a `certificateConfigLocation` must be provided.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(opts.useDefaultCertificateConfig &amp;&amp; opts.certificateConfigLocation) {</span>
+            <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(</span><span class="s0">'Both `useDefaultCertificateConfig` and `certificateConfigLocation` cannot be provided.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.trustChainPath = opts.trustChainPath;</span>
+        <span class="s3">this</span><span class="s1">.certificateConfigPath = opts.certificateConfigLocation ?? </span><span class="s0">''</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Creates an HTTPS agent configured with the client certificate and private key for mTLS. 
+     * @returns An mTLS-configured https.Agent. 
+     */</span>
+    <span class="s1">async createMtlsHttpsAgent() {</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.key || !</span><span class="s3">this</span><span class="s1">.cert) {</span>
+            <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(</span><span class="s0">'Cannot create mTLS Agent with missing certificate or key'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">return new </span><span class="s1">https.Agent({ key: </span><span class="s3">this</span><span class="s1">.key, cert: </span><span class="s3">this</span><span class="s1">.cert });</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Constructs the subject token, which is the base64-encoded certificate chain. 
+     * @returns A promise that resolves with the subject token. 
+     */</span>
+    <span class="s1">async getSubjectToken() {</span>
+        <span class="s2">// The &quot;subject token&quot; in this context is the processed certificate chain.</span>
+        <span class="s3">this</span><span class="s1">.certificateConfigPath = await </span><span class="s3">this</span><span class="s1">.#resolveCertificateConfigFilePath();</span>
+        <span class="s1">const { certPath, keyPath } = await </span><span class="s3">this</span><span class="s1">.#getCertAndKeyPaths();</span>
+        <span class="s1">({ cert: </span><span class="s3">this</span><span class="s1">.cert, key: </span><span class="s3">this</span><span class="s1">.key } = await </span><span class="s3">this</span><span class="s1">.#getKeyAndCert(certPath, keyPath));</span>
+        <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#processChainFromPaths(</span><span class="s3">this</span><span class="s1">.cert);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Resolves the absolute path to the certificate configuration file 
+     * by checking the &quot;certificate_config_location&quot; provided in the ADC file, 
+     * or the &quot;GOOGLE_API_CERTIFICATE_CONFIG&quot; environment variable 
+     * or in the default gcloud path. 
+     * @param overridePath An optional path to check first. 
+     * @returns The resolved file path. 
+     */</span>
+    <span class="s1">async #resolveCertificateConfigFilePath() {</span>
+        <span class="s2">// 1. Check for the override path from constructor options.</span>
+        <span class="s1">const overridePath = </span><span class="s3">this</span><span class="s1">.certificateConfigPath;</span>
+        <span class="s3">if </span><span class="s1">(overridePath) {</span>
+            <span class="s3">if </span><span class="s1">(await (</span><span class="s4">0</span><span class="s1">, util_1.isValidFile)(overridePath)) {</span>
+                <span class="s3">return </span><span class="s1">overridePath;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Provided certificate config path is invalid: ${overridePath}`);</span>
+        <span class="s1">}</span>
+        <span class="s2">// 2. Check the standard environment variable.</span>
+        <span class="s1">const envPath = process.env[exports.CERTIFICATE_CONFIGURATION_ENV_VARIABLE];</span>
+        <span class="s3">if </span><span class="s1">(envPath) {</span>
+            <span class="s3">if </span><span class="s1">(await (</span><span class="s4">0</span><span class="s1">, util_1.isValidFile)(envPath)) {</span>
+                <span class="s3">return </span><span class="s1">envPath;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Path from environment variable </span><span class="s0">&quot;${exports.CERTIFICATE_CONFIGURATION_ENV_VARIABLE}&quot; </span><span class="s1">is invalid: ${envPath}`);</span>
+        <span class="s1">}</span>
+        <span class="s2">// 3. Check the well-known gcloud config location.</span>
+        <span class="s1">const wellKnownPath = (</span><span class="s4">0</span><span class="s1">, util_1.getWellKnownCertificateConfigFileLocation)();</span>
+        <span class="s3">if </span><span class="s1">(await (</span><span class="s4">0</span><span class="s1">, util_1.isValidFile)(wellKnownPath)) {</span>
+            <span class="s3">return </span><span class="s1">wellKnownPath;</span>
+        <span class="s1">}</span>
+        <span class="s2">// 4. If none are found, throw an error.</span>
+        <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(</span><span class="s0">'Could not find certificate configuration file. Searched override path, ' </span><span class="s1">+</span>
+            <span class="s1">`the </span><span class="s0">&quot;${exports.CERTIFICATE_CONFIGURATION_ENV_VARIABLE}&quot; </span><span class="s1">env </span><span class="s3">var</span><span class="s1">, and the gcloud path (${wellKnownPath}).`);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Reads and parses the certificate config JSON file to extract the certificate and key paths. 
+     * @returns An object containing the certificate and key paths. 
+     */</span>
+    <span class="s1">async #getCertAndKeyPaths() {</span>
+        <span class="s1">const configPath = </span><span class="s3">this</span><span class="s1">.certificateConfigPath;</span>
+        <span class="s1">let fileContents;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">fileContents = await fs.promises.readFile(configPath, </span><span class="s0">'utf8'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Failed to read certificate config file at: ${configPath}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const config = JSON.parse(fileContents);</span>
+            <span class="s1">const certPath = config?.cert_configs?.workload?.cert_path;</span>
+            <span class="s1">const keyPath = config?.cert_configs?.workload?.key_path;</span>
+            <span class="s3">if </span><span class="s1">(!certPath || !keyPath) {</span>
+                <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(`Certificate config file (${configPath}) is missing required </span><span class="s0">&quot;cert_path&quot; </span><span class="s1">or </span><span class="s0">&quot;key_path&quot; </span><span class="s3">in </span><span class="s1">the workload config.`);</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">{ certPath, keyPath };</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">InvalidConfigurationError)</span>
+                <span class="s3">throw </span><span class="s1">e;</span>
+            <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(`Failed to parse certificate config from ${configPath}: ${e.message}`);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Reads and parses the cert and key files get their content and check valid format. 
+     * @returns An object containing the cert content and key content in buffer format. 
+     */</span>
+    <span class="s1">async #getKeyAndCert(certPath, keyPath) {</span>
+        <span class="s1">let cert, key;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">cert = await fs.promises.readFile(certPath);</span>
+            <span class="s3">new </span><span class="s1">crypto_1.X509Certificate(cert);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s1">const message = err </span><span class="s3">instanceof </span><span class="s1">Error ? err.message : String(err);</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Failed to read certificate file at ${certPath}: ${message}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">key = await fs.promises.readFile(keyPath);</span>
+            <span class="s1">(</span><span class="s4">0</span><span class="s1">, crypto_1.createPrivateKey)(key);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s1">const message = err </span><span class="s3">instanceof </span><span class="s1">Error ? err.message : String(err);</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Failed to read private key file at ${keyPath}: ${message}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">{ cert, key };</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Reads the leaf certificate and trust chain, combines them, 
+     * and returns a JSON array of base64-encoded certificates. 
+     * @returns A stringified JSON array of the certificate chain. 
+     */</span>
+    <span class="s1">async #processChainFromPaths(leafCertBuffer) {</span>
+        <span class="s1">const leafCert = </span><span class="s3">new </span><span class="s1">crypto_1.X509Certificate(leafCertBuffer);</span>
+        <span class="s2">// If no trust chain is provided, just use the successfully parsed leaf certificate.</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.trustChainPath) {</span>
+            <span class="s3">return </span><span class="s1">JSON.stringify([leafCert.raw.toString(</span><span class="s0">'base64'</span><span class="s1">)]);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Handle the trust chain logic.</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const chainPems = await fs.promises.readFile(</span><span class="s3">this</span><span class="s1">.trustChainPath, </span><span class="s0">'utf8'</span><span class="s1">);</span>
+            <span class="s1">const pemBlocks = chainPems.match(/-----BEGIN CERTIFICATE-----[^-]+-----END CERTIFICATE-----/g) ?? [];</span>
+            <span class="s1">const chainCerts = pemBlocks.map((pem, index) =&gt; {</span>
+                <span class="s3">try </span><span class="s1">{</span>
+                    <span class="s3">return new </span><span class="s1">crypto_1.X509Certificate(pem);</span>
+                <span class="s1">}</span>
+                <span class="s3">catch </span><span class="s1">(err) {</span>
+                    <span class="s1">const message = err </span><span class="s3">instanceof </span><span class="s1">Error ? err.message : String(err);</span>
+                    <span class="s2">// Throw a more precise error if a single certificate in the chain is invalid.</span>
+                    <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(`Failed to parse certificate at index ${index} </span><span class="s3">in </span><span class="s1">trust chain file ${</span><span class="s3">this</span><span class="s1">.trustChainPath}: ${message}`);</span>
+                <span class="s1">}</span>
+            <span class="s1">});</span>
+            <span class="s1">const leafIndex = chainCerts.findIndex(chainCert =&gt; leafCert.raw.equals(chainCert.raw));</span>
+            <span class="s1">let finalChain;</span>
+            <span class="s3">if </span><span class="s1">(leafIndex === -</span><span class="s4">1</span><span class="s1">) {</span>
+                <span class="s2">// Leaf not found, so prepend it to the chain.</span>
+                <span class="s1">finalChain = [leafCert, ...chainCerts];</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(leafIndex === </span><span class="s4">0</span><span class="s1">) {</span>
+                <span class="s2">// Leaf is already the first element, so the chain is correctly ordered.</span>
+                <span class="s1">finalChain = chainCerts;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s2">// Leaf is in the chain but not at the top, which is invalid.</span>
+                <span class="s3">throw new </span><span class="s1">InvalidConfigurationError(`Leaf certificate exists </span><span class="s3">in </span><span class="s1">the trust chain but is not the first entry (found at index ${leafIndex}).`);</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">JSON.stringify(finalChain.map(cert =&gt; cert.raw.toString(</span><span class="s0">'base64'</span><span class="s1">)));</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s2">// Re-throw our specific configuration errors.</span>
+            <span class="s3">if </span><span class="s1">(err </span><span class="s3">instanceof </span><span class="s1">InvalidConfigurationError)</span>
+                <span class="s3">throw </span><span class="s1">err;</span>
+            <span class="s1">const message = err </span><span class="s3">instanceof </span><span class="s1">Error ? err.message : String(err);</span>
+            <span class="s3">throw new </span><span class="s1">CertificateSourceUnavailableError(`Failed to process certificate chain from ${</span><span class="s3">this</span><span class="s1">.trustChainPath}: ${message}`);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.CertificateSubjectTokenSupplier = CertificateSubjectTokenSupplier;</span>
+<span class="s2">//# sourceMappingURL=certificatesubjecttokensupplier.js.map</span></pre>
+</body>
+</html>

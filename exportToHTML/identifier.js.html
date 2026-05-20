@@ -1,0 +1,124 @@
+<html>
+<head>
+<title>identifier.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+identifier.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Ivan Kopeykin @vankop 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const memorize = require(</span><span class="s2">&quot;./memoize&quot;</span><span class="s1">);</span>
+
+<span class="s1">const getUrl = memorize(() =&gt; require(</span><span class="s2">&quot;url&quot;</span><span class="s1">));</span>
+
+<span class="s1">const PATH_QUERY_FRAGMENT_REGEXP =</span>
+	<span class="s1">/^(#?(?:\</span><span class="s3">0</span><span class="s1">.|[^?#\</span><span class="s3">0</span><span class="s1">])*)(\?(?:\</span><span class="s3">0</span><span class="s1">.|[^#\</span><span class="s3">0</span><span class="s1">])*)?(#.*)?$/;</span>
+<span class="s1">const ZERO_ESCAPE_REGEXP = /\</span><span class="s3">0</span><span class="s1">(.)/g;</span>
+<span class="s1">const FILE_REG_EXP = /file:/i;</span>
+
+<span class="s0">/** 
+ * Index past a DOS device path prefix (`\\?\…` or `\\.\…`), or 0. Kept 
+ * out of `parseIdentifier` on purpose: inlining it back bloats the caller 
+ * beyond the size where V8's interpreter and JIT both handle it well 
+ * (the cause of the description-files-multi CodSpeed regression). 
+ * @param {string} identifier identifier known to start with `\` 
+ * @returns {number} 4 if identifier starts with a DOS device prefix, else 0 
+ */</span>
+<span class="s4">function </span><span class="s1">dosPrefixEnd(identifier) {</span>
+	<span class="s4">if </span><span class="s1">(</span>
+		<span class="s1">identifier.length &gt;= </span><span class="s3">4 </span><span class="s1">&amp;&amp;</span>
+		<span class="s1">identifier.charCodeAt(</span><span class="s3">1</span><span class="s1">) === </span><span class="s3">92 </span><span class="s1">&amp;&amp;</span>
+		<span class="s1">identifier.charCodeAt(</span><span class="s3">3</span><span class="s1">) === </span><span class="s3">92</span>
+	<span class="s1">) {</span>
+		<span class="s1">const c2 = identifier.charCodeAt(</span><span class="s3">2</span><span class="s1">);</span>
+		<span class="s4">if </span><span class="s1">(c2 === </span><span class="s3">63 </span><span class="s1">|| c2 === </span><span class="s3">46</span><span class="s1">) </span><span class="s4">return </span><span class="s3">4</span><span class="s1">;</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s3">0</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string} identifier identifier 
+ * @returns {[string, string, string] | null} parsed identifier 
+ */</span>
+<span class="s4">function </span><span class="s1">parseIdentifier(identifier) {</span>
+	<span class="s4">if </span><span class="s1">(!identifier) {</span>
+		<span class="s4">return null</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s4">if </span><span class="s1">(FILE_REG_EXP.test(identifier)) {</span>
+		<span class="s1">identifier = getUrl().fileURLToPath(identifier);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const firstEscape = identifier.indexOf(</span><span class="s2">&quot;</span><span class="s4">\0</span><span class="s2">&quot;</span><span class="s1">);</span>
+
+	<span class="s0">// Handle `\0`</span>
+	<span class="s4">if </span><span class="s1">(firstEscape !== -</span><span class="s3">1</span><span class="s1">) {</span>
+		<span class="s1">const match = PATH_QUERY_FRAGMENT_REGEXP.exec(identifier);</span>
+
+		<span class="s4">if </span><span class="s1">(!match) </span><span class="s4">return null</span><span class="s1">;</span>
+
+		<span class="s4">return </span><span class="s1">[</span>
+			<span class="s1">match[</span><span class="s3">1</span><span class="s1">].replace(ZERO_ESCAPE_REGEXP, </span><span class="s2">&quot;$1&quot;</span><span class="s1">),</span>
+			<span class="s1">match[</span><span class="s3">2</span><span class="s1">] ? match[</span><span class="s3">2</span><span class="s1">].replace(ZERO_ESCAPE_REGEXP, </span><span class="s2">&quot;$1&quot;</span><span class="s1">) : </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+			<span class="s1">match[</span><span class="s3">3</span><span class="s1">] || </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+		<span class="s1">];</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// Fast path for inputs that don't use \0 escaping. DOS device paths</span>
+	<span class="s0">// (`\\?\…`, `\\.\…`) embed a literal `?` / `.` that must not be read</span>
+	<span class="s0">// as a query separator; skip past the prefix when the input actually</span>
+	<span class="s0">// starts with `\`. Gate is a single char-code compare so this function</span>
+	<span class="s0">// stays inside V8's inline budget for its hot callers (resolver parse).</span>
+	<span class="s1">const scanStart =</span>
+		<span class="s1">identifier.charCodeAt(</span><span class="s3">0</span><span class="s1">) === </span><span class="s3">92 </span><span class="s1">? dosPrefixEnd(identifier) : </span><span class="s3">0</span><span class="s1">;</span>
+	<span class="s1">const queryStart = identifier.indexOf(</span><span class="s2">&quot;?&quot;</span><span class="s1">, scanStart);</span>
+	<span class="s0">// Start at index 1 (or past a DOS prefix) to ignore a possible leading hash.</span>
+	<span class="s1">const fragmentStart = identifier.indexOf(</span><span class="s2">&quot;#&quot;</span><span class="s1">, scanStart || </span><span class="s3">1</span><span class="s1">);</span>
+
+	<span class="s4">if </span><span class="s1">(fragmentStart &lt; </span><span class="s3">0</span><span class="s1">) {</span>
+		<span class="s4">if </span><span class="s1">(queryStart &lt; </span><span class="s3">0</span><span class="s1">) {</span>
+			<span class="s0">// No fragment, no query</span>
+			<span class="s4">return </span><span class="s1">[identifier, </span><span class="s2">&quot;&quot;</span><span class="s1">, </span><span class="s2">&quot;&quot;</span><span class="s1">];</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// Query, no fragment</span>
+		<span class="s4">return </span><span class="s1">[identifier.slice(</span><span class="s3">0</span><span class="s1">, queryStart), identifier.slice(queryStart), </span><span class="s2">&quot;&quot;</span><span class="s1">];</span>
+	<span class="s1">}</span>
+
+	<span class="s4">if </span><span class="s1">(queryStart &lt; </span><span class="s3">0 </span><span class="s1">|| fragmentStart &lt; queryStart) {</span>
+		<span class="s0">// Fragment, no query</span>
+		<span class="s4">return </span><span class="s1">[</span>
+			<span class="s1">identifier.slice(</span><span class="s3">0</span><span class="s1">, fragmentStart),</span>
+			<span class="s2">&quot;&quot;</span><span class="s1">,</span>
+			<span class="s1">identifier.slice(fragmentStart),</span>
+		<span class="s1">];</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// Query and fragment</span>
+	<span class="s4">return </span><span class="s1">[</span>
+		<span class="s1">identifier.slice(</span><span class="s3">0</span><span class="s1">, queryStart),</span>
+		<span class="s1">identifier.slice(queryStart, fragmentStart),</span>
+		<span class="s1">identifier.slice(fragmentStart),</span>
+	<span class="s1">];</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports.parseIdentifier = parseIdentifier;</span>
+</pre>
+</body>
+</html>

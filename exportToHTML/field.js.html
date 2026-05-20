@@ -1,0 +1,474 @@
+<html>
+<head>
+<title>field.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+field.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Field;</span>
+
+<span class="s2">// extends ReflectionObject</span>
+<span class="s3">var </span><span class="s1">ReflectionObject = require(</span><span class="s0">&quot;./object&quot;</span><span class="s1">);</span>
+<span class="s1">((Field.prototype = Object.create(ReflectionObject.prototype)).constructor = Field).className = </span><span class="s0">&quot;Field&quot;</span><span class="s1">;</span>
+
+<span class="s3">var </span><span class="s1">Enum  = require(</span><span class="s0">&quot;./enum&quot;</span><span class="s1">),</span>
+    <span class="s1">types = require(</span><span class="s0">&quot;./types&quot;</span><span class="s1">),</span>
+    <span class="s1">util  = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s3">var </span><span class="s1">Type; </span><span class="s2">// cyclic</span>
+
+<span class="s3">var </span><span class="s1">ruleRe = /^required|optional|repeated$/;</span>
+
+<span class="s2">/** 
+ * Constructs a new message field instance. Note that {@link MapField|map fields} have their own class. 
+ * @name Field 
+ * @classdesc Reflected message field. 
+ * @extends FieldBase 
+ * @constructor 
+ * @param {string} name Unique name within its namespace 
+ * @param {number} id Unique id within its namespace 
+ * @param {string} type Value type 
+ * @param {string|Object.&lt;string,*&gt;} [rule=&quot;optional&quot;] Field rule 
+ * @param {string|Object.&lt;string,*&gt;} [extend] Extended type if different from parent 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ */</span>
+
+<span class="s2">/** 
+ * Constructs a field from a field descriptor. 
+ * @param {string} name Field name 
+ * @param {IField} json Field descriptor 
+ * @returns {Field} Created field 
+ * @throws {TypeError} If arguments are invalid 
+ */</span>
+<span class="s1">Field.fromJSON = </span><span class="s3">function </span><span class="s1">fromJSON(name, json) {</span>
+    <span class="s3">var </span><span class="s1">field = </span><span class="s3">new </span><span class="s1">Field(name, json.id, json.type, json.rule, json.extend, json.options, json.comment);</span>
+    <span class="s3">if </span><span class="s1">(json.edition)</span>
+        <span class="s1">field._edition = json.edition;</span>
+    <span class="s1">field._defaultEdition = </span><span class="s0">&quot;proto3&quot;</span><span class="s1">;  </span><span class="s2">// For backwards-compatibility.</span>
+    <span class="s3">return </span><span class="s1">field;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Not an actual constructor. Use {@link Field} instead. 
+ * @classdesc Base class of all reflected message fields. This is not an actual class but here for the sake of having consistent type definitions. 
+ * @exports FieldBase 
+ * @extends ReflectionObject 
+ * @constructor 
+ * @param {string} name Unique name within its namespace 
+ * @param {number} id Unique id within its namespace 
+ * @param {string} type Value type 
+ * @param {string|Object.&lt;string,*&gt;} [rule=&quot;optional&quot;] Field rule 
+ * @param {string|Object.&lt;string,*&gt;} [extend] Extended type if different from parent 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ * @param {string} [comment] Comment associated with this field 
+ */</span>
+<span class="s3">function </span><span class="s1">Field(name, id, type, rule, extend, options, comment) {</span>
+
+    <span class="s3">if </span><span class="s1">(util.isObject(rule)) {</span>
+        <span class="s1">comment = extend;</span>
+        <span class="s1">options = rule;</span>
+        <span class="s1">rule = extend = undefined;</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(util.isObject(extend)) {</span>
+        <span class="s1">comment = options;</span>
+        <span class="s1">options = extend;</span>
+        <span class="s1">extend = undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">ReflectionObject.call(</span><span class="s3">this</span><span class="s1">, name, options);</span>
+
+    <span class="s3">if </span><span class="s1">(!util.isInteger(id) || id &lt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;id must be a non-negative integer&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(!util.isString(type))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;type must be a string&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(rule !== undefined &amp;&amp; !ruleRe.test(rule = rule.toString().toLowerCase()))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;rule must be a string rule&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(extend !== undefined &amp;&amp; !util.isString(extend))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;extend must be a string&quot;</span><span class="s1">);</span>
+
+    <span class="s2">/** 
+     * Field rule, if any. 
+     * @type {string|undefined} 
+     */</span>
+    <span class="s3">if </span><span class="s1">(rule === </span><span class="s0">&quot;proto3_optional&quot;</span><span class="s1">) {</span>
+        <span class="s1">rule = </span><span class="s0">&quot;optional&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s3">this</span><span class="s1">.rule = rule &amp;&amp; rule !== </span><span class="s0">&quot;optional&quot; </span><span class="s1">? rule : undefined; </span><span class="s2">// toJSON</span>
+
+    <span class="s2">/** 
+     * Field type. 
+     * @type {string} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.type = type; </span><span class="s2">// toJSON</span>
+
+    <span class="s2">/** 
+     * Unique field id. 
+     * @type {number} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.id = id; </span><span class="s2">// toJSON, marker</span>
+
+    <span class="s2">/** 
+     * Extended type if different from parent. 
+     * @type {string|undefined} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.extend = extend || undefined; </span><span class="s2">// toJSON</span>
+
+    <span class="s2">/** 
+     * Whether this field is repeated. 
+     * @type {boolean} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.repeated = rule === </span><span class="s0">&quot;repeated&quot;</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Whether this field is a map or not. 
+     * @type {boolean} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.map = </span><span class="s3">false</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Message this field belongs to. 
+     * @type {Type|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.message = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * OneOf this field belongs to, if any, 
+     * @type {OneOf|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.partOf = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * The field type's default value. 
+     * @type {*} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * The field's default value on prototypes. 
+     * @type {*} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.defaultValue = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Whether this field's value should be treated as a long. 
+     * @type {boolean} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.long = util.Long ? types.long[type] !== undefined : </span><span class="s2">/* istanbul ignore next */ </span><span class="s3">false</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Whether this field's value is a buffer. 
+     * @type {boolean} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.bytes = type === </span><span class="s0">&quot;bytes&quot;</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Resolved type if not a basic type. 
+     * @type {Type|Enum|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.resolvedType = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Sister-field within the extended type if a declaring extension field. 
+     * @type {Field|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.extensionField = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Sister-field within the declaring namespace if an extended field. 
+     * @type {Field|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.declaringField = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Comment for this field. 
+     * @type {string|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.comment = comment;</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Determines whether this field is required. 
+ * @name Field#required 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Field.prototype, </span><span class="s0">&quot;required&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">return this</span><span class="s1">._features.field_presence === </span><span class="s0">&quot;LEGACY_REQUIRED&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Determines whether this field is not required. 
+ * @name Field#optional 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Field.prototype, </span><span class="s0">&quot;optional&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">return </span><span class="s1">!</span><span class="s3">this</span><span class="s1">.required;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Determines whether this field uses tag-delimited encoding.  In proto2 this 
+ * corresponded to group syntax. 
+ * @name Field#delimited 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Field.prototype, </span><span class="s0">&quot;delimited&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">return this</span><span class="s1">.resolvedType </span><span class="s3">instanceof </span><span class="s1">Type &amp;&amp;</span>
+            <span class="s3">this</span><span class="s1">._features.message_encoding === </span><span class="s0">&quot;DELIMITED&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Determines whether this field is packed. Only relevant when repeated. 
+ * @name Field#packed 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Field.prototype, </span><span class="s0">&quot;packed&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">return this</span><span class="s1">._features.repeated_field_encoding === </span><span class="s0">&quot;PACKED&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Determines whether this field tracks presence. 
+ * @name Field#hasPresence 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Field.prototype, </span><span class="s0">&quot;hasPresence&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.repeated || </span><span class="s3">this</span><span class="s1">.map) {</span>
+            <span class="s3">return false</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.partOf || </span><span class="s2">// oneofs</span>
+            <span class="s3">this</span><span class="s1">.declaringField || </span><span class="s3">this</span><span class="s1">.extensionField || </span><span class="s2">// extensions</span>
+            <span class="s3">this</span><span class="s1">._features.field_presence !== </span><span class="s0">&quot;IMPLICIT&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">Field.prototype.setOption = </span><span class="s3">function </span><span class="s1">setOption(name, value, ifNotSet) {</span>
+    <span class="s3">return </span><span class="s1">ReflectionObject.prototype.setOption.call(</span><span class="s3">this</span><span class="s1">, name, value, ifNotSet);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Field descriptor. 
+ * @interface IField 
+ * @property {string} [rule=&quot;optional&quot;] Field rule 
+ * @property {string} type Field type 
+ * @property {number} id Field id 
+ * @property {Object.&lt;string,*&gt;} [options] Field options 
+ */</span>
+
+<span class="s2">/** 
+ * Extension field descriptor. 
+ * @interface IExtensionField 
+ * @extends IField 
+ * @property {string} extend Extended type 
+ */</span>
+
+<span class="s2">/** 
+ * Converts this field to a field descriptor. 
+ * @param {IToJSONOptions} [toJSONOptions] JSON conversion options 
+ * @returns {IField} Field descriptor 
+ */</span>
+<span class="s1">Field.prototype.toJSON = </span><span class="s3">function </span><span class="s1">toJSON(toJSONOptions) {</span>
+    <span class="s3">var </span><span class="s1">keepComments = toJSONOptions ? Boolean(toJSONOptions.keepComments) : </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s3">return </span><span class="s1">util.toObject([</span>
+        <span class="s0">&quot;edition&quot; </span><span class="s1">, </span><span class="s3">this</span><span class="s1">._editionToJSON(),</span>
+        <span class="s0">&quot;rule&quot;    </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.rule !== </span><span class="s0">&quot;optional&quot; </span><span class="s1">&amp;&amp; </span><span class="s3">this</span><span class="s1">.rule || undefined,</span>
+        <span class="s0">&quot;type&quot;    </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.type,</span>
+        <span class="s0">&quot;id&quot;      </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.id,</span>
+        <span class="s0">&quot;extend&quot;  </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.extend,</span>
+        <span class="s0">&quot;options&quot; </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.options,</span>
+        <span class="s0">&quot;comment&quot; </span><span class="s1">, keepComments ? </span><span class="s3">this</span><span class="s1">.comment : undefined</span>
+    <span class="s1">]);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Resolves this field's type references. 
+ * @returns {Field} `this` 
+ * @throws {Error} If any reference cannot be resolved 
+ */</span>
+<span class="s1">Field.prototype.resolve = </span><span class="s3">function </span><span class="s1">resolve() {</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.resolved)</span>
+        <span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">if </span><span class="s1">((</span><span class="s3">this</span><span class="s1">.typeDefault = types.defaults[</span><span class="s3">this</span><span class="s1">.type]) === undefined) { </span><span class="s2">// if not a basic type, resolve it</span>
+        <span class="s3">this</span><span class="s1">.resolvedType = (</span><span class="s3">this</span><span class="s1">.declaringField ? </span><span class="s3">this</span><span class="s1">.declaringField.parent : </span><span class="s3">this</span><span class="s1">.parent).lookupTypeOrEnum(</span><span class="s3">this</span><span class="s1">.type);</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.resolvedType </span><span class="s3">instanceof </span><span class="s1">Type)</span>
+            <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">else </span><span class="s2">// instanceof Enum</span>
+            <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">this</span><span class="s1">.resolvedType.values[Object.keys(</span><span class="s3">this</span><span class="s1">.resolvedType.values)[</span><span class="s4">0</span><span class="s1">]]; </span><span class="s2">// first defined</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.options &amp;&amp; </span><span class="s3">this</span><span class="s1">.options.proto3_optional) {</span>
+        <span class="s2">// proto3 scalar value marked optional; should default to null</span>
+        <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// use explicitly set default value if present</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.options &amp;&amp; </span><span class="s3">this</span><span class="s1">.options[</span><span class="s0">&quot;default&quot;</span><span class="s1">] != </span><span class="s3">null</span><span class="s1">) {</span>
+        <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">this</span><span class="s1">.options[</span><span class="s0">&quot;default&quot;</span><span class="s1">];</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum &amp;&amp; </span><span class="s3">typeof this</span><span class="s1">.typeDefault === </span><span class="s0">&quot;string&quot;</span><span class="s1">)</span>
+            <span class="s3">this</span><span class="s1">.typeDefault = </span><span class="s3">this</span><span class="s1">.resolvedType.values[</span><span class="s3">this</span><span class="s1">.typeDefault];</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// remove unnecessary options</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.options) {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.options.packed !== undefined &amp;&amp; </span><span class="s3">this</span><span class="s1">.resolvedType &amp;&amp; !(</span><span class="s3">this</span><span class="s1">.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum))</span>
+            <span class="s3">delete this</span><span class="s1">.options.packed;</span>
+        <span class="s3">if </span><span class="s1">(!Object.keys(</span><span class="s3">this</span><span class="s1">.options).length)</span>
+            <span class="s3">this</span><span class="s1">.options = undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// convert to internal data type if necesssary</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.long) {</span>
+        <span class="s3">this</span><span class="s1">.typeDefault = util.Long.fromNumber(</span><span class="s3">this</span><span class="s1">.typeDefault, </span><span class="s3">this</span><span class="s1">.type.charAt(</span><span class="s4">0</span><span class="s1">) === </span><span class="s0">&quot;u&quot;</span><span class="s1">);</span>
+
+        <span class="s2">/* istanbul ignore else */</span>
+        <span class="s3">if </span><span class="s1">(Object.freeze)</span>
+            <span class="s1">Object.freeze(</span><span class="s3">this</span><span class="s1">.typeDefault); </span><span class="s2">// long instances are meant to be immutable anyway (i.e. use small int cache that even requires it)</span>
+
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.bytes &amp;&amp; </span><span class="s3">typeof this</span><span class="s1">.typeDefault === </span><span class="s0">&quot;string&quot;</span><span class="s1">) {</span>
+        <span class="s3">var </span><span class="s1">buf;</span>
+        <span class="s3">if </span><span class="s1">(util.base64.test(</span><span class="s3">this</span><span class="s1">.typeDefault))</span>
+            <span class="s1">util.base64.decode(</span><span class="s3">this</span><span class="s1">.typeDefault, buf = util.newBuffer(util.base64.length(</span><span class="s3">this</span><span class="s1">.typeDefault)), </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s3">else</span>
+            <span class="s1">util.utf8.write(</span><span class="s3">this</span><span class="s1">.typeDefault, buf = util.newBuffer(util.utf8.length(</span><span class="s3">this</span><span class="s1">.typeDefault)), </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s3">this</span><span class="s1">.typeDefault = buf;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// take special care of maps and repeated fields</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.map)</span>
+        <span class="s3">this</span><span class="s1">.defaultValue = util.emptyObject;</span>
+    <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.repeated)</span>
+        <span class="s3">this</span><span class="s1">.defaultValue = util.emptyArray;</span>
+    <span class="s3">else</span>
+        <span class="s3">this</span><span class="s1">.defaultValue = </span><span class="s3">this</span><span class="s1">.typeDefault;</span>
+
+    <span class="s2">// ensure proper value on prototype</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.parent </span><span class="s3">instanceof </span><span class="s1">Type)</span>
+        <span class="s3">this</span><span class="s1">.parent.ctor.prototype[</span><span class="s3">this</span><span class="s1">.name] = </span><span class="s3">this</span><span class="s1">.defaultValue;</span>
+
+    <span class="s3">return </span><span class="s1">ReflectionObject.prototype.resolve.call(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Infers field features from legacy syntax that may have been specified differently. 
+ * in older editions. 
+ * @param {string|undefined} edition The edition this proto is on, or undefined if pre-editions 
+ * @returns {object} The feature values to override 
+ */</span>
+<span class="s1">Field.prototype._inferLegacyProtoFeatures = </span><span class="s3">function </span><span class="s1">_inferLegacyProtoFeatures(edition) {</span>
+    <span class="s3">if </span><span class="s1">(edition !== </span><span class="s0">&quot;proto2&quot; </span><span class="s1">&amp;&amp; edition !== </span><span class="s0">&quot;proto3&quot;</span><span class="s1">) {</span>
+        <span class="s3">return </span><span class="s1">{};</span>
+    <span class="s1">}</span>
+
+    <span class="s3">var </span><span class="s1">features = {};</span>
+
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.rule === </span><span class="s0">&quot;required&quot;</span><span class="s1">) {</span>
+        <span class="s1">features.field_presence = </span><span class="s0">&quot;LEGACY_REQUIRED&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.parent &amp;&amp; types.defaults[</span><span class="s3">this</span><span class="s1">.type] === undefined) {</span>
+        <span class="s2">// We can't use resolvedType because types may not have been resolved yet.  However,</span>
+        <span class="s2">// legacy groups are always in the same scope as the field so we don't have to do a</span>
+        <span class="s2">// full scan of the tree.</span>
+        <span class="s3">var </span><span class="s1">type = </span><span class="s3">this</span><span class="s1">.parent.get(</span><span class="s3">this</span><span class="s1">.type.split(</span><span class="s0">&quot;.&quot;</span><span class="s1">).pop());</span>
+        <span class="s3">if </span><span class="s1">(type &amp;&amp; type </span><span class="s3">instanceof </span><span class="s1">Type &amp;&amp; type.group) {</span>
+            <span class="s1">features.message_encoding = </span><span class="s0">&quot;DELIMITED&quot;</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.getOption(</span><span class="s0">&quot;packed&quot;</span><span class="s1">) === </span><span class="s3">true</span><span class="s1">) {</span>
+        <span class="s1">features.repeated_field_encoding = </span><span class="s0">&quot;PACKED&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.getOption(</span><span class="s0">&quot;packed&quot;</span><span class="s1">) === </span><span class="s3">false</span><span class="s1">) {</span>
+        <span class="s1">features.repeated_field_encoding = </span><span class="s0">&quot;EXPANDED&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">features;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">Field.prototype._resolveFeatures = </span><span class="s3">function </span><span class="s1">_resolveFeatures(edition) {</span>
+    <span class="s3">return </span><span class="s1">ReflectionObject.prototype._resolveFeatures.call(</span><span class="s3">this</span><span class="s1">, </span><span class="s3">this</span><span class="s1">._edition || edition);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Decorator function as returned by {@link Field.d} and {@link MapField.d} (TypeScript). 
+ * @typedef FieldDecorator 
+ * @type {function} 
+ * @param {Object} prototype Target prototype 
+ * @param {string} fieldName Field name 
+ * @returns {undefined} 
+ */</span>
+
+<span class="s2">/** 
+ * Field decorator (TypeScript). 
+ * @name Field.d 
+ * @function 
+ * @param {number} fieldId Field id 
+ * @param {&quot;double&quot;|&quot;float&quot;|&quot;int32&quot;|&quot;uint32&quot;|&quot;sint32&quot;|&quot;fixed32&quot;|&quot;sfixed32&quot;|&quot;int64&quot;|&quot;uint64&quot;|&quot;sint64&quot;|&quot;fixed64&quot;|&quot;sfixed64&quot;|&quot;string&quot;|&quot;bool&quot;|&quot;bytes&quot;|Object} fieldType Field type 
+ * @param {&quot;optional&quot;|&quot;required&quot;|&quot;repeated&quot;} [fieldRule=&quot;optional&quot;] Field rule 
+ * @param {T} [defaultValue] Default value 
+ * @returns {FieldDecorator} Decorator function 
+ * @template T extends number | number[] | Long | Long[] | string | string[] | boolean | boolean[] | Uint8Array | Uint8Array[] | Buffer | Buffer[] 
+ */</span>
+<span class="s1">Field.d = </span><span class="s3">function </span><span class="s1">decorateField(fieldId, fieldType, fieldRule, defaultValue) {</span>
+
+    <span class="s2">// submessage: decorate the submessage and use its name as the type</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">fieldType === </span><span class="s0">&quot;function&quot;</span><span class="s1">)</span>
+        <span class="s1">fieldType = util.decorateType(fieldType).name;</span>
+
+    <span class="s2">// enum reference: create a reflected copy of the enum and keep reuseing it</span>
+    <span class="s3">else if </span><span class="s1">(fieldType &amp;&amp; </span><span class="s3">typeof </span><span class="s1">fieldType === </span><span class="s0">&quot;object&quot;</span><span class="s1">)</span>
+        <span class="s1">fieldType = util.decorateEnum(fieldType).name;</span>
+
+    <span class="s3">return function </span><span class="s1">fieldDecorator(prototype, fieldName) {</span>
+        <span class="s1">util.decorateType(prototype.constructor)</span>
+            <span class="s1">.add(</span><span class="s3">new </span><span class="s1">Field(fieldName, fieldId, fieldType, fieldRule, { </span><span class="s0">&quot;default&quot;</span><span class="s1">: defaultValue }));</span>
+    <span class="s1">};</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Field decorator (TypeScript). 
+ * @name Field.d 
+ * @function 
+ * @param {number} fieldId Field id 
+ * @param {Constructor&lt;T&gt;|string} fieldType Field type 
+ * @param {&quot;optional&quot;|&quot;required&quot;|&quot;repeated&quot;} [fieldRule=&quot;optional&quot;] Field rule 
+ * @returns {FieldDecorator} Decorator function 
+ * @template T extends Message&lt;T&gt; 
+ * @variation 2 
+ */</span>
+<span class="s2">// like Field.d but without a default value</span>
+
+<span class="s2">// Sets up cyclic dependencies (called in index-light)</span>
+<span class="s1">Field._configure = </span><span class="s3">function </span><span class="s1">configure(Type_) {</span>
+    <span class="s1">Type = Type_;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,254 @@
+<html>
+<head>
+<title>Hook.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+Hook.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const util = require(</span><span class="s2">&quot;util&quot;</span><span class="s1">);</span>
+
+<span class="s1">const deprecateContext = util.deprecate(</span>
+	<span class="s1">() =&gt; {},</span>
+	<span class="s2">&quot;Hook.context is deprecated and will be removed&quot;</span>
+<span class="s1">);</span>
+
+<span class="s3">function </span><span class="s1">CALL_DELEGATE(...args) {</span>
+	<span class="s3">this</span><span class="s1">.call = </span><span class="s3">this</span><span class="s1">._createCall(</span><span class="s2">&quot;sync&quot;</span><span class="s1">);</span>
+	<span class="s3">return this</span><span class="s1">.call(...args);</span>
+<span class="s1">}</span>
+
+<span class="s3">function </span><span class="s1">CALL_ASYNC_DELEGATE(...args) {</span>
+	<span class="s3">this</span><span class="s1">.callAsync = </span><span class="s3">this</span><span class="s1">._createCall(</span><span class="s2">&quot;async&quot;</span><span class="s1">);</span>
+	<span class="s3">return this</span><span class="s1">.callAsync(...args);</span>
+<span class="s1">}</span>
+
+<span class="s3">function </span><span class="s1">PROMISE_DELEGATE(...args) {</span>
+	<span class="s3">this</span><span class="s1">.promise = </span><span class="s3">this</span><span class="s1">._createCall(</span><span class="s2">&quot;promise&quot;</span><span class="s1">);</span>
+	<span class="s3">return this</span><span class="s1">.promise(...args);</span>
+<span class="s1">}</span>
+
+<span class="s1">class Hook {</span>
+	<span class="s1">constructor(args = [], name = undefined) {</span>
+		<span class="s3">this</span><span class="s1">._args = args;</span>
+		<span class="s3">this</span><span class="s1">.name = name;</span>
+		<span class="s3">this</span><span class="s1">.taps = [];</span>
+		<span class="s3">this</span><span class="s1">.interceptors = [];</span>
+		<span class="s3">this</span><span class="s1">._call = CALL_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">.call = CALL_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">._callAsync = CALL_ASYNC_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">.callAsync = CALL_ASYNC_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">._promise = PROMISE_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">.promise = PROMISE_DELEGATE;</span>
+		<span class="s3">this</span><span class="s1">._x = undefined;</span>
+
+		<span class="s0">// eslint-disable-next-line no-self-assign</span>
+		<span class="s3">this</span><span class="s1">.compile = </span><span class="s3">this</span><span class="s1">.compile;</span>
+		<span class="s0">// eslint-disable-next-line no-self-assign</span>
+		<span class="s3">this</span><span class="s1">.tap = </span><span class="s3">this</span><span class="s1">.tap;</span>
+		<span class="s0">// eslint-disable-next-line no-self-assign</span>
+		<span class="s3">this</span><span class="s1">.tapAsync = </span><span class="s3">this</span><span class="s1">.tapAsync;</span>
+		<span class="s0">// eslint-disable-next-line no-self-assign</span>
+		<span class="s3">this</span><span class="s1">.tapPromise = </span><span class="s3">this</span><span class="s1">.tapPromise;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">compile(_options) {</span>
+		<span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Abstract: should be overridden&quot;</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_createCall(type) {</span>
+		<span class="s3">return this</span><span class="s1">.compile({</span>
+			<span class="s1">taps: </span><span class="s3">this</span><span class="s1">.taps,</span>
+			<span class="s1">interceptors: </span><span class="s3">this</span><span class="s1">.interceptors,</span>
+			<span class="s1">args: </span><span class="s3">this</span><span class="s1">._args,</span>
+			<span class="s1">type</span>
+		<span class="s1">});</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_tap(type, options, fn) {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s0">// Fast path: a string options (&quot;name&quot;) is by far the most common</span>
+			<span class="s0">// case. Build the final descriptor in a single allocation instead</span>
+			<span class="s0">// of creating `{ name }` and then `Object.assign`ing it.</span>
+			<span class="s1">const name = options.trim();</span>
+			<span class="s3">if </span><span class="s1">(name === </span><span class="s2">&quot;&quot;</span><span class="s1">) {</span>
+				<span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Missing name for tap&quot;</span><span class="s1">);</span>
+			<span class="s1">}</span>
+			<span class="s1">options = { type, fn, name };</span>
+		<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options !== </span><span class="s2">&quot;object&quot; </span><span class="s1">|| options === </span><span class="s3">null</span><span class="s1">) {</span>
+				<span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Invalid tap options&quot;</span><span class="s1">);</span>
+			<span class="s1">}</span>
+			<span class="s1">let { name } = options;</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">name === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+				<span class="s1">name = name.trim();</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">name !== </span><span class="s2">&quot;string&quot; </span><span class="s1">|| name === </span><span class="s2">&quot;&quot;</span><span class="s1">) {</span>
+				<span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Missing name for tap&quot;</span><span class="s1">);</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options.context !== </span><span class="s2">&quot;undefined&quot;</span><span class="s1">) {</span>
+				<span class="s1">deprecateContext();</span>
+			<span class="s1">}</span>
+			<span class="s0">// Fast path: only `name` is set. Build the descriptor as a literal</span>
+			<span class="s0">// so `_insert` and downstream consumers see the same hidden class</span>
+			<span class="s0">// as the string-options path, avoiding a polymorphic call site.</span>
+			<span class="s0">// Scan with `for...in` (cheaper than allocating `Object.keys`)</span>
+			<span class="s0">// to verify no other user-provided properties exist - e.g.</span>
+			<span class="s0">// webpack's `additionalAssets` - otherwise they'd be dropped.</span>
+			<span class="s1">let onlyName = </span><span class="s3">true</span><span class="s1">;</span>
+			<span class="s3">for </span><span class="s1">(const key </span><span class="s3">in </span><span class="s1">options) {</span>
+				<span class="s3">if </span><span class="s1">(key !== </span><span class="s2">&quot;name&quot;</span><span class="s1">) {</span>
+					<span class="s1">onlyName = </span><span class="s3">false</span><span class="s1">;</span>
+					<span class="s3">break</span><span class="s1">;</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(onlyName) {</span>
+				<span class="s1">options = { type, fn, name };</span>
+			<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+				<span class="s1">options.name = name;</span>
+				<span class="s0">// Preserve previous precedence: user-provided keys win over the internal `type`/`fn`.</span>
+				<span class="s1">options = Object.assign({ type, fn }, options);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s1">options = </span><span class="s3">this</span><span class="s1">._runRegisterInterceptors(options);</span>
+		<span class="s3">this</span><span class="s1">._insert(options);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">tap(options, fn) {</span>
+		<span class="s3">this</span><span class="s1">._tap(</span><span class="s2">&quot;sync&quot;</span><span class="s1">, options, fn);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">tapAsync(options, fn) {</span>
+		<span class="s3">this</span><span class="s1">._tap(</span><span class="s2">&quot;async&quot;</span><span class="s1">, options, fn);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">tapPromise(options, fn) {</span>
+		<span class="s3">this</span><span class="s1">._tap(</span><span class="s2">&quot;promise&quot;</span><span class="s1">, options, fn);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_runRegisterInterceptors(options) {</span>
+		<span class="s1">const { interceptors } = </span><span class="s3">this</span><span class="s1">;</span>
+		<span class="s1">const { length } = interceptors;</span>
+		<span class="s0">// Common case: no interceptors.</span>
+		<span class="s3">if </span><span class="s1">(length === </span><span class="s4">0</span><span class="s1">) </span><span class="s3">return </span><span class="s1">options;</span>
+		<span class="s3">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; length; i++) {</span>
+			<span class="s1">const interceptor = interceptors[i];</span>
+			<span class="s3">if </span><span class="s1">(interceptor.register) {</span>
+				<span class="s1">const newOptions = interceptor.register(options);</span>
+				<span class="s3">if </span><span class="s1">(newOptions !== undefined) {</span>
+					<span class="s1">options = newOptions;</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s3">return </span><span class="s1">options;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">withOptions(options) {</span>
+		<span class="s1">const mergeOptions = (opt) =&gt;</span>
+			<span class="s1">Object.assign({}, options, </span><span class="s3">typeof </span><span class="s1">opt === </span><span class="s2">&quot;string&quot; </span><span class="s1">? { name: opt } : opt);</span>
+
+		<span class="s3">return </span><span class="s1">{</span>
+			<span class="s1">name: </span><span class="s3">this</span><span class="s1">.name,</span>
+			<span class="s1">tap: (opt, fn) =&gt; </span><span class="s3">this</span><span class="s1">.tap(mergeOptions(opt), fn),</span>
+			<span class="s1">tapAsync: (opt, fn) =&gt; </span><span class="s3">this</span><span class="s1">.tapAsync(mergeOptions(opt), fn),</span>
+			<span class="s1">tapPromise: (opt, fn) =&gt; </span><span class="s3">this</span><span class="s1">.tapPromise(mergeOptions(opt), fn),</span>
+			<span class="s1">intercept: (interceptor) =&gt; </span><span class="s3">this</span><span class="s1">.intercept(interceptor),</span>
+			<span class="s1">isUsed: () =&gt; </span><span class="s3">this</span><span class="s1">.isUsed(),</span>
+			<span class="s1">withOptions: (opt) =&gt; </span><span class="s3">this</span><span class="s1">.withOptions(mergeOptions(opt))</span>
+		<span class="s1">};</span>
+	<span class="s1">}</span>
+
+	<span class="s1">isUsed() {</span>
+		<span class="s3">return this</span><span class="s1">.taps.length &gt; </span><span class="s4">0 </span><span class="s1">|| </span><span class="s3">this</span><span class="s1">.interceptors.length &gt; </span><span class="s4">0</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">intercept(interceptor) {</span>
+		<span class="s3">this</span><span class="s1">._resetCompilation();</span>
+		<span class="s3">this</span><span class="s1">.interceptors.push(Object.assign({}, interceptor));</span>
+		<span class="s3">if </span><span class="s1">(interceptor.register) {</span>
+			<span class="s3">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s3">this</span><span class="s1">.taps.length; i++) {</span>
+				<span class="s3">this</span><span class="s1">.taps[i] = interceptor.register(</span><span class="s3">this</span><span class="s1">.taps[i]);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_resetCompilation() {</span>
+		<span class="s3">this</span><span class="s1">.call = </span><span class="s3">this</span><span class="s1">._call;</span>
+		<span class="s3">this</span><span class="s1">.callAsync = </span><span class="s3">this</span><span class="s1">._callAsync;</span>
+		<span class="s3">this</span><span class="s1">.promise = </span><span class="s3">this</span><span class="s1">._promise;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">_insert(item) {</span>
+		<span class="s3">this</span><span class="s1">._resetCompilation();</span>
+		<span class="s1">const { taps } = </span><span class="s3">this</span><span class="s1">;</span>
+		<span class="s1">const stage = </span><span class="s3">typeof </span><span class="s1">item.stage === </span><span class="s2">&quot;number&quot; </span><span class="s1">? item.stage : </span><span class="s4">0</span><span class="s1">;</span>
+
+		<span class="s0">// Fast path: the overwhelmingly common `hook.tap(&quot;name&quot;, fn)` case</span>
+		<span class="s0">// has no `before` and default stage 0. If the list is empty or the</span>
+		<span class="s0">// last tap's stage is &lt;= the new item's stage the item belongs at</span>
+		<span class="s0">// the end - append in O(1), skipping the Set allocation and the</span>
+		<span class="s0">// shift loop.</span>
+		<span class="s3">if </span><span class="s1">(!(</span><span class="s3">typeof </span><span class="s1">item.before === </span><span class="s2">&quot;string&quot; </span><span class="s1">|| Array.isArray(item.before))) {</span>
+			<span class="s1">const n = taps.length;</span>
+			<span class="s3">if </span><span class="s1">(n === </span><span class="s4">0 </span><span class="s1">|| (taps[n - </span><span class="s4">1</span><span class="s1">].stage || </span><span class="s4">0</span><span class="s1">) &lt;= stage) {</span>
+				<span class="s1">taps[n] = item;</span>
+				<span class="s3">return</span><span class="s1">;</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s1">let before;</span>
+
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">item.before === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s1">before = </span><span class="s3">new </span><span class="s1">Set([item.before]);</span>
+		<span class="s1">} </span><span class="s3">else if </span><span class="s1">(Array.isArray(item.before)) {</span>
+			<span class="s1">before = </span><span class="s3">new </span><span class="s1">Set(item.before);</span>
+		<span class="s1">}</span>
+
+		<span class="s1">let i = taps.length;</span>
+
+		<span class="s3">while </span><span class="s1">(i &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+			<span class="s1">i--;</span>
+			<span class="s1">const tap = taps[i];</span>
+			<span class="s1">taps[i + </span><span class="s4">1</span><span class="s1">] = tap;</span>
+			<span class="s1">const xStage = tap.stage || </span><span class="s4">0</span><span class="s1">;</span>
+			<span class="s3">if </span><span class="s1">(before) {</span>
+				<span class="s3">if </span><span class="s1">(before.has(tap.name)) {</span>
+					<span class="s1">before.</span><span class="s3">delete</span><span class="s1">(tap.name);</span>
+					<span class="s3">continue</span><span class="s1">;</span>
+				<span class="s1">}</span>
+				<span class="s3">if </span><span class="s1">(before.size &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+					<span class="s3">continue</span><span class="s1">;</span>
+				<span class="s1">}</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(xStage &gt; stage) {</span>
+				<span class="s3">continue</span><span class="s1">;</span>
+			<span class="s1">}</span>
+			<span class="s1">i++;</span>
+			<span class="s3">break</span><span class="s1">;</span>
+		<span class="s1">}</span>
+		<span class="s1">taps[i] = item;</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">Object.setPrototypeOf(Hook.prototype, </span><span class="s3">null</span><span class="s1">);</span>
+
+<span class="s1">module.exports = Hook;</span>
+</pre>
+</body>
+</html>

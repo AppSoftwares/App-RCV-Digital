@@ -1,0 +1,269 @@
+<html>
+<head>
+<title>node.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+node.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * Module dependencies. 
+ */</span>
+
+<span class="s2">var </span><span class="s1">tty = require(</span><span class="s3">'tty'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s3">'util'</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * This is the Node.js implementation of `debug()`. 
+ * 
+ * Expose `debug()` as the module. 
+ */</span>
+
+<span class="s1">exports = module.exports = require(</span><span class="s3">'./debug'</span><span class="s1">);</span>
+<span class="s1">exports.init = init;</span>
+<span class="s1">exports.log = log;</span>
+<span class="s1">exports.formatArgs = formatArgs;</span>
+<span class="s1">exports.save = save;</span>
+<span class="s1">exports.load = load;</span>
+<span class="s1">exports.useColors = useColors;</span>
+
+<span class="s0">/** 
+ * Colors. 
+ */</span>
+
+<span class="s1">exports.colors = [</span><span class="s4">6</span><span class="s1">, </span><span class="s4">2</span><span class="s1">, </span><span class="s4">3</span><span class="s1">, </span><span class="s4">4</span><span class="s1">, </span><span class="s4">5</span><span class="s1">, </span><span class="s4">1</span><span class="s1">];</span>
+
+<span class="s0">/** 
+ * Build up the default `inspectOpts` object from the environment variables. 
+ * 
+ *   $ DEBUG_COLORS=no DEBUG_DEPTH=10 DEBUG_SHOW_HIDDEN=enabled node script.js 
+ */</span>
+
+<span class="s1">exports.inspectOpts = Object.keys(process.env).filter(</span><span class="s2">function </span><span class="s1">(key) {</span>
+  <span class="s2">return </span><span class="s1">/^debug_/i.test(key);</span>
+<span class="s1">}).reduce(</span><span class="s2">function </span><span class="s1">(obj, key) {</span>
+  <span class="s0">// camel-case</span>
+  <span class="s2">var </span><span class="s1">prop = key</span>
+    <span class="s1">.substring(</span><span class="s4">6</span><span class="s1">)</span>
+    <span class="s1">.toLowerCase()</span>
+    <span class="s1">.replace(/_([a-z])/g, </span><span class="s2">function </span><span class="s1">(_, k) { </span><span class="s2">return </span><span class="s1">k.toUpperCase() });</span>
+
+  <span class="s0">// coerce string value into JS value</span>
+  <span class="s2">var </span><span class="s1">val = process.env[key];</span>
+  <span class="s2">if </span><span class="s1">(/^(yes|on|</span><span class="s2">true</span><span class="s1">|enabled)$/i.test(val)) val = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s2">else if </span><span class="s1">(/^(no|off|</span><span class="s2">false</span><span class="s1">|disabled)$/i.test(val)) val = </span><span class="s2">false</span><span class="s1">;</span>
+  <span class="s2">else if </span><span class="s1">(val === </span><span class="s3">'null'</span><span class="s1">) val = </span><span class="s2">null</span><span class="s1">;</span>
+  <span class="s2">else </span><span class="s1">val = Number(val);</span>
+
+  <span class="s1">obj[prop] = val;</span>
+  <span class="s2">return </span><span class="s1">obj;</span>
+<span class="s1">}, {});</span>
+
+<span class="s0">/** 
+ * The file descriptor to write the `debug()` calls to. 
+ * Set the `DEBUG_FD` env variable to override with another value. i.e.: 
+ * 
+ *   $ DEBUG_FD=3 node script.js 3&gt;debug.log 
+ */</span>
+
+<span class="s2">var </span><span class="s1">fd = parseInt(process.env.DEBUG_FD, </span><span class="s4">10</span><span class="s1">) || </span><span class="s4">2</span><span class="s1">;</span>
+
+<span class="s2">if </span><span class="s1">(</span><span class="s4">1 </span><span class="s1">!== fd &amp;&amp; </span><span class="s4">2 </span><span class="s1">!== fd) {</span>
+  <span class="s1">util.deprecate(</span><span class="s2">function</span><span class="s1">(){}, </span><span class="s3">'except for stderr(2) and stdout(1), any other usage of DEBUG_FD is deprecated. Override debug.log if you want to use a different log function (https://git.io/debug_fd)'</span><span class="s1">)()</span>
+<span class="s1">}</span>
+
+<span class="s2">var </span><span class="s1">stream = </span><span class="s4">1 </span><span class="s1">=== fd ? process.stdout :</span>
+             <span class="s4">2 </span><span class="s1">=== fd ? process.stderr :</span>
+             <span class="s1">createWritableStdioStream(fd);</span>
+
+<span class="s0">/** 
+ * Is stdout a TTY? Colored output is enabled when `true`. 
+ */</span>
+
+<span class="s2">function </span><span class="s1">useColors() {</span>
+  <span class="s2">return </span><span class="s3">'colors' </span><span class="s2">in </span><span class="s1">exports.inspectOpts</span>
+    <span class="s1">? Boolean(exports.inspectOpts.colors)</span>
+    <span class="s1">: tty.isatty(fd);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Map %o to `util.inspect()`, all on a single line. 
+ */</span>
+
+<span class="s1">exports.formatters.o = </span><span class="s2">function</span><span class="s1">(v) {</span>
+  <span class="s2">this</span><span class="s1">.inspectOpts.colors = </span><span class="s2">this</span><span class="s1">.useColors;</span>
+  <span class="s2">return </span><span class="s1">util.inspect(v, </span><span class="s2">this</span><span class="s1">.inspectOpts)</span>
+    <span class="s1">.split(</span><span class="s3">'</span><span class="s2">\n</span><span class="s3">'</span><span class="s1">).map(</span><span class="s2">function</span><span class="s1">(str) {</span>
+      <span class="s2">return </span><span class="s1">str.trim()</span>
+    <span class="s1">}).join(</span><span class="s3">' '</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Map %o to `util.inspect()`, allowing multiple lines if needed. 
+ */</span>
+
+<span class="s1">exports.formatters.O = </span><span class="s2">function</span><span class="s1">(v) {</span>
+  <span class="s2">this</span><span class="s1">.inspectOpts.colors = </span><span class="s2">this</span><span class="s1">.useColors;</span>
+  <span class="s2">return </span><span class="s1">util.inspect(v, </span><span class="s2">this</span><span class="s1">.inspectOpts);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Adds ANSI color escape codes if enabled. 
+ * 
+ * @api public 
+ */</span>
+
+<span class="s2">function </span><span class="s1">formatArgs(args) {</span>
+  <span class="s2">var </span><span class="s1">name = </span><span class="s2">this</span><span class="s1">.namespace;</span>
+  <span class="s2">var </span><span class="s1">useColors = </span><span class="s2">this</span><span class="s1">.useColors;</span>
+
+  <span class="s2">if </span><span class="s1">(useColors) {</span>
+    <span class="s2">var </span><span class="s1">c = </span><span class="s2">this</span><span class="s1">.color;</span>
+    <span class="s2">var </span><span class="s1">prefix = </span><span class="s3">'  </span><span class="s2">\u001b</span><span class="s3">[3' </span><span class="s1">+ c + </span><span class="s3">';1m' </span><span class="s1">+ name + </span><span class="s3">' ' </span><span class="s1">+ </span><span class="s3">'</span><span class="s2">\u001b</span><span class="s3">[0m'</span><span class="s1">;</span>
+
+    <span class="s1">args[</span><span class="s4">0</span><span class="s1">] = prefix + args[</span><span class="s4">0</span><span class="s1">].split(</span><span class="s3">'</span><span class="s2">\n</span><span class="s3">'</span><span class="s1">).join(</span><span class="s3">'</span><span class="s2">\n</span><span class="s3">' </span><span class="s1">+ prefix);</span>
+    <span class="s1">args.push(</span><span class="s3">'</span><span class="s2">\u001b</span><span class="s3">[3' </span><span class="s1">+ c + </span><span class="s3">'m+' </span><span class="s1">+ exports.humanize(</span><span class="s2">this</span><span class="s1">.diff) + </span><span class="s3">'</span><span class="s2">\u001b</span><span class="s3">[0m'</span><span class="s1">);</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">args[</span><span class="s4">0</span><span class="s1">] = </span><span class="s2">new </span><span class="s1">Date().toUTCString()</span>
+      <span class="s1">+ </span><span class="s3">' ' </span><span class="s1">+ name + </span><span class="s3">' ' </span><span class="s1">+ args[</span><span class="s4">0</span><span class="s1">];</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Invokes `util.format()` with the specified arguments and writes to `stream`. 
+ */</span>
+
+<span class="s2">function </span><span class="s1">log() {</span>
+  <span class="s2">return </span><span class="s1">stream.write(util.format.apply(util, arguments) + </span><span class="s3">'</span><span class="s2">\n</span><span class="s3">'</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Save `namespaces`. 
+ * 
+ * @param {String} namespaces 
+ * @api private 
+ */</span>
+
+<span class="s2">function </span><span class="s1">save(namespaces) {</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">null </span><span class="s1">== namespaces) {</span>
+    <span class="s0">// If you set a process.env field to null or undefined, it gets cast to the</span>
+    <span class="s0">// string 'null' or 'undefined'. Just delete instead.</span>
+    <span class="s2">delete </span><span class="s1">process.env.DEBUG;</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">process.env.DEBUG = namespaces;</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Load `namespaces`. 
+ * 
+ * @return {String} returns the previously persisted debug modes 
+ * @api private 
+ */</span>
+
+<span class="s2">function </span><span class="s1">load() {</span>
+  <span class="s2">return </span><span class="s1">process.env.DEBUG;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Copied from `node/src/node.js`. 
+ * 
+ * XXX: It's lame that node doesn't expose this API out-of-the-box. It also 
+ * relies on the undocumented `tty_wrap.guessHandleType()` which is also lame. 
+ */</span>
+
+<span class="s2">function </span><span class="s1">createWritableStdioStream (fd) {</span>
+  <span class="s2">var </span><span class="s1">stream;</span>
+  <span class="s2">var </span><span class="s1">tty_wrap = process.binding(</span><span class="s3">'tty_wrap'</span><span class="s1">);</span>
+
+  <span class="s0">// Note stream._type is used for test-module-load-list.js</span>
+
+  <span class="s2">switch </span><span class="s1">(tty_wrap.guessHandleType(fd)) {</span>
+    <span class="s2">case </span><span class="s3">'TTY'</span><span class="s1">:</span>
+      <span class="s1">stream = </span><span class="s2">new </span><span class="s1">tty.WriteStream(fd);</span>
+      <span class="s1">stream._type = </span><span class="s3">'tty'</span><span class="s1">;</span>
+
+      <span class="s0">// Hack to have stream not keep the event loop alive.</span>
+      <span class="s0">// See https://github.com/joyent/node/issues/1726</span>
+      <span class="s2">if </span><span class="s1">(stream._handle &amp;&amp; stream._handle.unref) {</span>
+        <span class="s1">stream._handle.unref();</span>
+      <span class="s1">}</span>
+      <span class="s2">break</span><span class="s1">;</span>
+
+    <span class="s2">case </span><span class="s3">'FILE'</span><span class="s1">:</span>
+      <span class="s2">var </span><span class="s1">fs = require(</span><span class="s3">'fs'</span><span class="s1">);</span>
+      <span class="s1">stream = </span><span class="s2">new </span><span class="s1">fs.SyncWriteStream(fd, { autoClose: </span><span class="s2">false </span><span class="s1">});</span>
+      <span class="s1">stream._type = </span><span class="s3">'fs'</span><span class="s1">;</span>
+      <span class="s2">break</span><span class="s1">;</span>
+
+    <span class="s2">case </span><span class="s3">'PIPE'</span><span class="s1">:</span>
+    <span class="s2">case </span><span class="s3">'TCP'</span><span class="s1">:</span>
+      <span class="s2">var </span><span class="s1">net = require(</span><span class="s3">'net'</span><span class="s1">);</span>
+      <span class="s1">stream = </span><span class="s2">new </span><span class="s1">net.Socket({</span>
+        <span class="s1">fd: fd,</span>
+        <span class="s1">readable: </span><span class="s2">false</span><span class="s1">,</span>
+        <span class="s1">writable: </span><span class="s2">true</span>
+      <span class="s1">});</span>
+
+      <span class="s0">// FIXME Should probably have an option in net.Socket to create a</span>
+      <span class="s0">// stream from an existing fd which is writable only. But for now</span>
+      <span class="s0">// we'll just add this hack and set the `readable` member to false.</span>
+      <span class="s0">// Test: ./node test/fixtures/echo.js &lt; /etc/passwd</span>
+      <span class="s1">stream.readable = </span><span class="s2">false</span><span class="s1">;</span>
+      <span class="s1">stream.read = </span><span class="s2">null</span><span class="s1">;</span>
+      <span class="s1">stream._type = </span><span class="s3">'pipe'</span><span class="s1">;</span>
+
+      <span class="s0">// FIXME Hack to have stream not keep the event loop alive.</span>
+      <span class="s0">// See https://github.com/joyent/node/issues/1726</span>
+      <span class="s2">if </span><span class="s1">(stream._handle &amp;&amp; stream._handle.unref) {</span>
+        <span class="s1">stream._handle.unref();</span>
+      <span class="s1">}</span>
+      <span class="s2">break</span><span class="s1">;</span>
+
+    <span class="s2">default</span><span class="s1">:</span>
+      <span class="s0">// Probably an error on in uv_guess_handle()</span>
+      <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'Implement me. Unknown stream file type!'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// For supporting legacy API we put the FD here.</span>
+  <span class="s1">stream.fd = fd;</span>
+
+  <span class="s1">stream._isStdio = </span><span class="s2">true</span><span class="s1">;</span>
+
+  <span class="s2">return </span><span class="s1">stream;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Init logic for `debug` instances. 
+ * 
+ * Create a new `inspectOpts` object in case `useColors` is set 
+ * differently for a particular `debug` instance. 
+ */</span>
+
+<span class="s2">function </span><span class="s1">init (debug) {</span>
+  <span class="s1">debug.inspectOpts = {};</span>
+
+  <span class="s2">var </span><span class="s1">keys = Object.keys(exports.inspectOpts);</span>
+  <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; keys.length; i++) {</span>
+    <span class="s1">debug.inspectOpts[keys[i]] = exports.inspectOpts[keys[i]];</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Enable namespaces listed in `process.env.DEBUG` initially. 
+ */</span>
+
+<span class="s1">exports.enable(load());</span>
+</pre>
+</body>
+</html>

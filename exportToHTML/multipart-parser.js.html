@@ -1,0 +1,454 @@
+<html>
+<head>
+<title>multipart-parser.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #2aacb8;}
+.s3 { color: #7a7e85;}
+.s4 { color: #cf8e6d;}
+.s5 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+multipart-parser.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import {File} from </span><span class="s1">'fetch-blob/from.js'</span><span class="s0">;</span>
+<span class="s0">import {FormData} from </span><span class="s1">'formdata-polyfill/esm.min.js'</span><span class="s0">;</span>
+
+<span class="s0">let s = </span><span class="s2">0</span><span class="s0">;</span>
+<span class="s0">const S = {</span>
+	<span class="s0">START_BOUNDARY: s++,</span>
+	<span class="s0">HEADER_FIELD_START: s++,</span>
+	<span class="s0">HEADER_FIELD: s++,</span>
+	<span class="s0">HEADER_VALUE_START: s++,</span>
+	<span class="s0">HEADER_VALUE: s++,</span>
+	<span class="s0">HEADER_VALUE_ALMOST_DONE: s++,</span>
+	<span class="s0">HEADERS_ALMOST_DONE: s++,</span>
+	<span class="s0">PART_DATA_START: s++,</span>
+	<span class="s0">PART_DATA: s++,</span>
+	<span class="s0">END: s++</span>
+<span class="s0">};</span>
+
+<span class="s0">let f = </span><span class="s2">1</span><span class="s0">;</span>
+<span class="s0">const F = {</span>
+	<span class="s0">PART_BOUNDARY: f,</span>
+	<span class="s0">LAST_BOUNDARY: f *= </span><span class="s2">2</span>
+<span class="s0">};</span>
+
+<span class="s0">const LF = </span><span class="s2">10</span><span class="s0">;</span>
+<span class="s0">const CR = </span><span class="s2">13</span><span class="s0">;</span>
+<span class="s0">const SPACE = </span><span class="s2">32</span><span class="s0">;</span>
+<span class="s0">const HYPHEN = </span><span class="s2">45</span><span class="s0">;</span>
+<span class="s0">const COLON = </span><span class="s2">58</span><span class="s0">;</span>
+<span class="s0">const A = </span><span class="s2">97</span><span class="s0">;</span>
+<span class="s0">const Z = </span><span class="s2">122</span><span class="s0">;</span>
+
+<span class="s0">const lower = c =&gt; c | </span><span class="s2">0</span><span class="s0">x20;</span>
+
+<span class="s0">const noop = () =&gt; {};</span>
+
+<span class="s0">class MultipartParser {</span>
+	<span class="s3">/** 
+     * @param {string} boundary 
+     */</span>
+	<span class="s0">constructor(boundary) {</span>
+		<span class="s4">this</span><span class="s0">.index = </span><span class="s2">0</span><span class="s0">;</span>
+		<span class="s4">this</span><span class="s0">.flags = </span><span class="s2">0</span><span class="s0">;</span>
+
+		<span class="s4">this</span><span class="s0">.onHeaderEnd = noop;</span>
+		<span class="s4">this</span><span class="s0">.onHeaderField = noop;</span>
+		<span class="s4">this</span><span class="s0">.onHeadersEnd = noop;</span>
+		<span class="s4">this</span><span class="s0">.onHeaderValue = noop;</span>
+		<span class="s4">this</span><span class="s0">.onPartBegin = noop;</span>
+		<span class="s4">this</span><span class="s0">.onPartData = noop;</span>
+		<span class="s4">this</span><span class="s0">.onPartEnd = noop;</span>
+
+		<span class="s4">this</span><span class="s0">.boundaryChars = {};</span>
+
+		<span class="s0">boundary = </span><span class="s1">'</span><span class="s4">\r\n</span><span class="s1">--' </span><span class="s0">+ boundary;</span>
+		<span class="s0">const ui8a = </span><span class="s4">new </span><span class="s0">Uint8Array(boundary.length);</span>
+		<span class="s4">for </span><span class="s0">(let i = </span><span class="s2">0</span><span class="s0">; i &lt; boundary.length; i++) {</span>
+			<span class="s0">ui8a[i] = boundary.charCodeAt(i);</span>
+			<span class="s4">this</span><span class="s0">.boundaryChars[ui8a[i]] = </span><span class="s4">true</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s4">this</span><span class="s0">.boundary = ui8a;</span>
+		<span class="s4">this</span><span class="s0">.lookbehind = </span><span class="s4">new </span><span class="s0">Uint8Array(</span><span class="s4">this</span><span class="s0">.boundary.length + </span><span class="s2">8</span><span class="s0">);</span>
+		<span class="s4">this</span><span class="s0">.state = S.START_BOUNDARY;</span>
+	<span class="s0">}</span>
+
+	<span class="s3">/** 
+     * @param {Uint8Array} data 
+     */</span>
+	<span class="s0">write(data) {</span>
+		<span class="s0">let i = </span><span class="s2">0</span><span class="s0">;</span>
+		<span class="s0">const length_ = data.length;</span>
+		<span class="s0">let previousIndex = </span><span class="s4">this</span><span class="s0">.index;</span>
+		<span class="s0">let {lookbehind, boundary, boundaryChars, index, state, flags} = </span><span class="s4">this</span><span class="s0">;</span>
+		<span class="s0">const boundaryLength = </span><span class="s4">this</span><span class="s0">.boundary.length;</span>
+		<span class="s0">const boundaryEnd = boundaryLength - </span><span class="s2">1</span><span class="s0">;</span>
+		<span class="s0">const bufferLength = data.length;</span>
+		<span class="s0">let c;</span>
+		<span class="s0">let cl;</span>
+
+		<span class="s0">const mark = name =&gt; {</span>
+			<span class="s4">this</span><span class="s0">[name + </span><span class="s1">'Mark'</span><span class="s0">] = i;</span>
+		<span class="s0">};</span>
+
+		<span class="s0">const clear = name =&gt; {</span>
+			<span class="s4">delete this</span><span class="s0">[name + </span><span class="s1">'Mark'</span><span class="s0">];</span>
+		<span class="s0">};</span>
+
+		<span class="s0">const callback = (callbackSymbol, start, end, ui8a) =&gt; {</span>
+			<span class="s4">if </span><span class="s0">(start === undefined || start !== end) {</span>
+				<span class="s4">this</span><span class="s0">[callbackSymbol](ui8a &amp;&amp; ui8a.subarray(start, end));</span>
+			<span class="s0">}</span>
+		<span class="s0">};</span>
+
+		<span class="s0">const dataCallback = (name, clear) =&gt; {</span>
+			<span class="s0">const markSymbol = name + </span><span class="s1">'Mark'</span><span class="s0">;</span>
+			<span class="s4">if </span><span class="s0">(!(markSymbol </span><span class="s4">in this</span><span class="s0">)) {</span>
+				<span class="s4">return</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s4">if </span><span class="s0">(clear) {</span>
+				<span class="s0">callback(name, </span><span class="s4">this</span><span class="s0">[markSymbol], i, data);</span>
+				<span class="s4">delete this</span><span class="s0">[markSymbol];</span>
+			<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+				<span class="s0">callback(name, </span><span class="s4">this</span><span class="s0">[markSymbol], data.length, data);</span>
+				<span class="s4">this</span><span class="s0">[markSymbol] = </span><span class="s2">0</span><span class="s0">;</span>
+			<span class="s0">}</span>
+		<span class="s0">};</span>
+
+		<span class="s4">for </span><span class="s0">(i = </span><span class="s2">0</span><span class="s0">; i &lt; length_; i++) {</span>
+			<span class="s0">c = data[i];</span>
+
+			<span class="s4">switch </span><span class="s0">(state) {</span>
+				<span class="s4">case </span><span class="s0">S.START_BOUNDARY:</span>
+					<span class="s4">if </span><span class="s0">(index === boundary.length - </span><span class="s2">2</span><span class="s0">) {</span>
+						<span class="s4">if </span><span class="s0">(c === HYPHEN) {</span>
+							<span class="s0">flags |= F.LAST_BOUNDARY;</span>
+						<span class="s0">} </span><span class="s4">else if </span><span class="s0">(c !== CR) {</span>
+							<span class="s4">return</span><span class="s0">;</span>
+						<span class="s0">}</span>
+
+						<span class="s0">index++;</span>
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">} </span><span class="s4">else if </span><span class="s0">(index - </span><span class="s2">1 </span><span class="s0">=== boundary.length - </span><span class="s2">2</span><span class="s0">) {</span>
+						<span class="s4">if </span><span class="s0">(flags &amp; F.LAST_BOUNDARY &amp;&amp; c === HYPHEN) {</span>
+							<span class="s0">state = S.END;</span>
+							<span class="s0">flags = </span><span class="s2">0</span><span class="s0">;</span>
+						<span class="s0">} </span><span class="s4">else if </span><span class="s0">(!(flags &amp; F.LAST_BOUNDARY) &amp;&amp; c === LF) {</span>
+							<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+							<span class="s0">callback(</span><span class="s1">'onPartBegin'</span><span class="s0">);</span>
+							<span class="s0">state = S.HEADER_FIELD_START;</span>
+						<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+							<span class="s4">return</span><span class="s0">;</span>
+						<span class="s0">}</span>
+
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">if </span><span class="s0">(c !== boundary[index + </span><span class="s2">2</span><span class="s0">]) {</span>
+						<span class="s0">index = -</span><span class="s2">2</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">if </span><span class="s0">(c === boundary[index + </span><span class="s2">2</span><span class="s0">]) {</span>
+						<span class="s0">index++;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.HEADER_FIELD_START:</span>
+					<span class="s0">state = S.HEADER_FIELD;</span>
+					<span class="s0">mark(</span><span class="s1">'onHeaderField'</span><span class="s0">);</span>
+					<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+					<span class="s3">// falls through</span>
+				<span class="s4">case </span><span class="s0">S.HEADER_FIELD:</span>
+					<span class="s4">if </span><span class="s0">(c === CR) {</span>
+						<span class="s0">clear(</span><span class="s1">'onHeaderField'</span><span class="s0">);</span>
+						<span class="s0">state = S.HEADERS_ALMOST_DONE;</span>
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s0">index++;</span>
+					<span class="s4">if </span><span class="s0">(c === HYPHEN) {</span>
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">if </span><span class="s0">(c === COLON) {</span>
+						<span class="s4">if </span><span class="s0">(index === </span><span class="s2">1</span><span class="s0">) {</span>
+							<span class="s3">// empty header field</span>
+							<span class="s4">return</span><span class="s0">;</span>
+						<span class="s0">}</span>
+
+						<span class="s0">dataCallback(</span><span class="s1">'onHeaderField'</span><span class="s0">, </span><span class="s4">true</span><span class="s0">);</span>
+						<span class="s0">state = S.HEADER_VALUE_START;</span>
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s0">cl = lower(c);</span>
+					<span class="s4">if </span><span class="s0">(cl &lt; A || cl &gt; Z) {</span>
+						<span class="s4">return</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.HEADER_VALUE_START:</span>
+					<span class="s4">if </span><span class="s0">(c === SPACE) {</span>
+						<span class="s4">break</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s0">mark(</span><span class="s1">'onHeaderValue'</span><span class="s0">);</span>
+					<span class="s0">state = S.HEADER_VALUE;</span>
+					<span class="s3">// falls through</span>
+				<span class="s4">case </span><span class="s0">S.HEADER_VALUE:</span>
+					<span class="s4">if </span><span class="s0">(c === CR) {</span>
+						<span class="s0">dataCallback(</span><span class="s1">'onHeaderValue'</span><span class="s0">, </span><span class="s4">true</span><span class="s0">);</span>
+						<span class="s0">callback(</span><span class="s1">'onHeaderEnd'</span><span class="s0">);</span>
+						<span class="s0">state = S.HEADER_VALUE_ALMOST_DONE;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.HEADER_VALUE_ALMOST_DONE:</span>
+					<span class="s4">if </span><span class="s0">(c !== LF) {</span>
+						<span class="s4">return</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s0">state = S.HEADER_FIELD_START;</span>
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.HEADERS_ALMOST_DONE:</span>
+					<span class="s4">if </span><span class="s0">(c !== LF) {</span>
+						<span class="s4">return</span><span class="s0">;</span>
+					<span class="s0">}</span>
+
+					<span class="s0">callback(</span><span class="s1">'onHeadersEnd'</span><span class="s0">);</span>
+					<span class="s0">state = S.PART_DATA_START;</span>
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.PART_DATA_START:</span>
+					<span class="s0">state = S.PART_DATA;</span>
+					<span class="s0">mark(</span><span class="s1">'onPartData'</span><span class="s0">);</span>
+					<span class="s3">// falls through</span>
+				<span class="s4">case </span><span class="s0">S.PART_DATA:</span>
+					<span class="s0">previousIndex = index;</span>
+
+					<span class="s4">if </span><span class="s0">(index === </span><span class="s2">0</span><span class="s0">) {</span>
+						<span class="s3">// boyer-moore derrived algorithm to safely skip non-boundary data</span>
+						<span class="s0">i += boundaryEnd;</span>
+						<span class="s4">while </span><span class="s0">(i &lt; bufferLength &amp;&amp; !(data[i] </span><span class="s4">in </span><span class="s0">boundaryChars)) {</span>
+							<span class="s0">i += boundaryLength;</span>
+						<span class="s0">}</span>
+
+						<span class="s0">i -= boundaryEnd;</span>
+						<span class="s0">c = data[i];</span>
+					<span class="s0">}</span>
+
+					<span class="s4">if </span><span class="s0">(index &lt; boundary.length) {</span>
+						<span class="s4">if </span><span class="s0">(boundary[index] === c) {</span>
+							<span class="s4">if </span><span class="s0">(index === </span><span class="s2">0</span><span class="s0">) {</span>
+								<span class="s0">dataCallback(</span><span class="s1">'onPartData'</span><span class="s0">, </span><span class="s4">true</span><span class="s0">);</span>
+							<span class="s0">}</span>
+
+							<span class="s0">index++;</span>
+						<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+							<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+						<span class="s0">}</span>
+					<span class="s0">} </span><span class="s4">else if </span><span class="s0">(index === boundary.length) {</span>
+						<span class="s0">index++;</span>
+						<span class="s4">if </span><span class="s0">(c === CR) {</span>
+							<span class="s3">// CR = part boundary</span>
+							<span class="s0">flags |= F.PART_BOUNDARY;</span>
+						<span class="s0">} </span><span class="s4">else if </span><span class="s0">(c === HYPHEN) {</span>
+							<span class="s3">// HYPHEN = end boundary</span>
+							<span class="s0">flags |= F.LAST_BOUNDARY;</span>
+						<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+							<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+						<span class="s0">}</span>
+					<span class="s0">} </span><span class="s4">else if </span><span class="s0">(index - </span><span class="s2">1 </span><span class="s0">=== boundary.length) {</span>
+						<span class="s4">if </span><span class="s0">(flags &amp; F.PART_BOUNDARY) {</span>
+							<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+							<span class="s4">if </span><span class="s0">(c === LF) {</span>
+								<span class="s3">// unset the PART_BOUNDARY flag</span>
+								<span class="s0">flags &amp;= ~F.PART_BOUNDARY;</span>
+								<span class="s0">callback(</span><span class="s1">'onPartEnd'</span><span class="s0">);</span>
+								<span class="s0">callback(</span><span class="s1">'onPartBegin'</span><span class="s0">);</span>
+								<span class="s0">state = S.HEADER_FIELD_START;</span>
+								<span class="s4">break</span><span class="s0">;</span>
+							<span class="s0">}</span>
+						<span class="s0">} </span><span class="s4">else if </span><span class="s0">(flags &amp; F.LAST_BOUNDARY) {</span>
+							<span class="s4">if </span><span class="s0">(c === HYPHEN) {</span>
+								<span class="s0">callback(</span><span class="s1">'onPartEnd'</span><span class="s0">);</span>
+								<span class="s0">state = S.END;</span>
+								<span class="s0">flags = </span><span class="s2">0</span><span class="s0">;</span>
+							<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+								<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+							<span class="s0">}</span>
+						<span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+							<span class="s0">index = </span><span class="s2">0</span><span class="s0">;</span>
+						<span class="s0">}</span>
+					<span class="s0">}</span>
+
+					<span class="s4">if </span><span class="s0">(index &gt; </span><span class="s2">0</span><span class="s0">) {</span>
+						<span class="s3">// when matching a possible boundary, keep a lookbehind reference</span>
+						<span class="s3">// in case it turns out to be a false lead</span>
+						<span class="s0">lookbehind[index - </span><span class="s2">1</span><span class="s0">] = c;</span>
+					<span class="s0">} </span><span class="s4">else if </span><span class="s0">(previousIndex &gt; </span><span class="s2">0</span><span class="s0">) {</span>
+						<span class="s3">// if our boundary turned out to be rubbish, the captured lookbehind</span>
+						<span class="s3">// belongs to partData</span>
+						<span class="s0">const _lookbehind = </span><span class="s4">new </span><span class="s0">Uint8Array(lookbehind.buffer, lookbehind.byteOffset, lookbehind.byteLength);</span>
+						<span class="s0">callback(</span><span class="s1">'onPartData'</span><span class="s0">, </span><span class="s2">0</span><span class="s0">, previousIndex, _lookbehind);</span>
+						<span class="s0">previousIndex = </span><span class="s2">0</span><span class="s0">;</span>
+						<span class="s0">mark(</span><span class="s1">'onPartData'</span><span class="s0">);</span>
+
+						<span class="s3">// reconsider the current character even so it interrupted the sequence</span>
+						<span class="s3">// it could be the beginning of a new sequence</span>
+						<span class="s0">i--;</span>
+					<span class="s0">}</span>
+
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">case </span><span class="s0">S.END:</span>
+					<span class="s4">break</span><span class="s0">;</span>
+				<span class="s4">default</span><span class="s0">:</span>
+					<span class="s4">throw new </span><span class="s0">Error(`Unexpected state entered: ${state}`);</span>
+			<span class="s0">}</span>
+		<span class="s0">}</span>
+
+		<span class="s0">dataCallback(</span><span class="s1">'onHeaderField'</span><span class="s0">);</span>
+		<span class="s0">dataCallback(</span><span class="s1">'onHeaderValue'</span><span class="s0">);</span>
+		<span class="s0">dataCallback(</span><span class="s1">'onPartData'</span><span class="s0">);</span>
+
+		<span class="s3">// Update properties for the next call</span>
+		<span class="s4">this</span><span class="s0">.index = index;</span>
+		<span class="s4">this</span><span class="s0">.state = state;</span>
+		<span class="s4">this</span><span class="s0">.flags = flags;</span>
+	<span class="s0">}</span>
+
+	<span class="s0">end() {</span>
+		<span class="s4">if </span><span class="s0">((</span><span class="s4">this</span><span class="s0">.state === S.HEADER_FIELD_START &amp;&amp; </span><span class="s4">this</span><span class="s0">.index === </span><span class="s2">0</span><span class="s0">) ||</span>
+			<span class="s0">(</span><span class="s4">this</span><span class="s0">.state === S.PART_DATA &amp;&amp; </span><span class="s4">this</span><span class="s0">.index === </span><span class="s4">this</span><span class="s0">.boundary.length)) {</span>
+			<span class="s4">this</span><span class="s0">.onPartEnd();</span>
+		<span class="s0">} </span><span class="s4">else if </span><span class="s0">(</span><span class="s4">this</span><span class="s0">.state !== S.END) {</span>
+			<span class="s4">throw new </span><span class="s0">Error(</span><span class="s1">'MultipartParser.end(): stream ended unexpectedly'</span><span class="s0">);</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">function </span><span class="s0">_fileName(headerValue) {</span>
+	<span class="s3">// matches either a quoted-string or a token (RFC 2616 section 19.5.1)</span>
+	<span class="s0">const m = headerValue.match(/\bfilename=(</span><span class="s1">&quot;(.*?)&quot;</span><span class="s0">|([^()&lt;&gt;@,;:\\</span><span class="s1">&quot;/[</span><span class="s5">\]</span><span class="s1">?={}</span><span class="s5">\s</span><span class="s4">\t</span><span class="s1">]+))($|;</span><span class="s5">\s</span><span class="s1">)/i);</span>
+	<span class="s4">if </span><span class="s0">(!m) {</span>
+		<span class="s4">return</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const match = m[</span><span class="s2">2</span><span class="s0">] || m[</span><span class="s2">3</span><span class="s0">] || </span><span class="s1">''</span><span class="s0">;</span>
+	<span class="s0">let filename = match.slice(match.lastIndexOf(</span><span class="s1">'</span><span class="s4">\\</span><span class="s1">'</span><span class="s0">) + </span><span class="s2">1</span><span class="s0">);</span>
+	<span class="s0">filename = filename.replace(/%</span><span class="s2">22</span><span class="s0">/g, </span><span class="s1">'&quot;'</span><span class="s0">);</span>
+	<span class="s0">filename = filename.replace(/&amp;#(\d{</span><span class="s2">4</span><span class="s0">});/g, (m, code) =&gt; {</span>
+		<span class="s4">return </span><span class="s0">String.fromCharCode(code);</span>
+	<span class="s0">});</span>
+	<span class="s4">return </span><span class="s0">filename;</span>
+<span class="s0">}</span>
+
+<span class="s0">export async </span><span class="s4">function </span><span class="s0">toFormData(Body, ct) {</span>
+	<span class="s4">if </span><span class="s0">(!/multipart/i.test(ct)) {</span>
+		<span class="s4">throw new </span><span class="s0">TypeError(</span><span class="s1">'Failed to fetch'</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const m = ct.match(/boundary=(?:</span><span class="s1">&quot;([^&quot;</span><span class="s0">]+)</span><span class="s1">&quot;|([^;]+))/i);</span>
+
+	<span class="s4">if </span><span class="s0">(!m) {</span>
+		<span class="s4">throw new </span><span class="s0">TypeError(</span><span class="s1">'no or bad content-type header, no multipart boundary'</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const parser = </span><span class="s4">new </span><span class="s0">MultipartParser(m[</span><span class="s2">1</span><span class="s0">] || m[</span><span class="s2">2</span><span class="s0">]);</span>
+
+	<span class="s0">let headerField;</span>
+	<span class="s0">let headerValue;</span>
+	<span class="s0">let entryValue;</span>
+	<span class="s0">let entryName;</span>
+	<span class="s0">let contentType;</span>
+	<span class="s0">let filename;</span>
+	<span class="s0">const entryChunks = [];</span>
+	<span class="s0">const formData = </span><span class="s4">new </span><span class="s0">FormData();</span>
+
+	<span class="s0">const onPartData = ui8a =&gt; {</span>
+		<span class="s0">entryValue += decoder.decode(ui8a, {stream: </span><span class="s4">true</span><span class="s0">});</span>
+	<span class="s0">};</span>
+
+	<span class="s0">const appendToFile = ui8a =&gt; {</span>
+		<span class="s0">entryChunks.push(ui8a);</span>
+	<span class="s0">};</span>
+
+	<span class="s0">const appendFileToFormData = () =&gt; {</span>
+		<span class="s0">const file = </span><span class="s4">new </span><span class="s0">File(entryChunks, filename, {type: contentType});</span>
+		<span class="s0">formData.append(entryName, file);</span>
+	<span class="s0">};</span>
+
+	<span class="s0">const appendEntryToFormData = () =&gt; {</span>
+		<span class="s0">formData.append(entryName, entryValue);</span>
+	<span class="s0">};</span>
+
+	<span class="s0">const decoder = </span><span class="s4">new </span><span class="s0">TextDecoder(</span><span class="s1">'utf-8'</span><span class="s0">);</span>
+	<span class="s0">decoder.decode();</span>
+
+	<span class="s0">parser.onPartBegin = </span><span class="s4">function </span><span class="s0">() {</span>
+		<span class="s0">parser.onPartData = onPartData;</span>
+		<span class="s0">parser.onPartEnd = appendEntryToFormData;</span>
+
+		<span class="s0">headerField = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">headerValue = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">entryValue = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">entryName = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">contentType = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">filename = </span><span class="s4">null</span><span class="s0">;</span>
+		<span class="s0">entryChunks.length = </span><span class="s2">0</span><span class="s0">;</span>
+	<span class="s0">};</span>
+
+	<span class="s0">parser.onHeaderField = </span><span class="s4">function </span><span class="s0">(ui8a) {</span>
+		<span class="s0">headerField += decoder.decode(ui8a, {stream: </span><span class="s4">true</span><span class="s0">});</span>
+	<span class="s0">};</span>
+
+	<span class="s0">parser.onHeaderValue = </span><span class="s4">function </span><span class="s0">(ui8a) {</span>
+		<span class="s0">headerValue += decoder.decode(ui8a, {stream: </span><span class="s4">true</span><span class="s0">});</span>
+	<span class="s0">};</span>
+
+	<span class="s0">parser.onHeaderEnd = </span><span class="s4">function </span><span class="s0">() {</span>
+		<span class="s0">headerValue += decoder.decode();</span>
+		<span class="s0">headerField = headerField.toLowerCase();</span>
+
+		<span class="s4">if </span><span class="s0">(headerField === </span><span class="s1">'content-disposition'</span><span class="s0">) {</span>
+			<span class="s3">// matches either a quoted-string or a token (RFC 2616 section 19.5.1)</span>
+			<span class="s0">const m = headerValue.match(/\bname=(</span><span class="s1">&quot;([^&quot;</span><span class="s0">]*)</span><span class="s1">&quot;|([^()&lt;&gt;@,;:</span><span class="s4">\\</span><span class="s1">&quot;</span><span class="s0">/[\]?={}\s\t]+))/i);</span>
+
+			<span class="s4">if </span><span class="s0">(m) {</span>
+				<span class="s0">entryName = m[</span><span class="s2">2</span><span class="s0">] || m[</span><span class="s2">3</span><span class="s0">] || </span><span class="s1">''</span><span class="s0">;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">filename = _fileName(headerValue);</span>
+
+			<span class="s4">if </span><span class="s0">(filename) {</span>
+				<span class="s0">parser.onPartData = appendToFile;</span>
+				<span class="s0">parser.onPartEnd = appendFileToFormData;</span>
+			<span class="s0">}</span>
+		<span class="s0">} </span><span class="s4">else if </span><span class="s0">(headerField === </span><span class="s1">'content-type'</span><span class="s0">) {</span>
+			<span class="s0">contentType = headerValue;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">headerValue = </span><span class="s1">''</span><span class="s0">;</span>
+		<span class="s0">headerField = </span><span class="s1">''</span><span class="s0">;</span>
+	<span class="s0">};</span>
+
+	<span class="s4">for </span><span class="s0">await (const chunk of Body) {</span>
+		<span class="s0">parser.write(chunk);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">parser.end();</span>
+
+	<span class="s4">return </span><span class="s0">formData;</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,117 @@
+<html>
+<head>
+<title>MainFieldPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+MainFieldPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const DescriptionFileUtils = require(</span><span class="s2">&quot;./DescriptionFileUtils&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonObject} JsonObject */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+
+<span class="s0">/** @typedef {{ name: string | string[], forceRelative: boolean }} MainFieldOptions */</span>
+
+<span class="s1">const alreadyTriedMainField = Symbol(</span><span class="s2">&quot;alreadyTriedMainField&quot;</span><span class="s1">);</span>
+
+<span class="s0">// Sentinel cached for description files where the main field resolves to a</span>
+<span class="s0">// value we cannot use (missing, non-string, &quot;.&quot;, &quot;./&quot;). Cheaper to store and</span>
+<span class="s0">// check than to re-walk the description file on every resolve.</span>
+<span class="s1">const NO_MAIN = Symbol(</span><span class="s2">&quot;NoMain&quot;</span><span class="s1">);</span>
+
+<span class="s1">module.exports = class MainFieldPlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {MainFieldOptions} options options 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, options, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.options = options;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+		<span class="s0">// Cache the resolved `mainModule` per description-file content. The</span>
+		<span class="s0">// options (`name`, `forceRelative`) are fixed for this plugin</span>
+		<span class="s0">// instance, so caching against content alone is safe. Stores either</span>
+		<span class="s0">// the ready-to-use request string or the `NO_MAIN` sentinel.</span>
+		<span class="s0">/** @type {WeakMap&lt;JsonObject, string | typeof NO_MAIN&gt;} */</span>
+		<span class="s3">this</span><span class="s1">._mainModuleCache = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;MainFieldPlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(</span>
+					<span class="s1">request.path !== request.descriptionFileRoot ||</span>
+					<span class="s0">/** @type {ResolveRequest &amp; { [alreadyTriedMainField]?: string }} */</span>
+					<span class="s1">(request)[alreadyTriedMainField] === request.descriptionFilePath ||</span>
+					<span class="s1">!request.descriptionFilePath</span>
+				<span class="s1">) {</span>
+					<span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+				<span class="s1">const descFileData = </span><span class="s0">/** @type {JsonObject} */ </span><span class="s1">(</span>
+					<span class="s1">request.descriptionFileData</span>
+				<span class="s1">);</span>
+				<span class="s1">let mainModule = </span><span class="s3">this</span><span class="s1">._mainModuleCache.get(descFileData);</span>
+				<span class="s3">if </span><span class="s1">(mainModule === undefined) {</span>
+					<span class="s1">let raw =</span>
+						<span class="s0">/** @type {string | null | undefined} */</span>
+						<span class="s1">(DescriptionFileUtils.getField(descFileData, </span><span class="s3">this</span><span class="s1">.options.name));</span>
+					<span class="s3">if </span><span class="s1">(!raw || </span><span class="s3">typeof </span><span class="s1">raw !== </span><span class="s2">&quot;string&quot; </span><span class="s1">|| raw === </span><span class="s2">&quot;.&quot; </span><span class="s1">|| raw === </span><span class="s2">&quot;./&quot;</span><span class="s1">) {</span>
+						<span class="s3">this</span><span class="s1">._mainModuleCache.set(descFileData, NO_MAIN);</span>
+						<span class="s3">return </span><span class="s1">callback();</span>
+					<span class="s1">}</span>
+					<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.options.forceRelative &amp;&amp; !/^\.\.?\</span><span class="s0">//.test(raw)) {</span>
+						<span class="s1">raw = `./${raw}`;</span>
+					<span class="s1">}</span>
+					<span class="s1">mainModule = raw;</span>
+					<span class="s3">this</span><span class="s1">._mainModuleCache.set(descFileData, mainModule);</span>
+				<span class="s1">} </span><span class="s3">else if </span><span class="s1">(mainModule === NO_MAIN) {</span>
+					<span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+				<span class="s1">const filename = resolver.basename(request.descriptionFilePath);</span>
+				<span class="s0">/** @type {ResolveRequest &amp; { [alreadyTriedMainField]?: string }} */</span>
+				<span class="s1">const obj = {</span>
+					<span class="s1">...request,</span>
+					<span class="s1">request: mainModule,</span>
+					<span class="s1">module: </span><span class="s3">false</span><span class="s1">,</span>
+					<span class="s1">directory: mainModule.endsWith(</span><span class="s2">&quot;/&quot;</span><span class="s1">),</span>
+					<span class="s1">[alreadyTriedMainField]: request.descriptionFilePath,</span>
+				<span class="s1">};</span>
+				<span class="s3">return </span><span class="s1">resolver.doResolve(</span>
+					<span class="s1">target,</span>
+					<span class="s1">obj,</span>
+					<span class="s1">`use ${mainModule} from ${</span><span class="s3">this</span><span class="s1">.options.name} </span><span class="s3">in </span><span class="s1">${filename}`,</span>
+					<span class="s1">resolveContext,</span>
+					<span class="s1">callback,</span>
+				<span class="s1">);</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

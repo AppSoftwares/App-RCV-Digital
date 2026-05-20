@@ -1,0 +1,134 @@
+<html>
+<head>
+<title>sourcemap-codec.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+sourcemap-codec.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ comma, decodeInteger, encodeInteger, hasMoreVlq, semicolon } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./vlq</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ StringWriter, StringReader } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./strings</span><span class="s2">';</span>
+
+<span class="s0">export </span><span class="s2">{</span>
+  <span class="s2">decodeOriginalScopes,</span>
+  <span class="s2">encodeOriginalScopes,</span>
+  <span class="s2">decodeGeneratedRanges,</span>
+  <span class="s2">encodeGeneratedRanges,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./scopes</span><span class="s2">';</span>
+<span class="s0">export type </span><span class="s2">{ OriginalScope, GeneratedRange, CallSite, BindingExpressionRange } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./scopes</span><span class="s2">';</span>
+
+<span class="s0">export type </span><span class="s2">SourceMapSegment =</span>
+  <span class="s2">| </span><span class="s1">[</span><span class="s2">number</span><span class="s1">]</span>
+  <span class="s2">| </span><span class="s1">[</span><span class="s2">number, number, number, number</span><span class="s1">]</span>
+  <span class="s2">| </span><span class="s1">[</span><span class="s2">number, number, number, number, number</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s0">export type </span><span class="s2">SourceMapLine = SourceMapSegment</span><span class="s1">[]</span><span class="s2">;</span>
+<span class="s0">export type </span><span class="s2">SourceMapMappings = SourceMapLine</span><span class="s1">[]</span><span class="s2">;</span>
+
+<span class="s0">export function </span><span class="s4">decode</span><span class="s2">(mappings: string): SourceMapMappings {</span>
+  <span class="s0">const </span><span class="s2">{ length } = mappings;</span>
+  <span class="s0">const </span><span class="s2">reader = new </span><span class="s4">StringReader</span><span class="s1">(</span><span class="s2">mappings</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">decoded: SourceMapMappings = </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">genColumn = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourcesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourceLine = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourceColumn = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">namesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+
+  <span class="s0">do </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">semi = reader.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">'</span><span class="s3">;</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">line: SourceMapLine = </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">sorted = </span><span class="s6">true</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">lastCol = </span><span class="s5">0</span><span class="s2">;</span>
+    <span class="s2">genColumn = </span><span class="s5">0</span><span class="s2">;</span>
+
+    <span class="s0">while </span><span class="s1">(</span><span class="s2">reader.pos &lt; semi</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">let </span><span class="s2">seg: SourceMapSegment;</span>
+
+      <span class="s2">genColumn = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, genColumn</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">genColumn &lt; lastCol</span><span class="s1">) </span><span class="s2">sorted = </span><span class="s6">false</span><span class="s2">;</span>
+      <span class="s2">lastCol = genColumn;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, semi</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">sourcesIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, sourcesIndex</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">sourceLine = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, sourceLine</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">sourceColumn = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, sourceColumn</span><span class="s1">)</span><span class="s2">;</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, semi</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">namesIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, namesIndex</span><span class="s1">)</span><span class="s2">;</span>
+          <span class="s2">seg = </span><span class="s1">[</span><span class="s2">genColumn, sourcesIndex, sourceLine, sourceColumn, namesIndex</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+          <span class="s2">seg = </span><span class="s1">[</span><span class="s2">genColumn, sourcesIndex, sourceLine, sourceColumn</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">}</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">seg = </span><span class="s1">[</span><span class="s2">genColumn</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s2">}</span>
+
+      <span class="s2">line.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">seg</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">reader.pos++;</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!sorted</span><span class="s1">) </span><span class="s4">sort</span><span class="s1">(</span><span class="s2">line</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">decoded.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">line</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">reader.pos = semi + </span><span class="s5">1</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">reader.pos &lt;= length</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s2">decoded;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">sort</span><span class="s2">(line: SourceMapSegment</span><span class="s1">[]</span><span class="s2">) {</span>
+  <span class="s2">line.</span><span class="s4">sort</span><span class="s1">(</span><span class="s2">sortComparator</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">sortComparator</span><span class="s2">(a: SourceMapSegment, b: SourceMapSegment): number {</span>
+  <span class="s0">return </span><span class="s2">a</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">- b</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export function </span><span class="s4">encode</span><span class="s2">(decoded: SourceMapMappings): string;</span>
+<span class="s0">export function </span><span class="s4">encode</span><span class="s2">(decoded: Readonly&lt;SourceMapMappings&gt;): string;</span>
+<span class="s0">export function </span><span class="s4">encode</span><span class="s2">(decoded: Readonly&lt;SourceMapMappings&gt;): string {</span>
+  <span class="s0">const </span><span class="s2">writer = new </span><span class="s4">StringWriter</span><span class="s1">()</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourcesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourceLine = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">sourceColumn = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">namesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; decoded.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">line = decoded</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">i &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">semicolon</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">line.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0</span><span class="s1">) </span><span class="s0">continue</span><span class="s2">;</span>
+
+    <span class="s0">let </span><span class="s2">genColumn = </span><span class="s5">0</span><span class="s2">;</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">j = </span><span class="s5">0</span><span class="s2">; j &lt; line.</span><span class="s1">length</span><span class="s2">; j++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">segment = line</span><span class="s1">[</span><span class="s2">j</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">j &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">comma</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s2">genColumn = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, segment</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, genColumn</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">segment.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">1</span><span class="s1">) </span><span class="s0">continue</span><span class="s2">;</span>
+      <span class="s2">sourcesIndex = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, segment</span><span class="s1">[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, sourcesIndex</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">sourceLine = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, segment</span><span class="s1">[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">, sourceLine</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">sourceColumn = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, segment</span><span class="s1">[</span><span class="s5">3</span><span class="s1">]</span><span class="s2">, sourceColumn</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">segment.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">4</span><span class="s1">) </span><span class="s0">continue</span><span class="s2">;</span>
+      <span class="s2">namesIndex = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, segment</span><span class="s1">[</span><span class="s5">4</span><span class="s1">]</span><span class="s2">, namesIndex</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">writer.</span><span class="s4">flush</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,294 @@
+<html>
+<head>
+<title>input.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+input.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span>
+
+<span class="s1">let { nanoid } = require(</span><span class="s0">'nanoid/non-secure'</span><span class="s1">)</span>
+<span class="s1">let { isAbsolute, resolve } = require(</span><span class="s0">'path'</span><span class="s1">)</span>
+<span class="s1">let { SourceMapConsumer, SourceMapGenerator } = require(</span><span class="s0">'source-map-js'</span><span class="s1">)</span>
+<span class="s1">let { fileURLToPath, pathToFileURL } = require(</span><span class="s0">'url'</span><span class="s1">)</span>
+
+<span class="s1">let CssSyntaxError = require(</span><span class="s0">'./css-syntax-error'</span><span class="s1">)</span>
+<span class="s1">let PreviousMap = require(</span><span class="s0">'./previous-map'</span><span class="s1">)</span>
+<span class="s1">let terminalHighlight = require(</span><span class="s0">'./terminal-highlight'</span><span class="s1">)</span>
+
+<span class="s1">let lineToIndexCache = Symbol(</span><span class="s0">'lineToIndexCache'</span><span class="s1">)</span>
+
+<span class="s1">let sourceMapAvailable = Boolean(SourceMapConsumer &amp;&amp; SourceMapGenerator)</span>
+<span class="s1">let pathAvailable = Boolean(resolve &amp;&amp; isAbsolute)</span>
+
+<span class="s2">function </span><span class="s1">getLineToIndex(input) {</span>
+  <span class="s2">if </span><span class="s1">(input[lineToIndexCache]) </span><span class="s2">return </span><span class="s1">input[lineToIndexCache]</span>
+  <span class="s1">let lines = input.css.split(</span><span class="s0">'</span><span class="s2">\n</span><span class="s0">'</span><span class="s1">)</span>
+  <span class="s1">let lineToIndex = </span><span class="s2">new </span><span class="s1">Array(lines.length)</span>
+  <span class="s1">let prevIndex = </span><span class="s3">0</span>
+
+  <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">, l = lines.length; i &lt; l; i++) {</span>
+    <span class="s1">lineToIndex[i] = prevIndex</span>
+    <span class="s1">prevIndex += lines[i].length + </span><span class="s3">1</span>
+  <span class="s1">}</span>
+
+  <span class="s1">input[lineToIndexCache] = lineToIndex</span>
+  <span class="s2">return </span><span class="s1">lineToIndex</span>
+<span class="s1">}</span>
+
+<span class="s1">class Input {</span>
+  <span class="s1">get from() {</span>
+    <span class="s2">return this</span><span class="s1">.file || </span><span class="s2">this</span><span class="s1">.id</span>
+  <span class="s1">}</span>
+
+  <span class="s1">constructor(css, opts = {}) {</span>
+    <span class="s2">if </span><span class="s1">(</span>
+      <span class="s1">css === </span><span class="s2">null </span><span class="s1">||</span>
+      <span class="s2">typeof </span><span class="s1">css === </span><span class="s0">'undefined' </span><span class="s1">||</span>
+      <span class="s1">(</span><span class="s2">typeof </span><span class="s1">css === </span><span class="s0">'object' </span><span class="s1">&amp;&amp; !css.toString)</span>
+    <span class="s1">) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(`PostCSS received ${css} instead of CSS string`)</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.css = css.toString()</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.css[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'</span><span class="s2">\uFEFF</span><span class="s0">' </span><span class="s1">|| </span><span class="s2">this</span><span class="s1">.css[</span><span class="s3">0</span><span class="s1">] === </span><span class="s0">'</span><span class="s2">\uFFFE</span><span class="s0">'</span><span class="s1">) {</span>
+      <span class="s2">this</span><span class="s1">.hasBOM = </span><span class="s2">true</span>
+      <span class="s2">this</span><span class="s1">.css = </span><span class="s2">this</span><span class="s1">.css.slice(</span><span class="s3">1</span><span class="s1">)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">this</span><span class="s1">.hasBOM = </span><span class="s2">false</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.document = </span><span class="s2">this</span><span class="s1">.css</span>
+    <span class="s2">if </span><span class="s1">(opts.document) </span><span class="s2">this</span><span class="s1">.document = opts.document.toString()</span>
+
+    <span class="s2">if </span><span class="s1">(opts.from) {</span>
+      <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">!pathAvailable ||</span>
+        <span class="s1">/^\w+:\/\</span><span class="s4">//.test(opts.from) ||</span>
+        <span class="s1">isAbsolute(opts.from)</span>
+      <span class="s1">) {</span>
+        <span class="s2">this</span><span class="s1">.file = opts.from</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">this</span><span class="s1">.file = resolve(opts.from)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(pathAvailable &amp;&amp; sourceMapAvailable) {</span>
+      <span class="s1">let map = </span><span class="s2">new </span><span class="s1">PreviousMap(</span><span class="s2">this</span><span class="s1">.css, opts)</span>
+      <span class="s2">if </span><span class="s1">(map.text) {</span>
+        <span class="s2">this</span><span class="s1">.map = map</span>
+        <span class="s1">let file = map.consumer().file</span>
+        <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.file &amp;&amp; file) </span><span class="s2">this</span><span class="s1">.file = </span><span class="s2">this</span><span class="s1">.mapResolve(file)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.file) {</span>
+      <span class="s2">this</span><span class="s1">.id = </span><span class="s0">'&lt;input css ' </span><span class="s1">+ nanoid(</span><span class="s3">6</span><span class="s1">) + </span><span class="s0">'&gt;'</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.map) </span><span class="s2">this</span><span class="s1">.map.file = </span><span class="s2">this</span><span class="s1">.from</span>
+  <span class="s1">}</span>
+
+  <span class="s1">error(message, line, column, opts = {}) {</span>
+    <span class="s1">let endColumn, endLine, endOffset, offset, result</span>
+
+    <span class="s2">if </span><span class="s1">(line &amp;&amp; </span><span class="s2">typeof </span><span class="s1">line === </span><span class="s0">'object'</span><span class="s1">) {</span>
+      <span class="s1">let start = line</span>
+      <span class="s1">let end = column</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">start.offset === </span><span class="s0">'number'</span><span class="s1">) {</span>
+        <span class="s1">offset = start.offset</span>
+        <span class="s1">let pos = </span><span class="s2">this</span><span class="s1">.fromOffset(offset)</span>
+        <span class="s1">line = pos.line</span>
+        <span class="s1">column = pos.col</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">line = start.line</span>
+        <span class="s1">column = start.column</span>
+        <span class="s1">offset = </span><span class="s2">this</span><span class="s1">.fromLineAndColumn(line, column)</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">end.offset === </span><span class="s0">'number'</span><span class="s1">) {</span>
+        <span class="s1">endOffset = end.offset</span>
+        <span class="s1">let pos = </span><span class="s2">this</span><span class="s1">.fromOffset(endOffset)</span>
+        <span class="s1">endLine = pos.line</span>
+        <span class="s1">endColumn = pos.col</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">endLine = end.line</span>
+        <span class="s1">endColumn = end.column</span>
+        <span class="s1">endOffset = </span><span class="s2">this</span><span class="s1">.fromLineAndColumn(end.line, end.column)</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(!column) {</span>
+      <span class="s1">offset = line</span>
+      <span class="s1">let pos = </span><span class="s2">this</span><span class="s1">.fromOffset(offset)</span>
+      <span class="s1">line = pos.line</span>
+      <span class="s1">column = pos.col</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">offset = </span><span class="s2">this</span><span class="s1">.fromLineAndColumn(line, column)</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let origin = </span><span class="s2">this</span><span class="s1">.origin(line, column, endLine, endColumn)</span>
+    <span class="s2">if </span><span class="s1">(origin) {</span>
+      <span class="s1">result = </span><span class="s2">new </span><span class="s1">CssSyntaxError(</span>
+        <span class="s1">message,</span>
+        <span class="s1">origin.endLine === undefined</span>
+          <span class="s1">? origin.line</span>
+          <span class="s1">: { column: origin.column, line: origin.line },</span>
+        <span class="s1">origin.endLine === undefined</span>
+          <span class="s1">? origin.column</span>
+          <span class="s1">: { column: origin.endColumn, line: origin.endLine },</span>
+        <span class="s1">origin.source,</span>
+        <span class="s1">origin.file,</span>
+        <span class="s1">opts.plugin</span>
+      <span class="s1">)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">result = </span><span class="s2">new </span><span class="s1">CssSyntaxError(</span>
+        <span class="s1">message,</span>
+        <span class="s1">endLine === undefined ? line : { column, line },</span>
+        <span class="s1">endLine === undefined ? column : { column: endColumn, line: endLine },</span>
+        <span class="s2">this</span><span class="s1">.css,</span>
+        <span class="s2">this</span><span class="s1">.file,</span>
+        <span class="s1">opts.plugin</span>
+      <span class="s1">)</span>
+    <span class="s1">}</span>
+
+    <span class="s1">result.input = {</span>
+      <span class="s1">column,</span>
+      <span class="s1">endColumn,</span>
+      <span class="s1">endLine,</span>
+      <span class="s1">endOffset,</span>
+      <span class="s1">line,</span>
+      <span class="s1">offset,</span>
+      <span class="s1">source: </span><span class="s2">this</span><span class="s1">.css</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.file) {</span>
+      <span class="s2">if </span><span class="s1">(pathToFileURL) {</span>
+        <span class="s1">result.input.url = pathToFileURL(</span><span class="s2">this</span><span class="s1">.file).toString()</span>
+      <span class="s1">}</span>
+      <span class="s1">result.input.file = </span><span class="s2">this</span><span class="s1">.file</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">result</span>
+  <span class="s1">}</span>
+
+  <span class="s1">fromLineAndColumn(line, column) {</span>
+    <span class="s1">let lineToIndex = getLineToIndex(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s1">let index = lineToIndex[line - </span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s2">return </span><span class="s1">index + column - </span><span class="s3">1</span>
+  <span class="s1">}</span>
+
+  <span class="s1">fromOffset(offset) {</span>
+    <span class="s1">let lineToIndex = getLineToIndex(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s1">let lastLine = lineToIndex[lineToIndex.length - </span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s1">let min = </span><span class="s3">0</span>
+    <span class="s2">if </span><span class="s1">(offset &gt;= lastLine) {</span>
+      <span class="s1">min = lineToIndex.length - </span><span class="s3">1</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">let max = lineToIndex.length - </span><span class="s3">2</span>
+      <span class="s1">let mid</span>
+      <span class="s2">while </span><span class="s1">(min &lt; max) {</span>
+        <span class="s1">mid = min + ((max - min) &gt;&gt; </span><span class="s3">1</span><span class="s1">)</span>
+        <span class="s2">if </span><span class="s1">(offset &lt; lineToIndex[mid]) {</span>
+          <span class="s1">max = mid - </span><span class="s3">1</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(offset &gt;= lineToIndex[mid + </span><span class="s3">1</span><span class="s1">]) {</span>
+          <span class="s1">min = mid + </span><span class="s3">1</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s1">min = mid</span>
+          <span class="s2">break</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">col: offset - lineToIndex[min] + </span><span class="s3">1</span><span class="s1">,</span>
+      <span class="s1">line: min + </span><span class="s3">1</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">mapResolve(file) {</span>
+    <span class="s2">if </span><span class="s1">(/^\w+:\/\</span><span class="s4">//.test(file)) {</span>
+      <span class="s2">return </span><span class="s1">file</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">resolve(</span><span class="s2">this</span><span class="s1">.map.consumer().sourceRoot || </span><span class="s2">this</span><span class="s1">.map.root || </span><span class="s0">'.'</span><span class="s1">, file)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">origin(line, column, endLine, endColumn) {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.map) </span><span class="s2">return false</span>
+    <span class="s1">let consumer = </span><span class="s2">this</span><span class="s1">.map.consumer()</span>
+
+    <span class="s1">let from = consumer.originalPositionFor({ column, line })</span>
+    <span class="s2">if </span><span class="s1">(!from.source) </span><span class="s2">return false</span>
+
+    <span class="s1">let to</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">endLine === </span><span class="s0">'number'</span><span class="s1">) {</span>
+      <span class="s1">to = consumer.originalPositionFor({ column: endColumn, line: endLine })</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let fromUrl</span>
+
+    <span class="s2">if </span><span class="s1">(isAbsolute(from.source)) {</span>
+      <span class="s1">fromUrl = pathToFileURL(from.source)</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">fromUrl = </span><span class="s2">new </span><span class="s1">URL(</span>
+        <span class="s1">from.source,</span>
+        <span class="s2">this</span><span class="s1">.map.consumer().sourceRoot || pathToFileURL(</span><span class="s2">this</span><span class="s1">.map.mapFile)</span>
+      <span class="s1">)</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let result = {</span>
+      <span class="s1">column: from.column,</span>
+      <span class="s1">endColumn: to &amp;&amp; to.column,</span>
+      <span class="s1">endLine: to &amp;&amp; to.line,</span>
+      <span class="s1">line: from.line,</span>
+      <span class="s1">url: fromUrl.toString()</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(fromUrl.protocol === </span><span class="s0">'file:'</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(fileURLToPath) {</span>
+        <span class="s1">result.file = fileURLToPath(fromUrl)</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s4">/* c8 ignore next 2 */</span>
+        <span class="s2">throw new </span><span class="s1">Error(`file: protocol is not available </span><span class="s2">in this </span><span class="s1">PostCSS build`)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let source = consumer.sourceContentFor(from.source)</span>
+    <span class="s2">if </span><span class="s1">(source) result.source = source</span>
+
+    <span class="s2">return </span><span class="s1">result</span>
+  <span class="s1">}</span>
+
+  <span class="s1">toJSON() {</span>
+    <span class="s1">let json = {}</span>
+    <span class="s2">for </span><span class="s1">(let name of [</span><span class="s0">'hasBOM'</span><span class="s1">, </span><span class="s0">'css'</span><span class="s1">, </span><span class="s0">'file'</span><span class="s1">, </span><span class="s0">'id'</span><span class="s1">]) {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">[name] != </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">json[name] = </span><span class="s2">this</span><span class="s1">[name]</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.map) {</span>
+      <span class="s1">json.map = { ...</span><span class="s2">this</span><span class="s1">.map }</span>
+      <span class="s2">if </span><span class="s1">(json.map.consumerCache) {</span>
+        <span class="s1">json.map.consumerCache = undefined</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">json</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = Input</span>
+<span class="s1">Input.</span><span class="s2">default </span><span class="s1">= Input</span>
+
+<span class="s2">if </span><span class="s1">(terminalHighlight &amp;&amp; terminalHighlight.registerInput) {</span>
+  <span class="s1">terminalHighlight.registerInput(Input)</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

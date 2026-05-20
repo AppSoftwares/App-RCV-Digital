@@ -1,0 +1,497 @@
+<html>
+<head>
+<title>baseexternalclient.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+baseexternalclient.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2021 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.BaseExternalAccountClient = exports.CLOUD_RESOURCE_MANAGER = exports.EXTERNAL_ACCOUNT_TYPE = exports.EXPIRATION_TIME_OFFSET = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s1">const stream = require(</span><span class="s0">&quot;stream&quot;</span><span class="s1">);</span>
+<span class="s1">const authclient_1 = require(</span><span class="s0">&quot;./authclient&quot;</span><span class="s1">);</span>
+<span class="s1">const sts = require(</span><span class="s0">&quot;./stscredentials&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const shared_cjs_1 = require(</span><span class="s0">&quot;../shared.cjs&quot;</span><span class="s1">);</span>
+<span class="s2">/** 
+ * The required token exchange grant_type: rfc8693#section-2.1 
+ */</span>
+<span class="s1">const STS_GRANT_TYPE = </span><span class="s0">'urn:ietf:params:oauth:grant-type:token-exchange'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The requested token exchange requested_token_type: rfc8693#section-2.1 
+ */</span>
+<span class="s1">const STS_REQUEST_TOKEN_TYPE = </span><span class="s0">'urn:ietf:params:oauth:token-type:access_token'</span><span class="s1">;</span>
+<span class="s2">/** The default OAuth scope to request when none is provided. */</span>
+<span class="s1">const DEFAULT_OAUTH_SCOPE = </span><span class="s0">'https://www.googleapis.com/auth/cloud-platform'</span><span class="s1">;</span>
+<span class="s2">/** Default impersonated token lifespan in seconds.*/</span>
+<span class="s1">const DEFAULT_TOKEN_LIFESPAN = </span><span class="s4">3600</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Offset to take into account network delays and server clock skews. 
+ */</span>
+<span class="s1">exports.EXPIRATION_TIME_OFFSET = </span><span class="s4">5 </span><span class="s1">* </span><span class="s4">60 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The credentials JSON file type for external account clients. 
+ * There are 3 types of JSON configs: 
+ * 1. authorized_user =&gt; Google end user credential 
+ * 2. service_account =&gt; Google service account credential 
+ * 3. external_Account =&gt; non-GCP service (eg. AWS, Azure, K8s) 
+ */</span>
+<span class="s1">exports.EXTERNAL_ACCOUNT_TYPE = </span><span class="s0">'external_account'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Cloud resource manager URL used to retrieve project information. 
+ * 
+ * @deprecated use {@link BaseExternalAccountClient.cloudResourceManagerURL} instead 
+ **/</span>
+<span class="s1">exports.CLOUD_RESOURCE_MANAGER = </span><span class="s0">'https://cloudresourcemanager.googleapis.com/v1/projects/'</span><span class="s1">;</span>
+<span class="s2">/** The workforce audience pattern. */</span>
+<span class="s1">const WORKFORCE_AUDIENCE_PATTERN = </span><span class="s0">'//iam</span><span class="s3">\\</span><span class="s0">.googleapis</span><span class="s3">\\</span><span class="s0">.com/locations/[^/]+/workforcePools/[^/]+/providers/.+'</span><span class="s1">;</span>
+<span class="s1">const DEFAULT_TOKEN_URL = </span><span class="s0">'https://sts.{universeDomain}/v1/token'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Base external account client. This is used to instantiate AuthClients for 
+ * exchanging external account credentials for GCP access token and authorizing 
+ * requests to GCP APIs. 
+ * The base class implements common logic for exchanging various type of 
+ * external credentials for GCP access token. The logic of determining and 
+ * retrieving the external credential based on the environment and 
+ * credential_source will be left for the subclasses. 
+ */</span>
+<span class="s1">class BaseExternalAccountClient extends authclient_1.AuthClient {</span>
+    <span class="s2">/** 
+     * OAuth scopes for the GCP access token to use. When not provided, 
+     * the default https://www.googleapis.com/auth/cloud-platform is 
+     * used. 
+     */</span>
+    <span class="s1">scopes;</span>
+    <span class="s1">projectNumber;</span>
+    <span class="s1">audience;</span>
+    <span class="s1">subjectTokenType;</span>
+    <span class="s1">stsCredential;</span>
+    <span class="s1">clientAuth;</span>
+    <span class="s1">credentialSourceType;</span>
+    <span class="s1">cachedAccessToken;</span>
+    <span class="s1">serviceAccountImpersonationUrl;</span>
+    <span class="s1">serviceAccountImpersonationLifetime;</span>
+    <span class="s1">workforcePoolUserProject;</span>
+    <span class="s1">configLifetimeRequested;</span>
+    <span class="s1">tokenUrl;</span>
+    <span class="s2">/** 
+     * @example 
+     * ```ts 
+     * new URL('https://cloudresourcemanager.googleapis.com/v1/projects/'); 
+     * ``` 
+     */</span>
+    <span class="s1">cloudResourceManagerURL;</span>
+    <span class="s1">supplierContext;</span>
+    <span class="s2">/** 
+     * A pending access token request. Used for concurrent calls. 
+     */</span>
+    <span class="s1">#pendingAccessToken = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * Instantiate a BaseExternalAccountClient instance using the provided JSON 
+     * object loaded from an external account credentials file. 
+     * @param options The external account options object typically loaded 
+     *   from the external account JSON credential file. The camelCased options 
+     *   are aliases for the snake_cased options. 
+     */</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s1">super(options);</span>
+        <span class="s1">const opts = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(options);</span>
+        <span class="s1">const type = opts.get(</span><span class="s0">'type'</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(type &amp;&amp; type !== exports.EXTERNAL_ACCOUNT_TYPE) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(`Expected </span><span class="s0">&quot;${exports.EXTERNAL_ACCOUNT_TYPE}&quot; </span><span class="s1">type but ` +</span>
+                <span class="s1">`received </span><span class="s0">&quot;${options.type}&quot;</span><span class="s1">`);</span>
+        <span class="s1">}</span>
+        <span class="s1">const clientId = opts.get(</span><span class="s0">'client_id'</span><span class="s1">);</span>
+        <span class="s1">const clientSecret = opts.get(</span><span class="s0">'client_secret'</span><span class="s1">);</span>
+        <span class="s3">this</span><span class="s1">.tokenUrl =</span>
+            <span class="s1">opts.get(</span><span class="s0">'token_url'</span><span class="s1">) ??</span>
+                <span class="s1">DEFAULT_TOKEN_URL.replace(</span><span class="s0">'{universeDomain}'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.universeDomain);</span>
+        <span class="s1">const subjectTokenType = opts.get(</span><span class="s0">'subject_token_type'</span><span class="s1">);</span>
+        <span class="s1">const workforcePoolUserProject = opts.get(</span><span class="s0">'workforce_pool_user_project'</span><span class="s1">);</span>
+        <span class="s1">const serviceAccountImpersonationUrl = opts.get(</span><span class="s0">'service_account_impersonation_url'</span><span class="s1">);</span>
+        <span class="s1">const serviceAccountImpersonation = opts.get(</span><span class="s0">'service_account_impersonation'</span><span class="s1">);</span>
+        <span class="s1">const serviceAccountImpersonationLifetime = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(serviceAccountImpersonation).get(</span><span class="s0">'token_lifetime_seconds'</span><span class="s1">);</span>
+        <span class="s3">this</span><span class="s1">.cloudResourceManagerURL = </span><span class="s3">new </span><span class="s1">URL(opts.get(</span><span class="s0">'cloud_resource_manager_url'</span><span class="s1">) ||</span>
+            <span class="s1">`https:</span><span class="s2">//cloudresourcemanager.${this.universeDomain}/v1/projects/`);</span>
+        <span class="s3">if </span><span class="s1">(clientId) {</span>
+            <span class="s3">this</span><span class="s1">.clientAuth = {</span>
+                <span class="s1">confidentialClientType: </span><span class="s0">'basic'</span><span class="s1">,</span>
+                <span class="s1">clientId,</span>
+                <span class="s1">clientSecret,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.stsCredential = </span><span class="s3">new </span><span class="s1">sts.StsCredentials({</span>
+            <span class="s1">tokenExchangeEndpoint: </span><span class="s3">this</span><span class="s1">.tokenUrl,</span>
+            <span class="s1">clientAuthentication: </span><span class="s3">this</span><span class="s1">.clientAuth,</span>
+        <span class="s1">});</span>
+        <span class="s3">this</span><span class="s1">.scopes = opts.get(</span><span class="s0">'scopes'</span><span class="s1">) || [DEFAULT_OAUTH_SCOPE];</span>
+        <span class="s3">this</span><span class="s1">.cachedAccessToken = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.audience = opts.get(</span><span class="s0">'audience'</span><span class="s1">);</span>
+        <span class="s3">this</span><span class="s1">.subjectTokenType = subjectTokenType;</span>
+        <span class="s3">this</span><span class="s1">.workforcePoolUserProject = workforcePoolUserProject;</span>
+        <span class="s1">const workforceAudiencePattern = </span><span class="s3">new </span><span class="s1">RegExp(WORKFORCE_AUDIENCE_PATTERN);</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.workforcePoolUserProject &amp;&amp;</span>
+            <span class="s1">!</span><span class="s3">this</span><span class="s1">.audience.match(workforceAudiencePattern)) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'workforcePoolUserProject should not be set for non-workforce pool ' </span><span class="s1">+</span>
+                <span class="s0">'credentials.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl = serviceAccountImpersonationUrl;</span>
+        <span class="s3">this</span><span class="s1">.serviceAccountImpersonationLifetime =</span>
+            <span class="s1">serviceAccountImpersonationLifetime;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationLifetime) {</span>
+            <span class="s3">this</span><span class="s1">.configLifetimeRequested = </span><span class="s3">true</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">this</span><span class="s1">.configLifetimeRequested = </span><span class="s3">false</span><span class="s1">;</span>
+            <span class="s3">this</span><span class="s1">.serviceAccountImpersonationLifetime = DEFAULT_TOKEN_LIFESPAN;</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.projectNumber = </span><span class="s3">this</span><span class="s1">.getProjectNumber(</span><span class="s3">this</span><span class="s1">.audience);</span>
+        <span class="s3">this</span><span class="s1">.supplierContext = {</span>
+            <span class="s1">audience: </span><span class="s3">this</span><span class="s1">.audience,</span>
+            <span class="s1">subjectTokenType: </span><span class="s3">this</span><span class="s1">.subjectTokenType,</span>
+            <span class="s1">transporter: </span><span class="s3">this</span><span class="s1">.transporter,</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s2">/** The service account email to be impersonated, if available. */</span>
+    <span class="s1">getServiceAccountEmail() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl) {</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl.length &gt; </span><span class="s4">256</span><span class="s1">) {</span>
+                <span class="s2">/** 
+                 * Prevents DOS attacks. 
+                 * @see {@link https://github.com/googleapis/google-auth-library-nodejs/security/code-scanning/84} 
+                 **/</span>
+                <span class="s3">throw new </span><span class="s1">RangeError(`URL is too long: ${</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl}`);</span>
+            <span class="s1">}</span>
+            <span class="s2">// Parse email from URL. The formal looks as follows:</span>
+            <span class="s2">// https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/name@project-id.iam.gserviceaccount.com:generateAccessToken</span>
+            <span class="s1">const re = /serviceAccounts\/(?&lt;email&gt;[^:]+):generateAccessToken$/;</span>
+            <span class="s1">const result = re.exec(</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl);</span>
+            <span class="s3">return </span><span class="s1">result?.groups?.email || </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Provides a mechanism to inject GCP access tokens directly. 
+     * When the provided credential expires, a new credential, using the 
+     * external account options, is retrieved. 
+     * @param credentials The Credentials object to set on the current client. 
+     */</span>
+    <span class="s1">setCredentials(credentials) {</span>
+        <span class="s1">super.setCredentials(credentials);</span>
+        <span class="s3">this</span><span class="s1">.cachedAccessToken = credentials;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * @return A promise that resolves with the current GCP access token 
+     *   response. If the current credential is expired, a new one is retrieved. 
+     */</span>
+    <span class="s1">async getAccessToken() {</span>
+        <span class="s2">// If cached access token is unavailable or expired, force refresh.</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.cachedAccessToken || </span><span class="s3">this</span><span class="s1">.isExpired(</span><span class="s3">this</span><span class="s1">.cachedAccessToken)) {</span>
+            <span class="s1">await </span><span class="s3">this</span><span class="s1">.refreshAccessTokenAsync();</span>
+        <span class="s1">}</span>
+        <span class="s2">// Return GCP access token in GetAccessTokenResponse format.</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">token: </span><span class="s3">this</span><span class="s1">.cachedAccessToken.access_token,</span>
+            <span class="s1">res: </span><span class="s3">this</span><span class="s1">.cachedAccessToken.res,</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * The main authentication interface. It takes an optional url which when 
+     * present is the endpoint being accessed, and returns a Promise which 
+     * resolves with authorization header fields. 
+     * 
+     * The result has the form: 
+     * { authorization: 'Bearer &lt;access_token_value&gt;' } 
+     */</span>
+    <span class="s1">async getRequestHeaders() {</span>
+        <span class="s1">const accessTokenResponse = await </span><span class="s3">this</span><span class="s1">.getAccessToken();</span>
+        <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers({</span>
+            <span class="s1">authorization: `Bearer ${accessTokenResponse.token}`,</span>
+        <span class="s1">});</span>
+        <span class="s3">return this</span><span class="s1">.addSharedMetadataHeaders(headers);</span>
+    <span class="s1">}</span>
+    <span class="s1">request(opts, callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.requestAsync(opts).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), e =&gt; {</span>
+                <span class="s3">return </span><span class="s1">callback(e, e.response);</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.requestAsync(opts);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * @return A promise that resolves with the project ID corresponding to the 
+     *   current workload identity pool or current workforce pool if 
+     *   determinable. For workforce pool credential, it returns the project ID 
+     *   corresponding to the workforcePoolUserProject. 
+     *   This is introduced to match the current pattern of using the Auth 
+     *   library: 
+     *   const projectId = await auth.getProjectId(); 
+     *   const url = `https://dns.googleapis.com/dns/v1/projects/${projectId}`; 
+     *   const res = await client.request({ url }); 
+     *   The resource may not have permission 
+     *   (resourcemanager.projects.get) to call this API or the required 
+     *   scopes may not be selected: 
+     *   https://cloud.google.com/resource-manager/reference/rest/v1/projects/get#authorization-scopes 
+     */</span>
+    <span class="s1">async getProjectId() {</span>
+        <span class="s1">const projectNumber = </span><span class="s3">this</span><span class="s1">.projectNumber || </span><span class="s3">this</span><span class="s1">.workforcePoolUserProject;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.projectId) {</span>
+            <span class="s2">// Return previously determined project ID.</span>
+            <span class="s3">return this</span><span class="s1">.projectId;</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(projectNumber) {</span>
+            <span class="s2">// Preferable not to use request() to avoid retrial policies.</span>
+            <span class="s1">const headers = await </span><span class="s3">this</span><span class="s1">.getRequestHeaders();</span>
+            <span class="s1">const opts = {</span>
+                <span class="s1">...BaseExternalAccountClient.RETRY_CONFIG,</span>
+                <span class="s1">headers,</span>
+                <span class="s1">url: `${</span><span class="s3">this</span><span class="s1">.cloudResourceManagerURL.toString()}${projectNumber}`,</span>
+                <span class="s1">responseType: </span><span class="s0">'json'</span><span class="s1">,</span>
+            <span class="s1">};</span>
+            <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'getProjectId'</span><span class="s1">);</span>
+            <span class="s1">const response = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+            <span class="s3">this</span><span class="s1">.projectId = response.data.projectId;</span>
+            <span class="s3">return this</span><span class="s1">.projectId;</span>
+        <span class="s1">}</span>
+        <span class="s3">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Authenticates the provided HTTP request, processes it and resolves with the 
+     * returned response. 
+     * @param opts The HTTP request options. 
+     * @param reAuthRetried Whether the current attempt is a retry after a failed attempt due to an auth failure. 
+     * @return A promise that resolves with the successful response. 
+     */</span>
+    <span class="s1">async requestAsync(opts, reAuthRetried = </span><span class="s3">false</span><span class="s1">) {</span>
+        <span class="s1">let response;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const requestHeaders = await </span><span class="s3">this</span><span class="s1">.getRequestHeaders();</span>
+            <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers);</span>
+            <span class="s3">this</span><span class="s1">.addUserProjectAndAuthHeaders(opts.headers, requestHeaders);</span>
+            <span class="s1">response = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s1">const res = e.response;</span>
+            <span class="s3">if </span><span class="s1">(res) {</span>
+                <span class="s1">const statusCode = res.status;</span>
+                <span class="s2">// Retry the request for metadata if the following criteria are true:</span>
+                <span class="s2">// - We haven't already retried.  It only makes sense to retry once.</span>
+                <span class="s2">// - The response was a 401 or a 403</span>
+                <span class="s2">// - The request didn't send a readableStream</span>
+                <span class="s2">// - forceRefreshOnFailure is true</span>
+                <span class="s1">const isReadableStream = res.config.data </span><span class="s3">instanceof </span><span class="s1">stream.Readable;</span>
+                <span class="s1">const isAuthErr = statusCode === </span><span class="s4">401 </span><span class="s1">|| statusCode === </span><span class="s4">403</span><span class="s1">;</span>
+                <span class="s3">if </span><span class="s1">(!reAuthRetried &amp;&amp;</span>
+                    <span class="s1">isAuthErr &amp;&amp;</span>
+                    <span class="s1">!isReadableStream &amp;&amp;</span>
+                    <span class="s3">this</span><span class="s1">.forceRefreshOnFailure) {</span>
+                    <span class="s1">await </span><span class="s3">this</span><span class="s1">.refreshAccessTokenAsync();</span>
+                    <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.requestAsync(opts, </span><span class="s3">true</span><span class="s1">);</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">response;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Forces token refresh, even if unexpired tokens are currently cached. 
+     * External credentials are exchanged for GCP access tokens via the token 
+     * exchange endpoint and other settings provided in the client options 
+     * object. 
+     * If the service_account_impersonation_url is provided, an additional 
+     * step to exchange the external account GCP access token for a service 
+     * account impersonated token is performed. 
+     * @return A promise that resolves with the fresh GCP access tokens. 
+     */</span>
+    <span class="s1">async refreshAccessTokenAsync() {</span>
+        <span class="s2">// Use an existing access token request, or cache a new one</span>
+        <span class="s3">this</span><span class="s1">.#pendingAccessToken =</span>
+            <span class="s3">this</span><span class="s1">.#pendingAccessToken || </span><span class="s3">this</span><span class="s1">.#internalRefreshAccessTokenAsync();</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#pendingAccessToken;</span>
+        <span class="s1">}</span>
+        <span class="s3">finally </span><span class="s1">{</span>
+            <span class="s2">// clear pending access token for future requests</span>
+            <span class="s3">this</span><span class="s1">.#pendingAccessToken = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async #internalRefreshAccessTokenAsync() {</span>
+        <span class="s2">// Retrieve the external credential.</span>
+        <span class="s1">const subjectToken = await </span><span class="s3">this</span><span class="s1">.retrieveSubjectToken();</span>
+        <span class="s2">// Construct the STS credentials options.</span>
+        <span class="s1">const stsCredentialsOptions = {</span>
+            <span class="s1">grantType: STS_GRANT_TYPE,</span>
+            <span class="s1">audience: </span><span class="s3">this</span><span class="s1">.audience,</span>
+            <span class="s1">requestedTokenType: STS_REQUEST_TOKEN_TYPE,</span>
+            <span class="s1">subjectToken,</span>
+            <span class="s1">subjectTokenType: </span><span class="s3">this</span><span class="s1">.subjectTokenType,</span>
+            <span class="s2">// generateAccessToken requires the provided access token to have</span>
+            <span class="s2">// scopes:</span>
+            <span class="s2">// https://www.googleapis.com/auth/iam or</span>
+            <span class="s2">// https://www.googleapis.com/auth/cloud-platform</span>
+            <span class="s2">// The new service account access token scopes will match the user</span>
+            <span class="s2">// provided ones.</span>
+            <span class="s1">scope: </span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl</span>
+                <span class="s1">? [DEFAULT_OAUTH_SCOPE]</span>
+                <span class="s1">: </span><span class="s3">this</span><span class="s1">.getScopesArray(),</span>
+        <span class="s1">};</span>
+        <span class="s2">// Exchange the external credentials for a GCP access token.</span>
+        <span class="s2">// Client auth is prioritized over passing the workforcePoolUserProject</span>
+        <span class="s2">// parameter for STS token exchange.</span>
+        <span class="s1">const additionalOptions = !</span><span class="s3">this</span><span class="s1">.clientAuth &amp;&amp; </span><span class="s3">this</span><span class="s1">.workforcePoolUserProject</span>
+            <span class="s1">? { userProject: </span><span class="s3">this</span><span class="s1">.workforcePoolUserProject }</span>
+            <span class="s1">: undefined;</span>
+        <span class="s1">const additionalHeaders = </span><span class="s3">new </span><span class="s1">Headers({</span>
+            <span class="s0">'x-goog-api-client'</span><span class="s1">: </span><span class="s3">this</span><span class="s1">.getMetricsHeaderValue(),</span>
+        <span class="s1">});</span>
+        <span class="s1">const stsResponse = await </span><span class="s3">this</span><span class="s1">.stsCredential.exchangeToken(stsCredentialsOptions, additionalHeaders, additionalOptions);</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl) {</span>
+            <span class="s3">this</span><span class="s1">.cachedAccessToken = await </span><span class="s3">this</span><span class="s1">.getImpersonatedAccessToken(stsResponse.access_token);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(stsResponse.expires_in) {</span>
+            <span class="s2">// Save response in cached access token.</span>
+            <span class="s3">this</span><span class="s1">.cachedAccessToken = {</span>
+                <span class="s1">access_token: stsResponse.access_token,</span>
+                <span class="s1">expiry_date: </span><span class="s3">new </span><span class="s1">Date().getTime() + stsResponse.expires_in * </span><span class="s4">1000</span><span class="s1">,</span>
+                <span class="s1">res: stsResponse.res,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s2">// Save response in cached access token.</span>
+            <span class="s3">this</span><span class="s1">.cachedAccessToken = {</span>
+                <span class="s1">access_token: stsResponse.access_token,</span>
+                <span class="s1">res: stsResponse.res,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s2">// Save credentials.</span>
+        <span class="s3">this</span><span class="s1">.credentials = {};</span>
+        <span class="s1">Object.assign(</span><span class="s3">this</span><span class="s1">.credentials, </span><span class="s3">this</span><span class="s1">.cachedAccessToken);</span>
+        <span class="s3">delete this</span><span class="s1">.credentials.res;</span>
+        <span class="s2">// Trigger tokens event to notify external listeners.</span>
+        <span class="s3">this</span><span class="s1">.emit(</span><span class="s0">'tokens'</span><span class="s1">, {</span>
+            <span class="s1">refresh_token: </span><span class="s3">null</span><span class="s1">,</span>
+            <span class="s1">expiry_date: </span><span class="s3">this</span><span class="s1">.cachedAccessToken.expiry_date,</span>
+            <span class="s1">access_token: </span><span class="s3">this</span><span class="s1">.cachedAccessToken.access_token,</span>
+            <span class="s1">token_type: </span><span class="s0">'Bearer'</span><span class="s1">,</span>
+            <span class="s1">id_token: </span><span class="s3">null</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s2">// Return the cached access token.</span>
+        <span class="s3">return this</span><span class="s1">.cachedAccessToken;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Returns the workload identity pool project number if it is determinable 
+     * from the audience resource name. 
+     * @param audience The STS audience used to determine the project number. 
+     * @return The project number associated with the workload identity pool, if 
+     *   this can be determined from the STS audience field. Otherwise, null is 
+     *   returned. 
+     */</span>
+    <span class="s1">getProjectNumber(audience) {</span>
+        <span class="s2">// STS audience pattern:</span>
+        <span class="s2">// //iam.googleapis.com/projects/$PROJECT_NUMBER/locations/...</span>
+        <span class="s1">const match = audience.match(/\/projects\/([^/]+)/);</span>
+        <span class="s3">if </span><span class="s1">(!match) {</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">match[</span><span class="s4">1</span><span class="s1">];</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Exchanges an external account GCP access token for a service 
+     * account impersonated access token using iamcredentials 
+     * GenerateAccessToken API. 
+     * @param token The access token to exchange for a service account access 
+     *   token. 
+     * @return A promise that resolves with the service account impersonated 
+     *   credentials response. 
+     */</span>
+    <span class="s1">async getImpersonatedAccessToken(token) {</span>
+        <span class="s1">const opts = {</span>
+            <span class="s1">...BaseExternalAccountClient.RETRY_CONFIG,</span>
+            <span class="s1">url: </span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl,</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+            <span class="s1">headers: {</span>
+                <span class="s0">'content-type'</span><span class="s1">: </span><span class="s0">'application/json'</span><span class="s1">,</span>
+                <span class="s1">authorization: `Bearer ${token}`,</span>
+            <span class="s1">},</span>
+            <span class="s1">data: {</span>
+                <span class="s1">scope: </span><span class="s3">this</span><span class="s1">.getScopesArray(),</span>
+                <span class="s1">lifetime: </span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationLifetime + </span><span class="s0">'s'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+            <span class="s1">responseType: </span><span class="s0">'json'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'getImpersonatedAccessToken'</span><span class="s1">);</span>
+        <span class="s1">const response = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">const successResponse = response.data;</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">access_token: successResponse.accessToken,</span>
+            <span class="s2">// Convert from ISO format to timestamp.</span>
+            <span class="s1">expiry_date: </span><span class="s3">new </span><span class="s1">Date(successResponse.expireTime).getTime(),</span>
+            <span class="s1">res: response,</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Returns whether the provided credentials are expired or not. 
+     * If there is no expiry time, assumes the token is not expired or expiring. 
+     * @param accessToken The credentials to check for expiration. 
+     * @return Whether the credentials are expired or not. 
+     */</span>
+    <span class="s1">isExpired(accessToken) {</span>
+        <span class="s1">const now = </span><span class="s3">new </span><span class="s1">Date().getTime();</span>
+        <span class="s3">return </span><span class="s1">accessToken.expiry_date</span>
+            <span class="s1">? now &gt;= accessToken.expiry_date - </span><span class="s3">this</span><span class="s1">.eagerRefreshThresholdMillis</span>
+            <span class="s1">: </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * @return The list of scopes for the requested GCP access token. 
+     */</span>
+    <span class="s1">getScopesArray() {</span>
+        <span class="s2">// Since scopes can be provided as string or array, the type should</span>
+        <span class="s2">// be normalized.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof this</span><span class="s1">.scopes === </span><span class="s0">'string'</span><span class="s1">) {</span>
+            <span class="s3">return </span><span class="s1">[</span><span class="s3">this</span><span class="s1">.scopes];</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.scopes || [DEFAULT_OAUTH_SCOPE];</span>
+    <span class="s1">}</span>
+    <span class="s1">getMetricsHeaderValue() {</span>
+        <span class="s1">const nodeVersion = process.version.replace(/^v/, </span><span class="s0">''</span><span class="s1">);</span>
+        <span class="s1">const saImpersonation = </span><span class="s3">this</span><span class="s1">.serviceAccountImpersonationUrl !== undefined;</span>
+        <span class="s1">const credentialSourceType = </span><span class="s3">this</span><span class="s1">.credentialSourceType</span>
+            <span class="s1">? </span><span class="s3">this</span><span class="s1">.credentialSourceType</span>
+            <span class="s1">: </span><span class="s0">'unknown'</span><span class="s1">;</span>
+        <span class="s3">return </span><span class="s1">`gl-node/${nodeVersion} auth/${shared_cjs_1.pkg.version} google-byoid-sdk source/${credentialSourceType} sa-impersonation/${saImpersonation} config-lifetime/${</span><span class="s3">this</span><span class="s1">.configLifetimeRequested}`;</span>
+    <span class="s1">}</span>
+    <span class="s1">getTokenUrl() {</span>
+        <span class="s3">return this</span><span class="s1">.tokenUrl;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.BaseExternalAccountClient = BaseExternalAccountClient;</span>
+<span class="s2">//# sourceMappingURL=baseexternalclient.js.map</span></pre>
+</body>
+</html>

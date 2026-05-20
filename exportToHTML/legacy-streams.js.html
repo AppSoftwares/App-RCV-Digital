@@ -1,0 +1,139 @@
+<html>
+<head>
+<title>legacy-streams.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+legacy-streams.js</font>
+</center></td></tr></table>
+<pre><span class="s0">var </span><span class="s1">Stream = require(</span><span class="s2">'stream'</span><span class="s1">).Stream</span>
+
+<span class="s1">module.exports = legacy</span>
+
+<span class="s0">function </span><span class="s1">legacy (fs) {</span>
+  <span class="s0">return </span><span class="s1">{</span>
+    <span class="s1">ReadStream: ReadStream,</span>
+    <span class="s1">WriteStream: WriteStream</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">ReadStream (path, options) {</span>
+    <span class="s0">if </span><span class="s1">(!(</span><span class="s0">this instanceof </span><span class="s1">ReadStream)) </span><span class="s0">return new </span><span class="s1">ReadStream(path, options);</span>
+
+    <span class="s1">Stream.call(</span><span class="s0">this</span><span class="s1">);</span>
+
+    <span class="s0">var </span><span class="s1">self = </span><span class="s0">this</span><span class="s1">;</span>
+
+    <span class="s0">this</span><span class="s1">.path = path;</span>
+    <span class="s0">this</span><span class="s1">.fd = </span><span class="s0">null</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.readable = </span><span class="s0">true</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.paused = </span><span class="s0">false</span><span class="s1">;</span>
+
+    <span class="s0">this</span><span class="s1">.flags = </span><span class="s2">'r'</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.mode = </span><span class="s3">438</span><span class="s1">; </span><span class="s4">/*=0666*/</span>
+    <span class="s0">this</span><span class="s1">.bufferSize = </span><span class="s3">64 </span><span class="s1">* </span><span class="s3">1024</span><span class="s1">;</span>
+
+    <span class="s1">options = options || {};</span>
+
+    <span class="s4">// Mixin options into this</span>
+    <span class="s0">var </span><span class="s1">keys = Object.keys(options);</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">var </span><span class="s1">index = </span><span class="s3">0</span><span class="s1">, length = keys.length; index &lt; length; index++) {</span>
+      <span class="s0">var </span><span class="s1">key = keys[index];</span>
+      <span class="s0">this</span><span class="s1">[key] = options[key];</span>
+    <span class="s1">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.encoding) </span><span class="s0">this</span><span class="s1">.setEncoding(</span><span class="s0">this</span><span class="s1">.encoding);</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.start !== undefined) {</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">'number' </span><span class="s1">!== </span><span class="s0">typeof this</span><span class="s1">.start) {</span>
+        <span class="s0">throw </span><span class="s1">TypeError(</span><span class="s2">'start must be a Number'</span><span class="s1">);</span>
+      <span class="s1">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.end === undefined) {</span>
+        <span class="s0">this</span><span class="s1">.end = Infinity;</span>
+      <span class="s1">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">'number' </span><span class="s1">!== </span><span class="s0">typeof this</span><span class="s1">.end) {</span>
+        <span class="s0">throw </span><span class="s1">TypeError(</span><span class="s2">'end must be a Number'</span><span class="s1">);</span>
+      <span class="s1">}</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.start &gt; </span><span class="s0">this</span><span class="s1">.end) {</span>
+        <span class="s0">throw new </span><span class="s1">Error(</span><span class="s2">'start must be &lt;= end'</span><span class="s1">);</span>
+      <span class="s1">}</span>
+
+      <span class="s0">this</span><span class="s1">.pos = </span><span class="s0">this</span><span class="s1">.start;</span>
+    <span class="s1">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.fd !== </span><span class="s0">null</span><span class="s1">) {</span>
+      <span class="s1">process.nextTick(</span><span class="s0">function</span><span class="s1">() {</span>
+        <span class="s1">self._read();</span>
+      <span class="s1">});</span>
+      <span class="s0">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">fs.open(</span><span class="s0">this</span><span class="s1">.path, </span><span class="s0">this</span><span class="s1">.flags, </span><span class="s0">this</span><span class="s1">.mode, </span><span class="s0">function </span><span class="s1">(err, fd) {</span>
+      <span class="s0">if </span><span class="s1">(err) {</span>
+        <span class="s1">self.emit(</span><span class="s2">'error'</span><span class="s1">, err);</span>
+        <span class="s1">self.readable = </span><span class="s0">false</span><span class="s1">;</span>
+        <span class="s0">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">self.fd = fd;</span>
+      <span class="s1">self.emit(</span><span class="s2">'open'</span><span class="s1">, fd);</span>
+      <span class="s1">self._read();</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">WriteStream (path, options) {</span>
+    <span class="s0">if </span><span class="s1">(!(</span><span class="s0">this instanceof </span><span class="s1">WriteStream)) </span><span class="s0">return new </span><span class="s1">WriteStream(path, options);</span>
+
+    <span class="s1">Stream.call(</span><span class="s0">this</span><span class="s1">);</span>
+
+    <span class="s0">this</span><span class="s1">.path = path;</span>
+    <span class="s0">this</span><span class="s1">.fd = </span><span class="s0">null</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.writable = </span><span class="s0">true</span><span class="s1">;</span>
+
+    <span class="s0">this</span><span class="s1">.flags = </span><span class="s2">'w'</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.encoding = </span><span class="s2">'binary'</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">.mode = </span><span class="s3">438</span><span class="s1">; </span><span class="s4">/*=0666*/</span>
+    <span class="s0">this</span><span class="s1">.bytesWritten = </span><span class="s3">0</span><span class="s1">;</span>
+
+    <span class="s1">options = options || {};</span>
+
+    <span class="s4">// Mixin options into this</span>
+    <span class="s0">var </span><span class="s1">keys = Object.keys(options);</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">var </span><span class="s1">index = </span><span class="s3">0</span><span class="s1">, length = keys.length; index &lt; length; index++) {</span>
+      <span class="s0">var </span><span class="s1">key = keys[index];</span>
+      <span class="s0">this</span><span class="s1">[key] = options[key];</span>
+    <span class="s1">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.start !== undefined) {</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">'number' </span><span class="s1">!== </span><span class="s0">typeof this</span><span class="s1">.start) {</span>
+        <span class="s0">throw </span><span class="s1">TypeError(</span><span class="s2">'start must be a Number'</span><span class="s1">);</span>
+      <span class="s1">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.start &lt; </span><span class="s3">0</span><span class="s1">) {</span>
+        <span class="s0">throw new </span><span class="s1">Error(</span><span class="s2">'start must be &gt;= zero'</span><span class="s1">);</span>
+      <span class="s1">}</span>
+
+      <span class="s0">this</span><span class="s1">.pos = </span><span class="s0">this</span><span class="s1">.start;</span>
+    <span class="s1">}</span>
+
+    <span class="s0">this</span><span class="s1">.busy = </span><span class="s0">false</span><span class="s1">;</span>
+    <span class="s0">this</span><span class="s1">._queue = [];</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">.fd === </span><span class="s0">null</span><span class="s1">) {</span>
+      <span class="s0">this</span><span class="s1">._open = fs.open;</span>
+      <span class="s0">this</span><span class="s1">._queue.push([</span><span class="s0">this</span><span class="s1">._open, </span><span class="s0">this</span><span class="s1">.path, </span><span class="s0">this</span><span class="s1">.flags, </span><span class="s0">this</span><span class="s1">.mode, undefined]);</span>
+      <span class="s0">this</span><span class="s1">.flush();</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

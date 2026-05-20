@@ -1,0 +1,194 @@
+<html>
+<head>
+<title>start.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+start.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ optimizedAppearDataId, startWaapiAnimation, getOptimisedAppearId } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-dom</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ noop } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ handoffOptimizedAppearAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./handoff.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ appearAnimationStore, appearComplete } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./store.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ appearStoreId } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./store-id.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* A single time to use across all animations to manually set startTime 
+ * and ensure they're all in sync. 
+ </span><span class="s2">*/</span>
+<span class="s0">let </span><span class="s2">startFrameTime;</span>
+<span class="s2">/**</span>
+ <span class="s4">* A dummy animation to detect when Chrome is ready to start 
+ * painting the page and hold off from triggering the real animation 
+ * until then. We only need one animation to detect paint ready. 
+ * 
+ * https://bugs.chromium.org/p/chromium/issues/detail?id=1406850 
+ </span><span class="s2">*/</span>
+<span class="s0">let </span><span class="s2">readyAnimation;</span>
+<span class="s2">/**</span>
+ <span class="s4">* Keep track of animations that were suspended vs cancelled so we 
+ * can easily resume them when we're done measuring layout. 
+ </span><span class="s2">*/</span>
+<span class="s0">const </span><span class="s2">suspendedAnimations = new </span><span class="s5">Set</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s5">resumeSuspendedAnimations</span><span class="s2">() {</span>
+    <span class="s2">suspendedAnimations.</span><span class="s5">forEach</span><span class="s1">(</span><span class="s2">(data) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">data.animation.</span><span class="s5">play</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">data.animation.startTime = data.startTime;</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">suspendedAnimations.</span><span class="s5">clear</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">startOptimizedAppearAnimation</span><span class="s2">(element, name, keyframes, options, onReady) {</span>
+    <span class="s2">// </span><span class="s4">Prevent optimised appear animations if Motion has already started animating.</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">window.MotionIsMounted</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">id = element.dataset</span><span class="s1">[</span><span class="s2">optimizedAppearDataId</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!id</span><span class="s1">)</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">window.MotionHandoffAnimation = handoffOptimizedAppearAnimation;</span>
+    <span class="s0">const </span><span class="s2">storeId = </span><span class="s5">appearStoreId</span><span class="s1">(</span><span class="s2">id, name</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!readyAnimation</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">readyAnimation = </span><span class="s5">startWaapiAnimation</span><span class="s1">(</span><span class="s2">element, name, </span><span class="s1">[</span><span class="s2">keyframes</span><span class="s1">[</span><span class="s6">0</span><span class="s1">]</span><span class="s2">, keyframes</span><span class="s1">[</span><span class="s6">0</span><span class="s1">]]</span><span class="s2">, </span>
+        <span class="s2">/**</span>
+         <span class="s4">* 10 secs is basically just a super-safe duration to give Chrome 
+         * long enough to get the animation ready. 
+         </span><span class="s2">*/</span>
+        <span class="s2">{ </span><span class="s1">duration</span><span class="s2">: </span><span class="s6">10000</span><span class="s2">, </span><span class="s1">ease</span><span class="s2">: &quot;</span><span class="s3">linear</span><span class="s2">&quot; }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">appearAnimationStore.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">storeId, {</span>
+            <span class="s1">animation</span><span class="s2">: readyAnimation,</span>
+            <span class="s1">startTime</span><span class="s2">: </span><span class="s7">null</span><span class="s2">,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If there's no readyAnimation then there's been no instantiation 
+         * of handoff animations. 
+         </span><span class="s2">*/</span>
+        <span class="s2">window.MotionHandoffAnimation = handoffOptimizedAppearAnimation;</span>
+        <span class="s2">window.</span><span class="s5">MotionHasOptimisedAnimation </span><span class="s2">= (elementId, valueName) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!elementId</span><span class="s1">)</span>
+                <span class="s0">return </span><span class="s7">false</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s4">* Keep a map of elementIds that have started animating. We check 
+             * via ID instead of Element because of hydration errors and 
+             * pre-hydration checks. We also actively record IDs as they start 
+             * animating rather than simply checking for data-appear-id as 
+             * this attrbute might be present but not lead to an animation, for 
+             * instance if the element's appear animation is on a different 
+             * breakpoint. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!valueName</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">return </span><span class="s2">appearComplete.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">elementId</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">animationId = </span><span class="s5">appearStoreId</span><span class="s1">(</span><span class="s2">elementId, valueName</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s5">Boolean</span><span class="s1">(</span><span class="s2">appearAnimationStore.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">animationId</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">window.</span><span class="s5">MotionHandoffMarkAsComplete </span><span class="s2">= (elementId) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">appearComplete.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">elementId</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">appearComplete.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">elementId, </span><span class="s7">true</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">};</span>
+        <span class="s2">window.</span><span class="s5">MotionHandoffIsComplete </span><span class="s2">= (elementId) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">appearComplete.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">elementId</span><span class="s1">) </span><span class="s2">=== </span><span class="s7">true</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* We only need to cancel transform animations as 
+         * they're the ones that will interfere with the 
+         * layout animation measurements. 
+         </span><span class="s2">*/</span>
+        <span class="s2">window.</span><span class="s5">MotionCancelOptimisedAnimation </span><span class="s2">= (elementId, valueName, frame, canResume) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">animationId = </span><span class="s5">appearStoreId</span><span class="s1">(</span><span class="s2">elementId, valueName</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">data = appearAnimationStore.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">animationId</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!data</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">frame &amp;&amp; canResume === </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">/**</span>
+                 <span class="s4">* Wait until the end of the subsequent frame to cancel the animation 
+                 * to ensure we don't remove the animation before the main thread has 
+                 * had a chance to resolve keyframes and render. 
+                 </span><span class="s2">*/</span>
+                <span class="s2">frame.</span><span class="s5">postRender</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                    <span class="s2">frame.</span><span class="s5">postRender</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                        <span class="s2">data.animation.</span><span class="s5">cancel</span><span class="s1">()</span><span class="s2">;</span>
+                    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">else </span><span class="s2">{</span>
+                <span class="s2">data.animation.</span><span class="s5">cancel</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">frame &amp;&amp; canResume</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">suspendedAnimations.</span><span class="s5">add</span><span class="s1">(</span><span class="s2">data</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">frame.</span><span class="s5">render</span><span class="s1">(</span><span class="s2">resumeSuspendedAnimations</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">else </span><span class="s2">{</span>
+                <span class="s2">appearAnimationStore.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">animationId</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">/**</span>
+                 <span class="s4">* If there are no more animations left, we can remove the cancel function. 
+                 * This will let us know when we can stop checking for conflicting layout animations. 
+                 </span><span class="s2">*/</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">!appearAnimationStore.size</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">window.MotionCancelOptimisedAnimation = </span><span class="s7">undefined</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+        <span class="s2">};</span>
+        <span class="s2">window.</span><span class="s5">MotionCheckAppearSync </span><span class="s2">= (visualElement, valueName, value) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">appearId = </span><span class="s5">getOptimisedAppearId</span><span class="s1">(</span><span class="s2">visualElement</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!appearId</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">valueIsOptimised = window.</span><span class="s5">MotionHasOptimisedAnimation</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">appearId, valueName</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">externalAnimationValue = visualElement.props.values?.</span><span class="s1">[</span><span class="s2">valueName</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!valueIsOptimised || !externalAnimationValue</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">removeSyncCheck = value.</span><span class="s5">on</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">change</span><span class="s2">&quot;, (latestValue) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">externalAnimationValue.</span><span class="s5">get</span><span class="s1">() </span><span class="s2">!== latestValue</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">window.</span><span class="s5">MotionCancelOptimisedAnimation</span><span class="s2">?.</span><span class="s1">(</span><span class="s2">appearId, valueName</span><span class="s1">)</span><span class="s2">;</span>
+                    <span class="s5">removeSyncCheck</span><span class="s1">()</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">removeSyncCheck;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s5">startAnimation </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">readyAnimation.</span><span class="s5">cancel</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">appearAnimation = </span><span class="s5">startWaapiAnimation</span><span class="s1">(</span><span class="s2">element, name, keyframes, options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Record the time of the first started animation. We call performance.now() once 
+         * here and once in handoff to ensure we're getting 
+         * close to a frame-locked time. This keeps all animations in sync. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">startFrameTime === </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">startFrameTime = performance.</span><span class="s5">now</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">appearAnimation.startTime = startFrameTime;</span>
+        <span class="s2">appearAnimationStore.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">storeId, {</span>
+            <span class="s1">animation</span><span class="s2">: appearAnimation,</span>
+            <span class="s1">startTime</span><span class="s2">: startFrameTime,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">onReady</span><span class="s1">)</span>
+            <span class="s5">onReady</span><span class="s1">(</span><span class="s2">appearAnimation</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">};</span>
+    <span class="s2">appearComplete.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">id, </span><span class="s7">false</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">readyAnimation.ready</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">readyAnimation.ready.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">startAnimation</span><span class="s1">)</span><span class="s2">.</span><span class="s5">catch</span><span class="s1">(</span><span class="s2">noop</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">else </span><span class="s2">{</span>
+        <span class="s5">startAnimation</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ startOptimizedAppearAnimation };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=start.mjs.map</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,1200 @@
+<html>
+<head>
+<title>Resolver.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+Resolver.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const { AsyncSeriesBailHook, AsyncSeriesHook, SyncHook } = require(</span><span class="s2">&quot;tapable&quot;</span><span class="s1">);</span>
+<span class="s1">const createInnerContext = require(</span><span class="s2">&quot;./createInnerContext&quot;</span><span class="s1">);</span>
+<span class="s1">const { parseIdentifier } = require(</span><span class="s2">&quot;./util/identifier&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+	<span class="s1">PathType,</span>
+	<span class="s1">createCachedBasename,</span>
+	<span class="s1">createCachedDirname,</span>
+	<span class="s1">createCachedJoin,</span>
+	<span class="s1">getType,</span>
+	<span class="s1">normalize,</span>
+<span class="s1">} = require(</span><span class="s2">&quot;./util/path&quot;</span><span class="s1">);</span>
+
+<span class="s0">/* eslint-disable jsdoc/check-alignment */</span>
+<span class="s0">// TODO in the next major release use only `Promise.withResolvers()`</span>
+<span class="s1">const _withResolvers =</span>
+	<span class="s0">// eslint-disable-next-line n/no-unsupported-features/es-syntax</span>
+	<span class="s1">Promise.withResolvers</span>
+		<span class="s1">? </span><span class="s0">/** 
+             * @param {Resolver} self resolver 
+             * @param {Context} context context information object 
+             * @param {string} path context path 
+             * @param {string} request request string 
+             * @param {ResolveContext} resolveContext resolve context 
+             * @returns {Promise&lt;string | false&gt;} result 
+             */</span>
+			<span class="s1">(self, context, path, request, resolveContext) =&gt; {</span>
+				<span class="s0">// eslint-disable-next-line n/no-unsupported-features/es-syntax</span>
+				<span class="s1">const { promise, resolve, reject } = Promise.withResolvers();</span>
+				<span class="s1">self.resolve(context, path, request, resolveContext, (err, res) =&gt; {</span>
+					<span class="s3">if </span><span class="s1">(err) reject(err);</span>
+					<span class="s3">else </span><span class="s1">resolve(</span><span class="s0">/** @type {string | false} */ </span><span class="s1">(res));</span>
+				<span class="s1">});</span>
+				<span class="s3">return </span><span class="s1">promise;</span>
+			<span class="s1">}</span>
+		<span class="s1">: </span><span class="s0">/** 
+             * @param {Resolver} self resolver 
+             * @param {Context} context context information object 
+             * @param {string} path context path 
+             * @param {string} request request string 
+             * @param {ResolveContext} resolveContext resolve context 
+             * @returns {Promise&lt;string | false&gt;} result 
+             */</span>
+			<span class="s1">(self, context, path, request, resolveContext) =&gt;</span>
+				<span class="s3">new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+					<span class="s1">self.resolve(context, path, request, resolveContext, (err, res) =&gt; {</span>
+						<span class="s3">if </span><span class="s1">(err) reject(err);</span>
+						<span class="s3">else </span><span class="s1">resolve(</span><span class="s0">/** @type {string | false} */ </span><span class="s1">(res));</span>
+					<span class="s1">});</span>
+				<span class="s1">});</span>
+<span class="s0">/* eslint-enable jsdoc/check-alignment */</span>
+
+<span class="s0">/** @typedef {import(&quot;./AliasUtils&quot;).AliasOption} AliasOption */</span>
+<span class="s0">/** @typedef {import(&quot;./util/path&quot;).CachedJoin} CachedJoin */</span>
+<span class="s0">/** @typedef {import(&quot;./util/path&quot;).CachedDirname} CachedDirname */</span>
+<span class="s0">/** @typedef {import(&quot;./util/path&quot;).CachedBasename} CachedBasename */</span>
+
+<span class="s0">/** 
+ * @typedef {object} JoinCacheEntry 
+ * @property {CachedJoin[&quot;fn&quot;]} fn cached join function 
+ * @property {CachedJoin[&quot;cache&quot;]} cache the underlying cache map 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} DirnameCacheEntry 
+ * @property {CachedDirname[&quot;fn&quot;]} fn cached dirname function 
+ * @property {CachedDirname[&quot;cache&quot;]} cache the underlying cache map 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} BasenameCacheEntry 
+ * @property {CachedBasename[&quot;fn&quot;]} fn cached dirname function 
+ * @property {CachedBasename[&quot;cache&quot;]} cache the underlying cache map 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} PathCacheFunctions 
+ * @property {JoinCacheEntry} join cached join 
+ * @property {DirnameCacheEntry} dirname cached dirname 
+ * @property {BasenameCacheEntry} basename cached basename 
+ */</span>
+
+<span class="s0">/** @type {WeakMap&lt;FileSystem, PathCacheFunctions&gt;} */</span>
+<span class="s1">const _pathCacheByFs = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** @typedef {import(&quot;./ResolverFactory&quot;).ResolveOptions} ResolveOptions */</span>
+
+<span class="s0">/** 
+ * @typedef {object} KnownContext 
+ * @property {string[]=} environments environments 
+ */</span>
+
+<span class="s0">// eslint-disable-next-line jsdoc/reject-any-type</span>
+<span class="s0">/** @typedef {KnownContext &amp; Record&lt;any, any&gt;} Context */</span>
+
+<span class="s0">/** @typedef {Error &amp; { details?: string }} ErrorWithDetail */</span>
+
+<span class="s0">/** @typedef {(err: ErrorWithDetail | null, res?: string | false, req?: ResolveRequest) =&gt; void} ResolveCallback */</span>
+
+<span class="s0">/** 
+ * @typedef {object} PossibleFileSystemError 
+ * @property {string=} code code 
+ * @property {number=} errno number 
+ * @property {string=} path path 
+ * @property {string=} syscall syscall 
+ */</span>
+
+<span class="s0">/** 
+ * @template T 
+ * @callback FileSystemCallback 
+ * @param {PossibleFileSystemError &amp; Error | null} err 
+ * @param {T=} result 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {string | Buffer | URL} PathLike 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {PathLike | number} PathOrFileDescriptor 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} ObjectEncodingOptions 
+ * @property {BufferEncoding | null | undefined=} encoding encoding 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {ObjectEncodingOptions | BufferEncoding | undefined | null} EncodingOption 
+ */</span>
+
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: string) =&gt; void} StringCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: Buffer) =&gt; void} BufferCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: (string | Buffer)) =&gt; void} StringOrBufferCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: IStats) =&gt; void} StatsCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: IBigIntStats) =&gt; void} BigIntStatsCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | null, result?: (IStats | IBigIntStats)) =&gt; void} StatsOrBigIntStatsCallback */</span>
+<span class="s0">/** @typedef {(err: NodeJS.ErrnoException | Error | null, result?: JsonObject) =&gt; void} ReadJsonCallback */</span>
+
+<span class="s0">/** 
+ * @template T 
+ * @typedef {object} IStatsBase 
+ * @property {() =&gt; boolean} isFile is file 
+ * @property {() =&gt; boolean} isDirectory is directory 
+ * @property {() =&gt; boolean} isBlockDevice is block device 
+ * @property {() =&gt; boolean} isCharacterDevice is character device 
+ * @property {() =&gt; boolean} isSymbolicLink is symbolic link 
+ * @property {() =&gt; boolean} isFIFO is FIFO 
+ * @property {() =&gt; boolean} isSocket is socket 
+ * @property {T} dev dev 
+ * @property {T} ino ino 
+ * @property {T} mode mode 
+ * @property {T} nlink nlink 
+ * @property {T} uid uid 
+ * @property {T} gid gid 
+ * @property {T} rdev rdev 
+ * @property {T} size size 
+ * @property {T} blksize blksize 
+ * @property {T} blocks blocks 
+ * @property {T} atimeMs atime ms 
+ * @property {T} mtimeMs mtime ms 
+ * @property {T} ctimeMs ctime ms 
+ * @property {T} birthtimeMs birthtime ms 
+ * @property {Date} atime atime 
+ * @property {Date} mtime mtime 
+ * @property {Date} ctime ctime 
+ * @property {Date} birthtime birthtime 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {IStatsBase&lt;number&gt;} IStats 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {IStatsBase&lt;bigint&gt; &amp; { atimeNs: bigint, mtimeNs: bigint, ctimeNs: bigint, birthtimeNs: bigint }} IBigIntStats 
+ */</span>
+
+<span class="s0">/** 
+ * @template {string | Buffer} [T=string] 
+ * @typedef {object} Dirent 
+ * @property {() =&gt; boolean} isFile true when is file, otherwise false 
+ * @property {() =&gt; boolean} isDirectory true when is directory, otherwise false 
+ * @property {() =&gt; boolean} isBlockDevice true when is block device, otherwise false 
+ * @property {() =&gt; boolean} isCharacterDevice true when is character device, otherwise false 
+ * @property {() =&gt; boolean} isSymbolicLink true when is symbolic link, otherwise false 
+ * @property {() =&gt; boolean} isFIFO true when is FIFO, otherwise false 
+ * @property {() =&gt; boolean} isSocket true when is socket, otherwise false 
+ * @property {T} name name 
+ * @property {string} parentPath path 
+ * @property {string=} path path 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} StatOptions 
+ * @property {(boolean | undefined)=} bigint need bigint values 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} StatSyncOptions 
+ * @property {(boolean | undefined)=} bigint need bigint values 
+ * @property {(boolean | undefined)=} throwIfNoEntry throw if no entry 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathOrFileDescriptor, options: ({ encoding?: null | undefined, flag?: string | undefined } &amp; import(&quot;events&quot;).Abortable) | undefined | null, callback: BufferCallback): void, 
+ * (path: PathOrFileDescriptor, options: ({ encoding: BufferEncoding, flag?: string | undefined } &amp; import(&quot;events&quot;).Abortable) | BufferEncoding, callback: StringCallback): void, 
+ * (path: PathOrFileDescriptor, options: (ObjectEncodingOptions &amp; { flag?: string | undefined } &amp; import(&quot;events&quot;).Abortable) | BufferEncoding | undefined | null, callback: StringOrBufferCallback): void, 
+ * (path: PathOrFileDescriptor, callback: BufferCallback): void, 
+ * }} ReadFile 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {&quot;buffer&quot; | { encoding: &quot;buffer&quot; }} BufferEncodingOption 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathOrFileDescriptor, options?: { encoding?: null | undefined, flag?: string | undefined } | null): Buffer, 
+ * (path: PathOrFileDescriptor, options: { encoding: BufferEncoding, flag?: string | undefined } | BufferEncoding): string, 
+ * (path: PathOrFileDescriptor, options?: (ObjectEncodingOptions &amp; { flag?: string | undefined }) | BufferEncoding | null): string | Buffer, 
+ * }} ReadFileSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options: { encoding: BufferEncoding | null, withFileTypes?: false | undefined, recursive?: boolean | undefined } | BufferEncoding | undefined | null, callback: (err: NodeJS.ErrnoException | null, files?: string[]) =&gt; void): void, 
+ * (path: PathLike, options: { encoding: &quot;buffer&quot;, withFileTypes?: false | undefined, recursive?: boolean | undefined } | &quot;buffer&quot;, callback: (err: NodeJS.ErrnoException | null, files?: Buffer[]) =&gt; void): void, 
+ * (path: PathLike, options: (ObjectEncodingOptions &amp; { withFileTypes?: false | undefined, recursive?: boolean | undefined }) | BufferEncoding | undefined | null, callback: (err: NodeJS.ErrnoException | null, files?: string[] | Buffer[]) =&gt; void): void, 
+ * (path: PathLike, callback: (err: NodeJS.ErrnoException | null, files?: string[]) =&gt; void): void, 
+ * (path: PathLike, options: ObjectEncodingOptions &amp; { withFileTypes: true, recursive?: boolean | undefined }, callback: (err: NodeJS.ErrnoException | null, files?: Dirent&lt;string&gt;[]) =&gt; void): void, 
+ * (path: PathLike, options: { encoding: &quot;buffer&quot;, withFileTypes: true, recursive?: boolean | undefined }, callback: (err: NodeJS.ErrnoException | null, files: Dirent&lt;Buffer&gt;[]) =&gt; void): void, 
+ * }} Readdir 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options?: { encoding: BufferEncoding | null, withFileTypes?: false | undefined, recursive?: boolean | undefined } | BufferEncoding | null): string[], 
+ * (path: PathLike, options: { encoding: &quot;buffer&quot;, withFileTypes?: false | undefined, recursive?: boolean | undefined } | &quot;buffer&quot;): Buffer[], 
+ * (path: PathLike, options?: (ObjectEncodingOptions &amp; { withFileTypes?: false | undefined, recursive?: boolean | undefined }) | BufferEncoding | null): string[] | Buffer[], 
+ * (path: PathLike, options: ObjectEncodingOptions &amp; { withFileTypes: true, recursive?: boolean | undefined }): Dirent[], 
+ * (path: PathLike, options: { encoding: &quot;buffer&quot;, withFileTypes: true, recursive?: boolean | undefined }): Dirent&lt;Buffer&gt;[], 
+ * }} ReaddirSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {(pathOrFileDescription: PathOrFileDescriptor, callback: ReadJsonCallback) =&gt; void} ReadJson 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {(pathOrFileDescription: PathOrFileDescriptor) =&gt; JsonObject} ReadJsonSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options: EncodingOption, callback: StringCallback): void, 
+ * (path: PathLike, options: BufferEncodingOption, callback: BufferCallback): void, 
+ * (path: PathLike, options: EncodingOption, callback: StringOrBufferCallback): void, 
+ * (path: PathLike, callback: StringCallback): void, 
+ * }} Readlink 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options?: EncodingOption): string, 
+ * (path: PathLike, options: BufferEncodingOption): Buffer, 
+ * (path: PathLike, options?: EncodingOption): string | Buffer, 
+ * }} ReadlinkSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, callback: StatsCallback): void, 
+ * (path: PathLike, options: (StatOptions &amp; { bigint?: false | undefined }) | undefined, callback: StatsCallback): void, 
+ * (path: PathLike, options: StatOptions &amp; { bigint: true }, callback: BigIntStatsCallback): void, 
+ * (path: PathLike, options: StatOptions | undefined, callback: StatsOrBigIntStatsCallback): void, 
+ * }} LStat 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options?: undefined): IStats, 
+ * (path: PathLike, options?: StatSyncOptions &amp; { bigint?: false | undefined, throwIfNoEntry: false }): IStats | undefined, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: true, throwIfNoEntry: false }): IBigIntStats | undefined, 
+ * (path: PathLike, options?: StatSyncOptions &amp; { bigint?: false | undefined }): IStats, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: true }): IBigIntStats, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: boolean, throwIfNoEntry?: false | undefined }): IStats | IBigIntStats, 
+ * (path: PathLike, options?: StatSyncOptions): IStats | IBigIntStats | undefined, 
+ * }} LStatSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, callback: StatsCallback): void, 
+ * (path: PathLike, options: (StatOptions &amp; { bigint?: false | undefined }) | undefined, callback: StatsCallback): void, 
+ * (path: PathLike, options: StatOptions &amp; { bigint: true }, callback: BigIntStatsCallback): void, 
+ * (path: PathLike, options: StatOptions | undefined, callback: StatsOrBigIntStatsCallback): void, 
+ * }} Stat 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options?: undefined): IStats, 
+ * (path: PathLike, options?: StatSyncOptions &amp; { bigint?: false | undefined, throwIfNoEntry: false }): IStats | undefined, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: true, throwIfNoEntry: false }): IBigIntStats | undefined, 
+ * (path: PathLike, options?: StatSyncOptions &amp; { bigint?: false | undefined }): IStats, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: true }): IBigIntStats, 
+ * (path: PathLike, options: StatSyncOptions &amp; { bigint: boolean, throwIfNoEntry?: false | undefined }): IStats | IBigIntStats, 
+ * (path: PathLike, options?: StatSyncOptions): IStats | IBigIntStats | undefined, 
+ * }} StatSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options: EncodingOption, callback: StringCallback): void, 
+ * (path: PathLike, options: BufferEncodingOption, callback: BufferCallback): void, 
+ * (path: PathLike, options: EncodingOption, callback: StringOrBufferCallback): void, 
+ * (path: PathLike, callback: StringCallback): void, 
+ * }} RealPath 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ 
+ * (path: PathLike, options?: EncodingOption): string, 
+ * (path: PathLike, options: BufferEncodingOption): Buffer, 
+ * (path: PathLike, options?: EncodingOption): string | Buffer, 
+ * }} RealPathSync 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} FileSystem 
+ * @property {ReadFile} readFile read file method 
+ * @property {Readdir} readdir readdir method 
+ * @property {ReadJson=} readJson read json method 
+ * @property {Readlink} readlink read link method 
+ * @property {LStat=} lstat lstat method 
+ * @property {Stat} stat stat method 
+ * @property {RealPath=} realpath realpath method 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} SyncFileSystem 
+ * @property {ReadFileSync} readFileSync read file sync method 
+ * @property {ReaddirSync} readdirSync read dir sync method 
+ * @property {ReadJsonSync=} readJsonSync read json sync method 
+ * @property {ReadlinkSync} readlinkSync read link sync method 
+ * @property {LStatSync=} lstatSync lstat sync method 
+ * @property {StatSync} statSync stat sync method 
+ * @property {RealPathSync=} realpathSync real path sync method 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} ParsedIdentifier 
+ * @property {string} request request 
+ * @property {string} query query 
+ * @property {string} fragment fragment 
+ * @property {boolean} directory is directory 
+ * @property {boolean} module is module 
+ * @property {boolean} file is file 
+ * @property {boolean} internal is internal 
+ */</span>
+
+<span class="s0">/** @typedef {string | number | boolean | null} JsonPrimitive */</span>
+<span class="s0">/** @typedef {JsonValue[]} JsonArray */</span>
+<span class="s0">/** @typedef {JsonPrimitive | JsonObject | JsonArray} JsonValue */</span>
+<span class="s0">/** @typedef {{ [Key in string]?: JsonValue | undefined }} JsonObject */</span>
+
+<span class="s0">/** 
+ * @typedef {object} TsconfigPathsMap 
+ * @property {TsconfigPathsData} main main tsconfig paths data 
+ * @property {string} mainContext main tsconfig base URL (absolute path) 
+ * @property {{ [baseUrl: string]: TsconfigPathsData }} refs referenced tsconfig paths data mapped by baseUrl 
+ * @property {{ [context: string]: TsconfigPathsData }} allContexts all contexts (main + refs) for quick lookup 
+ * @property {string[]} contextList precomputed `Object.keys(allContexts)` — read-only; used on the `_selectPathsDataForContext` hot path 
+ * @property {Set&lt;string&gt;} fileDependencies file dependencies 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} TsconfigPathsData 
+ * @property {import(&quot;./AliasUtils&quot;).CompiledAliasOption[]} alias tsconfig file data 
+ * @property {string[]} modules tsconfig file data 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} BaseResolveRequest 
+ * @property {string | false} path path 
+ * @property {Context=} context content 
+ * @property {string=} descriptionFilePath description file path 
+ * @property {string=} descriptionFileRoot description file root 
+ * @property {JsonObject=} descriptionFileData description file data 
+ * @property {TsconfigPathsMap | null | undefined=} tsconfigPathsMap tsconfig paths map 
+ * @property {string=} relativePath relative path 
+ * @property {boolean=} ignoreSymlinks true when need to ignore symlinks, otherwise false 
+ * @property {boolean=} fullySpecified true when full specified, otherwise false 
+ * @property {string=} __innerRequest inner request for internal usage 
+ * @property {string=} __innerRequest_request inner request for internal usage 
+ * @property {string=} __innerRequest_relativePath inner relative path for internal usage 
+ */</span>
+
+<span class="s0">/** @typedef {BaseResolveRequest &amp; Partial&lt;ParsedIdentifier&gt;} ResolveRequest */</span>
+
+<span class="s0">/** 
+ * @template T 
+ * @typedef {{ add: (item: T) =&gt; void }} WriteOnlySet 
+ */</span>
+
+<span class="s0">/** @typedef {(request: ResolveRequest) =&gt; void} ResolveContextYield */</span>
+
+<span class="s0">/** 
+ * Singly-linked stack entry that also exposes a Set-like API 
+ * (`has`, `size`, iteration). Each `doResolve` call prepends a new 
+ * `StackEntry` that points at the previous tip via `.parent`, so pushing 
+ * is O(1) in time and memory. Recursion detection walks the linked list 
+ * (O(n)) but the stack is typically shallow, so this is cheaper overall 
+ * than cloning a `Set` per call. 
+ */</span>
+<span class="s1">class StackEntry {</span>
+	<span class="s0">/** 
+     * @param {ResolveStepHook} hook hook 
+     * @param {ResolveRequest} request request 
+     * @param {StackEntry=} parent previous tip 
+     * @param {Set&lt;string&gt;=} preSeeded entries pre-seeded via the legacy `Set&lt;string&gt;` API 
+     */</span>
+	<span class="s1">constructor(hook, request, parent, preSeeded) {</span>
+		<span class="s3">this</span><span class="s1">.name = hook.name;</span>
+		<span class="s3">this</span><span class="s1">.path = request.path;</span>
+		<span class="s3">this</span><span class="s1">.request = request.request || </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+		<span class="s3">this</span><span class="s1">.query = request.query || </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+		<span class="s3">this</span><span class="s1">.fragment = request.fragment || </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+		<span class="s3">this</span><span class="s1">.directory = Boolean(request.directory);</span>
+		<span class="s3">this</span><span class="s1">.module = Boolean(request.module);</span>
+		<span class="s0">/** @type {StackEntry | undefined} */</span>
+		<span class="s3">this</span><span class="s1">.parent = parent;</span>
+		<span class="s0">/** 
+         * Strings seeded by callers that still pass `stack: new Set([...])`. 
+         * Propagated through the chain so deeper `doResolve` calls still see 
+         * them during recursion checks. `undefined` in the common case so 
+         * there is no extra work on the hot path. 
+         * @type {Set&lt;string&gt; | undefined} 
+         */</span>
+		<span class="s3">this</span><span class="s1">.preSeeded = preSeeded;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Walk the linked list looking for an entry with the same request shape. 
+     * Set-compatible: callers that used `stack.has(entry)` keep working. 
+     * @param {StackEntry} query entry to look for 
+     * @returns {boolean} whether the stack already contains an equivalent entry 
+     */</span>
+	<span class="s1">has(query) {</span>
+		<span class="s0">/** @type {StackEntry | undefined} */</span>
+		<span class="s1">let node = </span><span class="s3">this</span><span class="s1">;</span>
+		<span class="s3">while </span><span class="s1">(node) {</span>
+			<span class="s3">if </span><span class="s1">(</span>
+				<span class="s1">node.name === query.name &amp;&amp;</span>
+				<span class="s1">node.path === query.path &amp;&amp;</span>
+				<span class="s1">node.request === query.request &amp;&amp;</span>
+				<span class="s1">node.query === query.query &amp;&amp;</span>
+				<span class="s1">node.fragment === query.fragment &amp;&amp;</span>
+				<span class="s1">node.directory === query.directory &amp;&amp;</span>
+				<span class="s1">node.module === query.module</span>
+			<span class="s1">) {</span>
+				<span class="s3">return true</span><span class="s1">;</span>
+			<span class="s1">}</span>
+			<span class="s1">node = node.parent;</span>
+		<span class="s1">}</span>
+		<span class="s3">return this</span><span class="s1">.preSeeded !== undefined &amp;&amp; </span><span class="s3">this</span><span class="s1">.preSeeded.has(query.toString());</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Number of entries on the stack (oldest-to-newest length). 
+     * @returns {number} size 
+     */</span>
+	<span class="s1">get size() {</span>
+		<span class="s1">let count = </span><span class="s3">this</span><span class="s1">.preSeeded ? </span><span class="s3">this</span><span class="s1">.preSeeded.size : </span><span class="s4">0</span><span class="s1">;</span>
+		<span class="s0">/** @type {StackEntry | undefined} */</span>
+		<span class="s1">let node = </span><span class="s3">this</span><span class="s1">;</span>
+		<span class="s3">while </span><span class="s1">(node) {</span>
+			<span class="s1">count++;</span>
+			<span class="s1">node = node.parent;</span>
+		<span class="s1">}</span>
+		<span class="s3">return </span><span class="s1">count;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Iterate entries from oldest (root) to newest (tip), matching how a 
+     * `Set` that was populated in insertion order would iterate. Pre-seeded 
+     * legacy `Set&lt;string&gt;` entries come first so error-message output stays 
+     * ordered oldest-to-newest. 
+     * @returns {IterableIterator&lt;StackEntry | string&gt;} iterator 
+     */</span>
+	<span class="s1">*[Symbol.iterator]() {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.preSeeded !== undefined) {</span>
+			<span class="s3">for </span><span class="s1">(const entry of </span><span class="s3">this</span><span class="s1">.preSeeded) yield entry;</span>
+		<span class="s1">}</span>
+		<span class="s0">/** @type {StackEntry[]} */</span>
+		<span class="s1">const entries = [];</span>
+		<span class="s0">/** @type {StackEntry | undefined} */</span>
+		<span class="s1">let node = </span><span class="s3">this</span><span class="s1">;</span>
+		<span class="s3">while </span><span class="s1">(node) {</span>
+			<span class="s1">entries.push(node);</span>
+			<span class="s1">node = node.parent;</span>
+		<span class="s1">}</span>
+		<span class="s3">for </span><span class="s1">(let i = entries.length - </span><span class="s4">1</span><span class="s1">; i &gt;= </span><span class="s4">0</span><span class="s1">; i--) yield entries[i];</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Human-readable form used in recursion error messages and logs. 
+     * Matches the historical string format so existing log parsers stay valid. 
+     * @returns {string} formatted entry 
+     */</span>
+	<span class="s1">toString() {</span>
+		<span class="s3">return </span><span class="s1">`${</span><span class="s3">this</span><span class="s1">.name}: (${</span><span class="s3">this</span><span class="s1">.path}) ${</span><span class="s3">this</span><span class="s1">.request}${</span><span class="s3">this</span><span class="s1">.query}${</span>
+			<span class="s3">this</span><span class="s1">.fragment</span>
+		<span class="s1">}${</span><span class="s3">this</span><span class="s1">.directory ? </span><span class="s2">&quot; directory&quot; </span><span class="s1">: </span><span class="s2">&quot;&quot;</span><span class="s1">}${</span><span class="s3">this</span><span class="s1">.module ? </span><span class="s2">&quot; module&quot; </span><span class="s1">: </span><span class="s2">&quot;&quot;</span><span class="s1">}`;</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Resolve context 
+ * @typedef {object} ResolveContext 
+ * @property {WriteOnlySet&lt;string&gt;=} contextDependencies directories that was found on file system 
+ * @property {WriteOnlySet&lt;string&gt;=} fileDependencies files that was found on file system 
+ * @property {WriteOnlySet&lt;string&gt;=} missingDependencies dependencies that was not found on file system 
+ * @property {StackEntry | Set&lt;string&gt;=} stack tip of the resolver call stack (a singly-linked list with Set-like API). For instance, `resolve → parsedResolve → describedResolve`. Accepts a legacy `Set&lt;string&gt;` for back-compat with older callers; it is normalized internally without a hot-path branch. 
+ * @property {((str: string) =&gt; void)=} log log function 
+ * @property {ResolveContextYield=} yield yield result, if provided plugins can return several results 
+ */</span>
+
+<span class="s0">/** @typedef {AsyncSeriesBailHook&lt;[ResolveRequest, ResolveContext], ResolveRequest | null&gt;} ResolveStepHook */</span>
+
+<span class="s0">/** 
+ * @typedef {object} KnownHooks 
+ * @property {SyncHook&lt;[ResolveStepHook, ResolveRequest], void&gt;} resolveStep resolve step hook 
+ * @property {SyncHook&lt;[ResolveRequest, Error]&gt;} noResolve no resolve hook 
+ * @property {ResolveStepHook} resolve resolve hook 
+ * @property {AsyncSeriesHook&lt;[ResolveRequest, ResolveContext]&gt;} result result hook 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {{ [key: string]: ResolveStepHook }} EnsuredHooks 
+ */</span>
+
+<span class="s0">/** 
+ * @param {string} str input string 
+ * @returns {string} in camel case 
+ */</span>
+<span class="s3">function </span><span class="s1">toCamelCase(str) {</span>
+	<span class="s3">return </span><span class="s1">str.replace(/-([a-z])/g, (str) =&gt; str.slice(</span><span class="s4">1</span><span class="s1">).toUpperCase());</span>
+<span class="s1">}</span>
+
+<span class="s1">class Resolver {</span>
+	<span class="s0">/** 
+     * @param {ResolveStepHook} hook hook 
+     * @param {ResolveRequest} request request 
+     * @param {StackEntry=} parent previous tip of the stack 
+     * @param {Set&lt;string&gt;=} preSeeded entries pre-seeded via the legacy `Set&lt;string&gt;` API 
+     * @returns {StackEntry} stack entry 
+     */</span>
+	<span class="s1">static createStackEntry(hook, request, parent, preSeeded) {</span>
+		<span class="s3">return new </span><span class="s1">StackEntry(hook, request, parent, preSeeded);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {FileSystem} fileSystem a filesystem 
+     * @param {ResolveOptions} options options 
+     */</span>
+	<span class="s1">constructor(fileSystem, options) {</span>
+		<span class="s0">/** @type {FileSystem} */</span>
+		<span class="s3">this</span><span class="s1">.fileSystem = fileSystem;</span>
+		<span class="s0">/** @type {ResolveOptions} */</span>
+		<span class="s3">this</span><span class="s1">.options = options;</span>
+		<span class="s1">let pathCache = _pathCacheByFs.get(fileSystem);</span>
+		<span class="s3">if </span><span class="s1">(!pathCache) {</span>
+			<span class="s1">pathCache = {</span>
+				<span class="s1">join: createCachedJoin(),</span>
+				<span class="s1">dirname: createCachedDirname(),</span>
+				<span class="s1">basename: createCachedBasename(),</span>
+			<span class="s1">};</span>
+			<span class="s1">_pathCacheByFs.set(fileSystem, pathCache);</span>
+		<span class="s1">}</span>
+		<span class="s0">/** @type {PathCacheFunctions} */</span>
+		<span class="s3">this</span><span class="s1">.pathCache = pathCache;</span>
+		<span class="s0">/** @type {KnownHooks} */</span>
+		<span class="s3">this</span><span class="s1">.hooks = {</span>
+			<span class="s1">resolveStep: </span><span class="s3">new </span><span class="s1">SyncHook([</span><span class="s2">&quot;hook&quot;</span><span class="s1">, </span><span class="s2">&quot;request&quot;</span><span class="s1">], </span><span class="s2">&quot;resolveStep&quot;</span><span class="s1">),</span>
+			<span class="s1">noResolve: </span><span class="s3">new </span><span class="s1">SyncHook([</span><span class="s2">&quot;request&quot;</span><span class="s1">, </span><span class="s2">&quot;error&quot;</span><span class="s1">], </span><span class="s2">&quot;noResolve&quot;</span><span class="s1">),</span>
+			<span class="s1">resolve: </span><span class="s3">new </span><span class="s1">AsyncSeriesBailHook(</span>
+				<span class="s1">[</span><span class="s2">&quot;request&quot;</span><span class="s1">, </span><span class="s2">&quot;resolveContext&quot;</span><span class="s1">],</span>
+				<span class="s2">&quot;resolve&quot;</span><span class="s1">,</span>
+			<span class="s1">),</span>
+			<span class="s1">result: </span><span class="s3">new </span><span class="s1">AsyncSeriesHook([</span><span class="s2">&quot;result&quot;</span><span class="s1">, </span><span class="s2">&quot;resolveContext&quot;</span><span class="s1">], </span><span class="s2">&quot;result&quot;</span><span class="s1">),</span>
+		<span class="s1">};</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} name hook name or hook itself 
+     * @returns {ResolveStepHook} the hook 
+     */</span>
+	<span class="s1">ensureHook(name) {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">name !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s1">name;</span>
+		<span class="s1">}</span>
+		<span class="s1">name = toCamelCase(name);</span>
+		<span class="s3">if </span><span class="s1">(name.startsWith(</span><span class="s2">&quot;before&quot;</span><span class="s1">)) {</span>
+			<span class="s3">return </span><span class="s0">/** @type {ResolveStepHook} */ </span><span class="s1">(</span>
+				<span class="s3">this</span><span class="s1">.ensureHook(name[</span><span class="s4">6</span><span class="s1">].toLowerCase() + name.slice(</span><span class="s4">7</span><span class="s1">)).withOptions({</span>
+					<span class="s1">stage: -</span><span class="s4">10</span><span class="s1">,</span>
+				<span class="s1">})</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(name.startsWith(</span><span class="s2">&quot;after&quot;</span><span class="s1">)) {</span>
+			<span class="s3">return </span><span class="s0">/** @type {ResolveStepHook} */ </span><span class="s1">(</span>
+				<span class="s3">this</span><span class="s1">.ensureHook(name[</span><span class="s4">5</span><span class="s1">].toLowerCase() + name.slice(</span><span class="s4">6</span><span class="s1">)).withOptions({</span>
+					<span class="s1">stage: </span><span class="s4">10</span><span class="s1">,</span>
+				<span class="s1">})</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s0">/** @type {ResolveStepHook} */</span>
+		<span class="s1">const hook = </span><span class="s0">/** @type {KnownHooks &amp; EnsuredHooks} */ </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.hooks)[name];</span>
+		<span class="s3">if </span><span class="s1">(!hook) {</span>
+			<span class="s0">/** @type {KnownHooks &amp; EnsuredHooks} */</span>
+			<span class="s1">(</span><span class="s3">this</span><span class="s1">.hooks)[name] = </span><span class="s3">new </span><span class="s1">AsyncSeriesBailHook(</span>
+				<span class="s1">[</span><span class="s2">&quot;request&quot;</span><span class="s1">, </span><span class="s2">&quot;resolveContext&quot;</span><span class="s1">],</span>
+				<span class="s1">name,</span>
+			<span class="s1">);</span>
+
+			<span class="s3">return </span><span class="s0">/** @type {KnownHooks &amp; EnsuredHooks} */ </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.hooks)[name];</span>
+		<span class="s1">}</span>
+		<span class="s3">return </span><span class="s1">hook;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} name hook name or hook itself 
+     * @returns {ResolveStepHook} the hook 
+     */</span>
+	<span class="s1">getHook(name) {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">name !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s1">name;</span>
+		<span class="s1">}</span>
+		<span class="s1">name = toCamelCase(name);</span>
+		<span class="s3">if </span><span class="s1">(name.startsWith(</span><span class="s2">&quot;before&quot;</span><span class="s1">)) {</span>
+			<span class="s3">return </span><span class="s0">/** @type {ResolveStepHook} */ </span><span class="s1">(</span>
+				<span class="s3">this</span><span class="s1">.getHook(name[</span><span class="s4">6</span><span class="s1">].toLowerCase() + name.slice(</span><span class="s4">7</span><span class="s1">)).withOptions({</span>
+					<span class="s1">stage: -</span><span class="s4">10</span><span class="s1">,</span>
+				<span class="s1">})</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(name.startsWith(</span><span class="s2">&quot;after&quot;</span><span class="s1">)) {</span>
+			<span class="s3">return </span><span class="s0">/** @type {ResolveStepHook} */ </span><span class="s1">(</span>
+				<span class="s3">this</span><span class="s1">.getHook(name[</span><span class="s4">5</span><span class="s1">].toLowerCase() + name.slice(</span><span class="s4">6</span><span class="s1">)).withOptions({</span>
+					<span class="s1">stage: </span><span class="s4">10</span><span class="s1">,</span>
+				<span class="s1">})</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s0">/** @type {ResolveStepHook} */</span>
+		<span class="s1">const hook = </span><span class="s0">/** @type {KnownHooks &amp; EnsuredHooks} */ </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.hooks)[name];</span>
+		<span class="s3">if </span><span class="s1">(!hook) {</span>
+			<span class="s3">throw new </span><span class="s1">Error(`Hook ${name} doesn</span><span class="s2">'t exist`);</span>
+		<span class="s1">}</span>
+		<span class="s3">return </span><span class="s1">hook;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @overload 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {string | false} result 
+     */</span>
+	<span class="s0">/** 
+     * @overload 
+     * @param {Context} context context information object 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {string | false} result 
+     */</span>
+	<span class="s0">/** 
+     * @param {Context | string} context context information object or context path when no context is provided 
+     * @param {string | ResolveContext=} path context path or resolve context when no context is provided 
+     * @param {string | ResolveContext=} request request string or resolve context when no context is provided 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {string | false} result 
+     */</span>
+	<span class="s1">resolveSync(context, path, request, resolveContext) {</span>
+		<span class="s0">/** @type {Error | null | undefined} */</span>
+		<span class="s1">let err;</span>
+		<span class="s0">/** @type {string | false | undefined} */</span>
+		<span class="s1">let result;</span>
+		<span class="s1">let sync = </span><span class="s3">false</span><span class="s1">;</span>
+		<span class="s0">// `|| {}` so the underlying `resolve()` hits its 5-arg fast path</span>
+		<span class="s0">// (skips the overload-shifting prologue) regardless of whether the</span>
+		<span class="s0">// caller supplied a resolveContext.</span>
+		<span class="s3">this</span><span class="s1">.resolve(</span>
+			<span class="s0">/** @type {Context} */ </span><span class="s1">(context),</span>
+			<span class="s0">/** @type {string} */ </span><span class="s1">(path),</span>
+			<span class="s0">/** @type {string} */ </span><span class="s1">(request),</span>
+			<span class="s0">/** @type {ResolveContext} */ </span><span class="s1">(resolveContext) || {},</span>
+			<span class="s1">(_err, r) =&gt; {</span>
+				<span class="s1">err = _err;</span>
+				<span class="s1">result = r;</span>
+				<span class="s1">sync = </span><span class="s3">true</span><span class="s1">;</span>
+			<span class="s1">},</span>
+		<span class="s1">);</span>
+		<span class="s3">if </span><span class="s1">(!sync) {</span>
+			<span class="s3">throw new </span><span class="s1">Error(</span>
+				<span class="s2">&quot;Cannot 'resolveSync' because the fileSystem is not sync. Use 'resolve'!&quot;</span><span class="s1">,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(err) </span><span class="s3">throw </span><span class="s1">err;</span>
+		<span class="s3">if </span><span class="s1">(result === undefined) </span><span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">&quot;No result&quot;</span><span class="s1">);</span>
+		<span class="s3">return </span><span class="s1">result;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @overload 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {Promise&lt;string | false&gt;} result 
+     */</span>
+	<span class="s0">/** 
+     * @overload 
+     * @param {Context} context context information object 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {Promise&lt;string | false&gt;} result 
+     */</span>
+	<span class="s0">/** 
+     * @param {Context | string} context context information object or context path when no context is provided 
+     * @param {string | ResolveContext=} path context path or resolve context when no context is provided 
+     * @param {string | ResolveContext=} request request string or resolve context when no context is provided 
+     * @param {ResolveContext=} resolveContext resolve context 
+     * @returns {Promise&lt;string | false&gt;} result 
+     */</span>
+	<span class="s1">resolvePromise(context, path, request, resolveContext) {</span>
+		<span class="s0">// `|| {}` ensures the 5-arg fast path inside `resolve()` is reached</span>
+		<span class="s0">// even when the caller doesn't pass a resolveContext.</span>
+		<span class="s3">return </span><span class="s1">_withResolvers(</span>
+			<span class="s3">this</span><span class="s1">,</span>
+			<span class="s0">/** @type {Context} */ </span><span class="s1">(context),</span>
+			<span class="s0">/** @type {string} */ </span><span class="s1">(path),</span>
+			<span class="s0">/** @type {string} */ </span><span class="s1">(request),</span>
+			<span class="s0">/** @type {ResolveContext} */ </span><span class="s1">(resolveContext) || {},</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @overload 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveCallback} callback callback function 
+     * @returns {void} 
+     */</span>
+	<span class="s0">/** 
+     * @overload 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext} resolveContext resolve context 
+     * @param {ResolveCallback} callback callback function 
+     * @returns {void} 
+     */</span>
+	<span class="s0">/** 
+     * @overload 
+     * @param {Context} context context information object 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveCallback} callback callback function 
+     * @returns {void} 
+     */</span>
+	<span class="s0">/** 
+     * @overload 
+     * @param {Context} context context information object 
+     * @param {string} path context path 
+     * @param {string} request request string 
+     * @param {ResolveContext} resolveContext resolve context 
+     * @param {ResolveCallback} callback callback function 
+     * @returns {void} 
+     */</span>
+	<span class="s0">/** 
+     * @param {Context | string} context context information object or context path when no context is provided 
+     * @param {string | ResolveContext | ResolveCallback=} path context path or (when no context) resolve context or callback 
+     * @param {string | ResolveContext | ResolveCallback=} request request string or (when no context) resolve context or callback 
+     * @param {ResolveContext | ResolveCallback=} resolveContext resolve context or callback when no resolve context is provided 
+     * @param {ResolveCallback=} callback callback function 
+     * @returns {void} 
+     */</span>
+	<span class="s1">resolve(context, path, request, resolveContext, callback) {</span>
+		<span class="s0">// Fast path for the common 5-arg call (`resolver.resolve(ctx, from,</span>
+		<span class="s0">// req, resolveCtx, cb)`) — every call from `resolveSync` /</span>
+		<span class="s0">// `resolvePromise` plus the vast majority of direct API callers.</span>
+		<span class="s0">// PR #536 added runtime overload-shifting to support optional</span>
+		<span class="s0">// `context` / `resolveContext`; that adds several `typeof` checks</span>
+		<span class="s0">// per resolve which show up as a measurable instruction-count</span>
+		<span class="s0">// regression on every benchmark that calls into this method. Skip</span>
+		<span class="s0">// the shifting entirely when all 5 args are already well-typed.</span>
+		<span class="s3">if </span><span class="s1">(</span>
+			<span class="s3">typeof </span><span class="s1">callback === </span><span class="s2">&quot;function&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s3">typeof </span><span class="s1">context === </span><span class="s2">&quot;object&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">context !== </span><span class="s3">null </span><span class="s1">&amp;&amp;</span>
+			<span class="s3">typeof </span><span class="s1">resolveContext === </span><span class="s2">&quot;object&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">resolveContext !== </span><span class="s3">null</span>
+		<span class="s1">) {</span>
+			<span class="s0">// proceed straight to per-arg validation below</span>
+		<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+			<span class="s0">// Slow path: shift positional args based on what was supplied.</span>
+			<span class="s0">// Shift when context is omitted (first positional arg is the path string).</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">context === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+				<span class="s0">// Keep an already-supplied callback (resolveSync / resolvePromise</span>
+				<span class="s0">// always pass one in the 5th position).</span>
+				<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">callback !== </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+					<span class="s1">callback = </span><span class="s0">/** @type {ResolveCallback | undefined} */ </span><span class="s1">(</span>
+						<span class="s1">resolveContext</span>
+					<span class="s1">);</span>
+				<span class="s1">}</span>
+				<span class="s1">resolveContext =</span>
+					<span class="s0">/** @type {ResolveContext | ResolveCallback | undefined} */ </span><span class="s1">(request);</span>
+				<span class="s1">request = </span><span class="s0">/** @type {string} */ </span><span class="s1">(path);</span>
+				<span class="s1">path = context;</span>
+				<span class="s1">context = {};</span>
+			<span class="s1">}</span>
+			<span class="s0">// 4-arg form: the resolveContext slot holds the callback.</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">resolveContext === </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+				<span class="s1">callback = resolveContext;</span>
+				<span class="s1">resolveContext = {};</span>
+			<span class="s1">} </span><span class="s3">else if </span><span class="s1">(!resolveContext || </span><span class="s3">typeof </span><span class="s1">resolveContext !== </span><span class="s2">&quot;object&quot;</span><span class="s1">) {</span>
+				<span class="s1">resolveContext = {};</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">callback !== </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+				<span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">&quot;callback argument is not a function&quot;</span><span class="s1">);</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(!context || </span><span class="s3">typeof </span><span class="s1">context !== </span><span class="s2">&quot;object&quot;</span><span class="s1">) {</span>
+				<span class="s1">context = {};</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">path !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s1">callback(</span><span class="s3">new </span><span class="s1">Error(</span><span class="s2">&quot;path argument is not a string&quot;</span><span class="s1">));</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">request !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s1">callback(</span><span class="s3">new </span><span class="s1">Error(</span><span class="s2">&quot;request argument is not a string&quot;</span><span class="s1">));</span>
+		<span class="s1">}</span>
+
+		<span class="s0">/** @type {ResolveRequest} */</span>
+		<span class="s1">const obj = {</span>
+			<span class="s1">context,</span>
+			<span class="s1">path,</span>
+			<span class="s1">request,</span>
+		<span class="s1">};</span>
+
+		<span class="s0">/** @type {ResolveContextYield | undefined} */</span>
+		<span class="s1">let yield_;</span>
+		<span class="s1">let yieldCalled = </span><span class="s3">false</span><span class="s1">;</span>
+		<span class="s0">/** @type {ResolveContextYield | undefined} */</span>
+		<span class="s1">let finishYield;</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">resolveContext.yield === </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+			<span class="s1">const old = resolveContext.yield;</span>
+			<span class="s0">/** 
+             * @param {ResolveRequest} obj object 
+             */</span>
+			<span class="s1">yield_ = (obj) =&gt; {</span>
+				<span class="s1">old(obj);</span>
+				<span class="s1">yieldCalled = </span><span class="s3">true</span><span class="s1">;</span>
+			<span class="s1">};</span>
+			<span class="s0">/** 
+             * @param {ResolveRequest} result result 
+             * @returns {void} 
+             */</span>
+			<span class="s1">finishYield = (result) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(result) {</span>
+					<span class="s0">/** @type {ResolveContextYield} */ </span><span class="s1">(yield_)(result);</span>
+				<span class="s1">}</span>
+				<span class="s1">callback(</span><span class="s3">null</span><span class="s1">);</span>
+			<span class="s1">};</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const message = `resolve </span><span class="s2">'${request}' </span><span class="s3">in </span><span class="s2">'${path}'</span><span class="s1">`;</span>
+
+		<span class="s0">/** 
+         * @param {ResolveRequest} result result 
+         * @returns {void} 
+         */</span>
+		<span class="s1">const finishResolved = (result) =&gt;</span>
+			<span class="s1">callback(</span>
+				<span class="s3">null</span><span class="s1">,</span>
+				<span class="s1">result.path === </span><span class="s3">false</span>
+					<span class="s1">? </span><span class="s3">false</span>
+					<span class="s1">: `${result.path.replace(/#/g, </span><span class="s2">&quot;</span><span class="s3">\0</span><span class="s2">#&quot;</span><span class="s1">)}${</span>
+							<span class="s1">result.query ? result.query.replace(/#/g, </span><span class="s2">&quot;</span><span class="s3">\0</span><span class="s2">#&quot;</span><span class="s1">) : </span><span class="s2">&quot;&quot;</span>
+						<span class="s1">}${result.fragment || </span><span class="s2">&quot;&quot;</span><span class="s1">}`,</span>
+				<span class="s1">result,</span>
+			<span class="s1">);</span>
+
+		<span class="s0">/** 
+         * @param {string[]} log logs 
+         * @returns {void} 
+         */</span>
+		<span class="s1">const finishWithoutResolve = (log) =&gt; {</span>
+			<span class="s0">/** 
+             * @type {ErrorWithDetail} 
+             */</span>
+			<span class="s1">const error = </span><span class="s3">new </span><span class="s1">Error(`Can</span><span class="s2">'t ${message}`);</span>
+			<span class="s1">error.details = log.join(</span><span class="s2">&quot;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">);</span>
+			<span class="s3">this</span><span class="s1">.hooks.noResolve.call(obj, error);</span>
+			<span class="s3">return </span><span class="s1">callback(error);</span>
+		<span class="s1">};</span>
+
+		<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+			<span class="s0">// We need log anyway to capture it in case of an error</span>
+			<span class="s1">const parentLog = resolveContext.log;</span>
+			<span class="s0">/** @type {string[]} */</span>
+			<span class="s1">const log = [];</span>
+			<span class="s3">return this</span><span class="s1">.doResolve(</span>
+				<span class="s3">this</span><span class="s1">.hooks.resolve,</span>
+				<span class="s1">obj,</span>
+				<span class="s1">message,</span>
+				<span class="s1">{</span>
+					<span class="s1">log: (msg) =&gt; {</span>
+						<span class="s1">parentLog(msg);</span>
+						<span class="s1">log.push(msg);</span>
+					<span class="s1">},</span>
+					<span class="s1">yield: yield_,</span>
+					<span class="s1">fileDependencies: resolveContext.fileDependencies,</span>
+					<span class="s1">contextDependencies: resolveContext.contextDependencies,</span>
+					<span class="s1">missingDependencies: resolveContext.missingDependencies,</span>
+					<span class="s1">stack: resolveContext.stack,</span>
+				<span class="s1">},</span>
+				<span class="s1">(err, result) =&gt; {</span>
+					<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+
+					<span class="s3">if </span><span class="s1">(yieldCalled || (result &amp;&amp; yield_)) {</span>
+						<span class="s3">return </span><span class="s0">/** @type {ResolveContextYield} */ </span><span class="s1">(finishYield)(</span>
+							<span class="s0">/** @type {ResolveRequest} */ </span><span class="s1">(result),</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+
+					<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">finishResolved(result);</span>
+
+					<span class="s3">return </span><span class="s1">finishWithoutResolve(log);</span>
+				<span class="s1">},</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s0">// Try to resolve assuming there is no error</span>
+		<span class="s0">// We don't log stuff in this case</span>
+		<span class="s3">return this</span><span class="s1">.doResolve(</span>
+			<span class="s3">this</span><span class="s1">.hooks.resolve,</span>
+			<span class="s1">obj,</span>
+			<span class="s1">message,</span>
+			<span class="s1">{</span>
+				<span class="s1">log: undefined,</span>
+				<span class="s1">yield: yield_,</span>
+				<span class="s1">fileDependencies: resolveContext.fileDependencies,</span>
+				<span class="s1">contextDependencies: resolveContext.contextDependencies,</span>
+				<span class="s1">missingDependencies: resolveContext.missingDependencies,</span>
+				<span class="s1">stack: resolveContext.stack,</span>
+			<span class="s1">},</span>
+			<span class="s1">(err, result) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+
+				<span class="s3">if </span><span class="s1">(yieldCalled || (result &amp;&amp; yield_)) {</span>
+					<span class="s3">return </span><span class="s0">/** @type {ResolveContextYield} */ </span><span class="s1">(finishYield)(</span>
+						<span class="s0">/** @type {ResolveRequest} */ </span><span class="s1">(result),</span>
+					<span class="s1">);</span>
+				<span class="s1">}</span>
+
+				<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">finishResolved(result);</span>
+
+				<span class="s0">// log is missing for the error details</span>
+				<span class="s0">// so we redo the resolving for the log info</span>
+				<span class="s0">// this is more expensive to the success case</span>
+				<span class="s0">// is assumed by default</span>
+				<span class="s0">/** @type {string[]} */</span>
+				<span class="s1">const log = [];</span>
+
+				<span class="s3">return this</span><span class="s1">.doResolve(</span>
+					<span class="s3">this</span><span class="s1">.hooks.resolve,</span>
+					<span class="s1">obj,</span>
+					<span class="s1">message,</span>
+					<span class="s1">{</span>
+						<span class="s1">log: (msg) =&gt; log.push(msg),</span>
+						<span class="s1">yield: yield_,</span>
+						<span class="s1">stack: resolveContext.stack,</span>
+					<span class="s1">},</span>
+					<span class="s1">(err, result) =&gt; {</span>
+						<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+
+						<span class="s0">// In a case that there is a race condition and yield will be called</span>
+						<span class="s3">if </span><span class="s1">(yieldCalled || (result &amp;&amp; yield_)) {</span>
+							<span class="s3">return </span><span class="s0">/** @type {ResolveContextYield} */ </span><span class="s1">(finishYield)(</span>
+								<span class="s0">/** @type {ResolveRequest} */ </span><span class="s1">(result),</span>
+							<span class="s1">);</span>
+						<span class="s1">}</span>
+
+						<span class="s3">return </span><span class="s1">finishWithoutResolve(log);</span>
+					<span class="s1">},</span>
+				<span class="s1">);</span>
+			<span class="s1">},</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {ResolveStepHook} hook hook 
+     * @param {ResolveRequest} request request 
+     * @param {null | string} message string 
+     * @param {ResolveContext} resolveContext resolver context 
+     * @param {(err?: null | Error, result?: ResolveRequest) =&gt; void} callback callback 
+     * @returns {void} 
+     */</span>
+	<span class="s1">doResolve(hook, request, message, resolveContext, callback) {</span>
+		<span class="s1">const rawStack = resolveContext.stack;</span>
+		<span class="s0">/** @type {StackEntry | undefined} */</span>
+		<span class="s1">let parent;</span>
+		<span class="s0">/** @type {Set&lt;string&gt; | undefined} */</span>
+		<span class="s1">let preSeeded;</span>
+		<span class="s3">if </span><span class="s1">(rawStack </span><span class="s3">instanceof </span><span class="s1">StackEntry) {</span>
+			<span class="s1">parent = rawStack;</span>
+			<span class="s1">preSeeded = rawStack.preSeeded;</span>
+		<span class="s1">} </span><span class="s3">else if </span><span class="s1">(rawStack) {</span>
+			<span class="s0">// TODO in the next major remove `Set&lt;string&gt;` support in favor of `StackEntry`</span>
+			<span class="s0">// Legacy `stack: new Set&lt;string&gt;()` API: don't link the Set into</span>
+			<span class="s0">// the parent chain (it would pollute iteration and field-compare</span>
+			<span class="s0">// walks). Carry the strings on the StackEntry itself instead so</span>
+			<span class="s0">// deeper `doResolve` calls keep seeing pre-seeded entries.</span>
+			<span class="s1">preSeeded = </span><span class="s0">/** @type {Set&lt;string&gt;} */ </span><span class="s1">(rawStack);</span>
+		<span class="s1">}</span>
+		<span class="s0">// Prepend a new linked-list node. O(1) allocation, no Set clone.</span>
+		<span class="s1">const stackEntry = Resolver.createStackEntry(</span>
+			<span class="s1">hook,</span>
+			<span class="s1">request,</span>
+			<span class="s1">parent,</span>
+			<span class="s1">preSeeded,</span>
+		<span class="s1">);</span>
+
+		<span class="s0">// When `parent` exists, its `has()` already consults `preSeeded`</span>
+		<span class="s0">// (inherited from the same chain), so we only need the direct Set</span>
+		<span class="s0">// lookup on the very first `doResolve` call (no parent yet).</span>
+		<span class="s3">if </span><span class="s1">(</span>
+			<span class="s1">parent !== undefined</span>
+				<span class="s1">? parent.has(stackEntry)</span>
+				<span class="s1">: preSeeded !== undefined &amp;&amp; preSeeded.has(stackEntry.toString())</span>
+		<span class="s1">) {</span>
+			<span class="s0">/** 
+             * Prevent recursion 
+             * @type {Error &amp; { recursion?: boolean }} 
+             */</span>
+			<span class="s1">const recursionError = </span><span class="s3">new </span><span class="s1">Error(</span>
+				<span class="s1">`Recursion </span><span class="s3">in </span><span class="s1">resolving\nStack:\n  ${[...stackEntry]</span>
+					<span class="s1">.map((entry) =&gt; entry.toString())</span>
+					<span class="s1">.join(</span><span class="s2">&quot;</span><span class="s3">\n  </span><span class="s2">&quot;</span><span class="s1">)}`,</span>
+			<span class="s1">);</span>
+			<span class="s1">recursionError.recursion = </span><span class="s3">true</span><span class="s1">;</span>
+			<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+				<span class="s1">resolveContext.log(</span><span class="s2">&quot;abort resolving because of recursion&quot;</span><span class="s1">);</span>
+			<span class="s1">}</span>
+			<span class="s3">return </span><span class="s1">callback(recursionError);</span>
+		<span class="s1">}</span>
+		<span class="s3">this</span><span class="s1">.hooks.resolveStep.call(hook, request);</span>
+
+		<span class="s3">if </span><span class="s1">(hook.isUsed()) {</span>
+			<span class="s0">// Pass `resolveContext` and the override fields (stack, message)</span>
+			<span class="s0">// directly instead of constructing an intermediate options-object</span>
+			<span class="s0">// literal — `createInnerContext` reads from the parent and</span>
+			<span class="s0">// allocates exactly one inner context per step. See the comment</span>
+			<span class="s0">// on `createInnerContext` itself for the allocation rationale.</span>
+			<span class="s1">const innerContext = createInnerContext(</span>
+				<span class="s1">resolveContext,</span>
+				<span class="s1">stackEntry,</span>
+				<span class="s1">message,</span>
+			<span class="s1">);</span>
+			<span class="s3">return </span><span class="s1">hook.callAsync(request, innerContext, (err, result) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+				<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+				<span class="s1">callback();</span>
+			<span class="s1">});</span>
+		<span class="s1">}</span>
+		<span class="s1">callback();</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} identifier identifier 
+     * @returns {ParsedIdentifier} parsed identifier 
+     */</span>
+	<span class="s1">parse(identifier) {</span>
+		<span class="s0">/** @type {ParsedIdentifier} */</span>
+		<span class="s1">const part = {</span>
+			<span class="s1">request: </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+			<span class="s1">query: </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+			<span class="s1">fragment: </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+			<span class="s1">module: </span><span class="s3">false</span><span class="s1">,</span>
+			<span class="s1">directory: </span><span class="s3">false</span><span class="s1">,</span>
+			<span class="s1">file: </span><span class="s3">false</span><span class="s1">,</span>
+			<span class="s1">internal: </span><span class="s3">false</span><span class="s1">,</span>
+		<span class="s1">};</span>
+
+		<span class="s1">const parsedIdentifier = parseIdentifier(identifier);</span>
+
+		<span class="s3">if </span><span class="s1">(!parsedIdentifier) </span><span class="s3">return </span><span class="s1">part;</span>
+
+		<span class="s1">[part.request, part.query, part.fragment] = parsedIdentifier;</span>
+
+		<span class="s3">if </span><span class="s1">(part.request.length &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+			<span class="s1">part.internal = </span><span class="s3">this</span><span class="s1">.isPrivate(identifier);</span>
+			<span class="s1">part.module = </span><span class="s3">this</span><span class="s1">.isModule(part.request);</span>
+			<span class="s1">part.directory = </span><span class="s3">this</span><span class="s1">.isDirectory(part.request);</span>
+			<span class="s3">if </span><span class="s1">(part.directory) {</span>
+				<span class="s1">part.request = part.request.slice(</span><span class="s4">0</span><span class="s1">, -</span><span class="s4">1</span><span class="s1">);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s3">return </span><span class="s1">part;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @returns {boolean} true, if the path is a module 
+     */</span>
+	<span class="s1">isModule(path) {</span>
+		<span class="s3">return </span><span class="s1">getType(path) === PathType.Normal;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @returns {boolean} true, if the path is private 
+     */</span>
+	<span class="s1">isPrivate(path) {</span>
+		<span class="s3">return </span><span class="s1">getType(path) === PathType.Internal;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path a path 
+     * @returns {boolean} true, if the path is a directory path 
+     */</span>
+	<span class="s1">isDirectory(path) {</span>
+		<span class="s3">return </span><span class="s1">path.endsWith(</span><span class="s2">&quot;/&quot;</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @returns {string} normalized path 
+     */</span>
+	<span class="s1">normalize(path) {</span>
+		<span class="s3">return </span><span class="s1">normalize(path);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @param {string} request request 
+     * @returns {string} joined path 
+     */</span>
+	<span class="s1">join(path, request) {</span>
+		<span class="s3">return this</span><span class="s1">.pathCache.join.fn(path, request);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path path 
+     * @returns {string} parent directory 
+     */</span>
+	<span class="s1">dirname(path) {</span>
+		<span class="s3">return this</span><span class="s1">.pathCache.dirname.fn(path);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} path the path to evaluate 
+     * @param {string=} suffix an extension to remove from the result 
+     * @returns {string} the last portion of a path 
+     */</span>
+	<span class="s1">basename(path, suffix) {</span>
+		<span class="s3">return this</span><span class="s1">.pathCache.basename.fn(path, suffix);</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = Resolver;</span>
+</pre>
+</body>
+</html>

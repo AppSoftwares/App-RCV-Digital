@@ -1,0 +1,1615 @@
+<html>
+<head>
+<title>magic-string.es.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+.s8 { color: #cf8e6d; font-style: italic;}
+.s9 { color: #42c3d4;}
+.s10 { color: #bcbec4; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+magic-string.es.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ encode } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@jridgewell/sourcemap-codec</span><span class="s2">';</span>
+
+<span class="s0">class </span><span class="s2">BitSet {</span>
+	<span class="s0">constructor</span><span class="s2">(arg) {</span>
+		<span class="s2">this.bits = arg instanceof BitSet ? arg.bits.</span><span class="s4">slice</span><span class="s1">() </span><span class="s2">: </span><span class="s1">[]</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">add</span><span class="s2">(n) {</span>
+		<span class="s2">this.bits</span><span class="s1">[</span><span class="s2">n &gt;&gt; </span><span class="s5">5</span><span class="s1">] </span><span class="s2">|= </span><span class="s5">1 </span><span class="s2">&lt;&lt; </span><span class="s1">(</span><span class="s2">n &amp; </span><span class="s5">31</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">has</span><span class="s2">(n) {</span>
+		<span class="s0">return </span><span class="s2">!!</span><span class="s1">(</span><span class="s2">this.bits</span><span class="s1">[</span><span class="s2">n &gt;&gt; </span><span class="s5">5</span><span class="s1">] </span><span class="s2">&amp; </span><span class="s1">(</span><span class="s5">1 </span><span class="s2">&lt;&lt; </span><span class="s1">(</span><span class="s2">n &amp; </span><span class="s5">31</span><span class="s1">)))</span><span class="s2">;</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">class </span><span class="s2">Chunk {</span>
+	<span class="s0">constructor</span><span class="s2">(start, end, content) {</span>
+		<span class="s2">this.start = start;</span>
+		<span class="s2">this.end = end;</span>
+		<span class="s2">this.original = content;</span>
+
+		<span class="s2">this.intro = '';</span>
+		<span class="s2">this.outro = '';</span>
+
+		<span class="s2">this.content = content;</span>
+		<span class="s2">this.storeName = </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s2">this.edited = </span><span class="s6">false</span><span class="s2">;</span>
+
+		<span class="s2">{</span>
+			<span class="s2">this.previous = </span><span class="s6">null</span><span class="s2">;</span>
+			<span class="s2">this.next = </span><span class="s6">null</span><span class="s2">;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">appendLeft</span><span class="s2">(content) {</span>
+		<span class="s2">this.outro += content;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">appendRight</span><span class="s2">(content) {</span>
+		<span class="s2">this.intro = this.intro + content;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">clone</span><span class="s2">() {</span>
+		<span class="s0">const </span><span class="s2">chunk = new </span><span class="s4">Chunk</span><span class="s1">(</span><span class="s2">this.start, this.end, this.original</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">chunk.intro = this.intro;</span>
+		<span class="s2">chunk.outro = this.outro;</span>
+		<span class="s2">chunk.content = this.content;</span>
+		<span class="s2">chunk.storeName = this.storeName;</span>
+		<span class="s2">chunk.edited = this.edited;</span>
+
+		<span class="s0">return </span><span class="s2">chunk;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">contains</span><span class="s2">(index) {</span>
+		<span class="s0">return </span><span class="s2">this.start &lt; index &amp;&amp; index &lt; this.end;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">eachNext</span><span class="s2">(fn) {</span>
+		<span class="s0">let </span><span class="s2">chunk = this;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s4">fn</span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">eachPrevious</span><span class="s2">(fn) {</span>
+		<span class="s0">let </span><span class="s2">chunk = this;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s4">fn</span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">chunk = chunk.previous;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">edit</span><span class="s2">(content, storeName, contentOnly) {</span>
+		<span class="s2">this.content = content;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!contentOnly</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.intro = '';</span>
+			<span class="s2">this.outro = '';</span>
+		<span class="s2">}</span>
+		<span class="s2">this.storeName = storeName;</span>
+
+		<span class="s2">this.edited = </span><span class="s6">true</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prependLeft</span><span class="s2">(content) {</span>
+		<span class="s2">this.outro = content + this.outro;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prependRight</span><span class="s2">(content) {</span>
+		<span class="s2">this.intro = content + this.intro;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">reset</span><span class="s2">() {</span>
+		<span class="s2">this.intro = '';</span>
+		<span class="s2">this.outro = '';</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.edited</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.content = this.original;</span>
+			<span class="s2">this.storeName = </span><span class="s6">false</span><span class="s2">;</span>
+			<span class="s2">this.edited = </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">split</span><span class="s2">(index) {</span>
+		<span class="s0">const </span><span class="s2">sliceIndex = index - this.start;</span>
+
+		<span class="s0">const </span><span class="s2">originalBefore = this.original.</span><span class="s4">slice</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, sliceIndex</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">originalAfter = this.original.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">sliceIndex</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.original = originalBefore;</span>
+
+		<span class="s0">const </span><span class="s2">newChunk = new </span><span class="s4">Chunk</span><span class="s1">(</span><span class="s2">index, this.end, originalAfter</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">newChunk.outro = this.outro;</span>
+		<span class="s2">this.outro = '';</span>
+
+		<span class="s2">this.end = index;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.edited</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">// </span><span class="s7">after split we should save the edit content record into the correct chunk</span>
+			<span class="s2">// </span><span class="s7">to make sure sourcemap correct</span>
+			<span class="s2">// </span><span class="s7">For example:</span>
+			<span class="s2">// </span><span class="s7">'  test'.trim()</span>
+			<span class="s2">//     </span><span class="s7">split   -&gt; '  ' + 'test'</span>
+			<span class="s2">//   </span><span class="s7">✔️ edit    -&gt; '' + 'test'</span>
+			<span class="s2">//   </span><span class="s7">✖️ edit    -&gt; 'test' + ''</span>
+			<span class="s2">// </span><span class="s7">TODO is this block necessary?...</span>
+			<span class="s2">newChunk.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">false</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">this.content = '';</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.content = originalBefore;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">newChunk.next = this.next;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">newChunk.next</span><span class="s1">) </span><span class="s2">newChunk.next.previous = newChunk;</span>
+		<span class="s2">newChunk.previous = this;</span>
+		<span class="s2">this.next = newChunk;</span>
+
+		<span class="s0">return </span><span class="s2">newChunk;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">toString</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">this.intro + this.content + this.outro;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimEnd</span><span class="s2">(rx) {</span>
+		<span class="s2">this.outro = this.outro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.outro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">trimmed = this.content.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">trimmed.</span><span class="s1">length) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">trimmed !== this.content</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">this.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">this.start + trimmed.</span><span class="s1">length)</span><span class="s2">.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">undefined</span><span class="s2">, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">this.edited</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">// </span><span class="s7">save the change, if it has been edited</span>
+					<span class="s2">this.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">trimmed, this.storeName, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span>
+			<span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">undefined</span><span class="s2">, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimStart</span><span class="s2">(rx) {</span>
+		<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">trimmed = this.content.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">trimmed.</span><span class="s1">length) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">trimmed !== this.content</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">newChunk = this.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">this.end - trimmed.</span><span class="s1">length)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">this.edited</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">// </span><span class="s7">save the change, if it has been edited</span>
+					<span class="s2">newChunk.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">trimmed, this.storeName, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+				<span class="s2">this.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">undefined</span><span class="s2">, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">undefined</span><span class="s2">, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">this.outro = this.outro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">this.outro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">getBtoa</span><span class="s2">() {</span>
+	<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof globalThis !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; typeof globalThis.btoa === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+		<span class="s0">return </span><span class="s2">(str) </span><span class="s0">=&gt; </span><span class="s2">globalThis.</span><span class="s4">btoa</span><span class="s1">(</span><span class="s4">unescape</span><span class="s1">(</span><span class="s4">encodeURIComponent</span><span class="s1">(</span><span class="s2">str</span><span class="s1">)))</span><span class="s2">;</span>
+	<span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">typeof Buffer === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+		<span class="s0">return </span><span class="s2">(str) </span><span class="s0">=&gt; </span><span class="s2">Buffer.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">str, '</span><span class="s3">utf-8</span><span class="s2">'</span><span class="s1">)</span><span class="s2">.</span><span class="s4">toString</span><span class="s1">(</span><span class="s2">'</span><span class="s3">base64</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+		<span class="s0">return </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Unsupported environment: `window.btoa` or `Buffer` should be supported.</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">};</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">btoa = /*</span><span class="s7">#__PURE__</span><span class="s2">*/ </span><span class="s4">getBtoa</span><span class="s1">()</span><span class="s2">;</span>
+
+<span class="s0">class </span><span class="s2">SourceMap {</span>
+	<span class="s0">constructor</span><span class="s2">(properties) {</span>
+		<span class="s2">this.version = </span><span class="s5">3</span><span class="s2">;</span>
+		<span class="s2">this.file = properties.file;</span>
+		<span class="s2">this.sources = properties.sources;</span>
+		<span class="s2">this.sourcesContent = properties.sourcesContent;</span>
+		<span class="s2">this.names = properties.names;</span>
+		<span class="s2">this.mappings = </span><span class="s4">encode</span><span class="s1">(</span><span class="s2">properties.mappings</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof properties.x_google_ignoreList !== '</span><span class="s3">undefined</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.x_google_ignoreList = properties.x_google_ignoreList;</span>
+		<span class="s2">}</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof properties.debugId !== '</span><span class="s3">undefined</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.debugId = properties.debugId;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">toString</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">JSON.</span><span class="s4">stringify</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">toUrl</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">'</span><span class="s3">data:application/json;charset=utf-8;base64,</span><span class="s2">' + </span><span class="s4">btoa</span><span class="s1">(</span><span class="s2">this.</span><span class="s4">toString</span><span class="s1">())</span><span class="s2">;</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">guessIndent</span><span class="s2">(code) {</span>
+	<span class="s0">const </span><span class="s2">lines = code.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">'</span><span class="s8">\n</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+	<span class="s0">const </span><span class="s2">tabbed = lines.</span><span class="s4">filter</span><span class="s1">(</span><span class="s2">(line) </span><span class="s0">=&gt; </span><span class="s2">/</span><span class="s0">^</span><span class="s6">\t</span><span class="s2">+/.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">line</span><span class="s1">))</span><span class="s2">;</span>
+	<span class="s0">const </span><span class="s2">spaced = lines.</span><span class="s4">filter</span><span class="s1">(</span><span class="s2">(line) </span><span class="s0">=&gt; </span><span class="s2">/</span><span class="s0">^ </span><span class="s2">{2,}/.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">line</span><span class="s1">))</span><span class="s2">;</span>
+
+	<span class="s0">if </span><span class="s1">(</span><span class="s2">tabbed.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0 </span><span class="s2">&amp;&amp; spaced.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+		<span class="s0">return </span><span class="s6">null</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s2">// </span><span class="s7">More lines tabbed than spaced? Assume tabs, and</span>
+	<span class="s2">// </span><span class="s7">default to tabs in the case of a tie (or nothing</span>
+	<span class="s2">// </span><span class="s7">to go on)</span>
+	<span class="s0">if </span><span class="s1">(</span><span class="s2">tabbed.</span><span class="s1">length </span><span class="s2">&gt;= spaced.</span><span class="s1">length) </span><span class="s2">{</span>
+		<span class="s0">return </span><span class="s2">'</span><span class="s8">\t</span><span class="s2">';</span>
+	<span class="s2">}</span>
+
+	<span class="s2">// </span><span class="s7">Otherwise, we need to guess the multiple</span>
+	<span class="s0">const </span><span class="s2">min = spaced.</span><span class="s4">reduce</span><span class="s1">(</span><span class="s2">(previous, current) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+		<span class="s0">const </span><span class="s2">numSpaces = /</span><span class="s0">^ </span><span class="s2">+/.</span><span class="s4">exec</span><span class="s1">(</span><span class="s2">current</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">numSpaces, previous</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}, </span><span class="s6">Infinity</span><span class="s1">)</span><span class="s2">;</span>
+
+	<span class="s0">return </span><span class="s2">new </span><span class="s4">Array</span><span class="s1">(</span><span class="s2">min + </span><span class="s5">1</span><span class="s1">)</span><span class="s2">.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">' '</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">getRelativePath</span><span class="s2">(from, to) {</span>
+	<span class="s0">const </span><span class="s2">fromParts = from.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">/</span><span class="s10">[</span><span class="s6">/</span><span class="s8">\\</span><span class="s10">]</span><span class="s2">/</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s0">const </span><span class="s2">toParts = to.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">/</span><span class="s10">[</span><span class="s6">/</span><span class="s8">\\</span><span class="s10">]</span><span class="s2">/</span><span class="s1">)</span><span class="s2">;</span>
+
+	<span class="s2">fromParts.</span><span class="s4">pop</span><span class="s1">()</span><span class="s2">; // </span><span class="s7">get dirname</span>
+
+	<span class="s0">while </span><span class="s1">(</span><span class="s2">fromParts</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">=== toParts</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]) </span><span class="s2">{</span>
+		<span class="s2">fromParts.</span><span class="s4">shift</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s2">toParts.</span><span class="s4">shift</span><span class="s1">()</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s0">if </span><span class="s1">(</span><span class="s2">fromParts.</span><span class="s1">length) </span><span class="s2">{</span>
+		<span class="s0">let </span><span class="s2">i = fromParts.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">i--</span><span class="s1">) </span><span class="s2">fromParts</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">= '</span><span class="s3">..</span><span class="s2">';</span>
+	<span class="s2">}</span>
+
+	<span class="s0">return </span><span class="s2">fromParts.</span><span class="s4">concat</span><span class="s1">(</span><span class="s2">toParts</span><span class="s1">)</span><span class="s2">.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">/</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">toString = </span><span class="s1">Object</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">.toString;</span>
+
+<span class="s0">function </span><span class="s4">isObject</span><span class="s2">(thing) {</span>
+	<span class="s0">return </span><span class="s2">toString.</span><span class="s4">call</span><span class="s1">(</span><span class="s2">thing</span><span class="s1">) </span><span class="s2">=== '</span><span class="s3">[object Object]</span><span class="s2">';</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">getLocator</span><span class="s2">(source) {</span>
+	<span class="s0">const </span><span class="s2">originalLines = source.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">'</span><span class="s8">\n</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s0">const </span><span class="s2">lineOffsets = </span><span class="s1">[]</span><span class="s2">;</span>
+
+	<span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">, pos = </span><span class="s5">0</span><span class="s2">; i &lt; originalLines.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+		<span class="s2">lineOffsets.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">pos</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">pos += originalLines</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length </span><span class="s2">+ </span><span class="s5">1</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s0">return function </span><span class="s4">locate</span><span class="s2">(index) {</span>
+		<span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s0">let </span><span class="s2">j = lineOffsets.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">i &lt; j</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">m = </span><span class="s1">(</span><span class="s2">i + j</span><span class="s1">) </span><span class="s2">&gt;&gt; </span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">index &lt; lineOffsets</span><span class="s1">[</span><span class="s2">m</span><span class="s1">]) </span><span class="s2">{</span>
+				<span class="s2">j = m;</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s2">i = m + </span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span>
+		<span class="s0">const </span><span class="s2">line = i - </span><span class="s5">1</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">column = index - lineOffsets</span><span class="s1">[</span><span class="s2">line</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">{ line, column };</span>
+	<span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">wordRegex = /</span><span class="s6">\w</span><span class="s2">/;</span>
+
+<span class="s0">class </span><span class="s2">Mappings {</span>
+	<span class="s0">constructor</span><span class="s2">(hires) {</span>
+		<span class="s2">this.hires = hires;</span>
+		<span class="s2">this.generatedCodeLine = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s2">this.generatedCodeColumn = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s2">this.raw = </span><span class="s1">[]</span><span class="s2">;</span>
+		<span class="s2">this.rawSegments = this.raw</span><span class="s1">[</span><span class="s2">this.generatedCodeLine</span><span class="s1">] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+		<span class="s2">this.pending = </span><span class="s6">null</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">addEdit</span><span class="s2">(sourceIndex, content, loc, nameIndex) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">content.</span><span class="s1">length) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">contentLengthMinusOne = content.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s0">let </span><span class="s2">contentLineEnd = content.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">'</span><span class="s8">\n</span><span class="s2">', </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">let </span><span class="s2">previousContentLineEnd = -</span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s2">// </span><span class="s7">Loop through each line in the content and add a segment, but stop if the last line is empty,</span>
+			<span class="s2">// </span><span class="s7">else code afterwards would fill one line too many</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">contentLineEnd &gt;= </span><span class="s5">0 </span><span class="s2">&amp;&amp; contentLengthMinusOne &gt; contentLineEnd</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">segment = </span><span class="s1">[</span><span class="s2">this.generatedCodeColumn, sourceIndex, loc.line, loc.column</span><span class="s1">]</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">nameIndex &gt;= </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">segment.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">nameIndex</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+				<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)</span><span class="s2">;</span>
+
+				<span class="s2">this.generatedCodeLine += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">this.raw</span><span class="s1">[</span><span class="s2">this.generatedCodeLine</span><span class="s1">] </span><span class="s2">= this.rawSegments = </span><span class="s1">[]</span><span class="s2">;</span>
+				<span class="s2">this.generatedCodeColumn = </span><span class="s5">0</span><span class="s2">;</span>
+
+				<span class="s2">previousContentLineEnd = contentLineEnd;</span>
+				<span class="s2">contentLineEnd = content.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">'</span><span class="s8">\n</span><span class="s2">', contentLineEnd + </span><span class="s5">1</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">const </span><span class="s2">segment = </span><span class="s1">[</span><span class="s2">this.generatedCodeColumn, sourceIndex, loc.line, loc.column</span><span class="s1">]</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">nameIndex &gt;= </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">segment.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">nameIndex</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">this.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">content.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">previousContentLineEnd + </span><span class="s5">1</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">this.pending</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">this.pending</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">this.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">content</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.pending = </span><span class="s6">null</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">addUneditedChunk</span><span class="s2">(sourceIndex, chunk, original, loc, sourcemapLocations) {</span>
+		<span class="s0">let </span><span class="s2">originalCharIndex = chunk.start;</span>
+		<span class="s0">let </span><span class="s2">first = </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">// </span><span class="s7">when iterating each char, check if it's in a word boundary</span>
+		<span class="s0">let </span><span class="s2">charInHiresBoundary = </span><span class="s6">false</span><span class="s2">;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">originalCharIndex &lt; chunk.end</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">original</span><span class="s1">[</span><span class="s2">originalCharIndex</span><span class="s1">] </span><span class="s2">=== '</span><span class="s8">\n</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">loc.line += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">loc.column = </span><span class="s5">0</span><span class="s2">;</span>
+				<span class="s2">this.generatedCodeLine += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">this.raw</span><span class="s1">[</span><span class="s2">this.generatedCodeLine</span><span class="s1">] </span><span class="s2">= this.rawSegments = </span><span class="s1">[]</span><span class="s2">;</span>
+				<span class="s2">this.generatedCodeColumn = </span><span class="s5">0</span><span class="s2">;</span>
+				<span class="s2">first = </span><span class="s6">true</span><span class="s2">;</span>
+				<span class="s2">charInHiresBoundary = </span><span class="s6">false</span><span class="s2">;</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">this.hires || first || sourcemapLocations.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">originalCharIndex</span><span class="s1">)) </span><span class="s2">{</span>
+					<span class="s0">const </span><span class="s2">segment = </span><span class="s1">[</span><span class="s2">this.generatedCodeColumn, sourceIndex, loc.line, loc.column</span><span class="s1">]</span><span class="s2">;</span>
+
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">this.hires === '</span><span class="s3">boundary</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+						<span class="s2">// </span><span class="s7">in hires &quot;boundary&quot;, group segments per word boundary than per char</span>
+						<span class="s0">if </span><span class="s1">(</span><span class="s2">wordRegex.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">original</span><span class="s1">[</span><span class="s2">originalCharIndex</span><span class="s1">])) </span><span class="s2">{</span>
+							<span class="s2">// </span><span class="s7">for first char in the boundary found, start the boundary by pushing a segment</span>
+							<span class="s0">if </span><span class="s1">(</span><span class="s2">!charInHiresBoundary</span><span class="s1">) </span><span class="s2">{</span>
+								<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)</span><span class="s2">;</span>
+								<span class="s2">charInHiresBoundary = </span><span class="s6">true</span><span class="s2">;</span>
+							<span class="s2">}</span>
+						<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+							<span class="s2">// </span><span class="s7">for non-word char, end the boundary by pushing a segment</span>
+							<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)</span><span class="s2">;</span>
+							<span class="s2">charInHiresBoundary = </span><span class="s6">false</span><span class="s2">;</span>
+						<span class="s2">}</span>
+					<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+						<span class="s2">this.rawSegments.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)</span><span class="s2">;</span>
+					<span class="s2">}</span>
+				<span class="s2">}</span>
+
+				<span class="s2">loc.column += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">this.generatedCodeColumn += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">first = </span><span class="s6">false</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">originalCharIndex += </span><span class="s5">1</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.pending = </span><span class="s6">null</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">advance</span><span class="s2">(str) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!str</span><span class="s1">) </span><span class="s0">return</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">lines = str.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">'</span><span class="s8">\n</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">lines.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; lines.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">this.generatedCodeLine++;</span>
+				<span class="s2">this.raw</span><span class="s1">[</span><span class="s2">this.generatedCodeLine</span><span class="s1">] </span><span class="s2">= this.rawSegments = </span><span class="s1">[]</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s2">this.generatedCodeColumn = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.generatedCodeColumn += lines</span><span class="s1">[</span><span class="s2">lines.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length</span><span class="s2">;</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">n = '</span><span class="s8">\n</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">warned = {</span>
+	<span class="s1">insertLeft</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+	<span class="s1">insertRight</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+	<span class="s1">storeName</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+<span class="s2">};</span>
+
+<span class="s0">class </span><span class="s2">MagicString {</span>
+	<span class="s0">constructor</span><span class="s2">(string, options = {}) {</span>
+		<span class="s0">const </span><span class="s2">chunk = new </span><span class="s4">Chunk</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, string.</span><span class="s1">length</span><span class="s2">, string</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">Object.</span><span class="s4">defineProperties</span><span class="s1">(</span><span class="s2">this, {</span>
+			<span class="s1">original</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: string },</span>
+			<span class="s1">outro</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: '' },</span>
+			<span class="s1">intro</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: '' },</span>
+			<span class="s1">firstChunk</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: chunk },</span>
+			<span class="s1">lastChunk</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: chunk },</span>
+			<span class="s1">lastSearchedChunk</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: chunk },</span>
+			<span class="s1">byStart</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: {} },</span>
+			<span class="s1">byEnd</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: {} },</span>
+			<span class="s1">filename</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: options.filename },</span>
+			<span class="s1">indentExclusionRanges</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: options.indentExclusionRanges },</span>
+			<span class="s1">sourcemapLocations</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: new </span><span class="s4">BitSet</span><span class="s1">() </span><span class="s2">},</span>
+			<span class="s1">storedNames</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: {} },</span>
+			<span class="s1">indentStr</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: </span><span class="s6">undefined </span><span class="s2">},</span>
+			<span class="s1">ignoreList</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: options.ignoreList },</span>
+			<span class="s1">offset</span><span class="s2">: { </span><span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: options.offset || </span><span class="s5">0 </span><span class="s2">},</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.byStart</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">= chunk;</span>
+		<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">string.</span><span class="s1">length] </span><span class="s2">= chunk;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">addSourcemapLocation</span><span class="s2">(char) {</span>
+		<span class="s2">this.sourcemapLocations.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">char</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">append</span><span class="s2">(content) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">outro content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.outro += content;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">appendLeft</span><span class="s2">(index, content) {</span>
+		<span class="s2">index = index + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">inserted content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">chunk = this.byEnd</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.</span><span class="s4">appendLeft</span><span class="s1">(</span><span class="s2">content</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.intro += content;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">appendRight</span><span class="s2">(index, content) {</span>
+		<span class="s2">index = index + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">inserted content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">chunk = this.byStart</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.</span><span class="s4">appendRight</span><span class="s1">(</span><span class="s2">content</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.outro += content;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">clone</span><span class="s2">() {</span>
+		<span class="s0">const </span><span class="s2">cloned = new </span><span class="s4">MagicString</span><span class="s1">(</span><span class="s2">this.original, { </span><span class="s1">filename</span><span class="s2">: this.filename, </span><span class="s1">offset</span><span class="s2">: this.offset }</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">originalChunk = this.firstChunk;</span>
+		<span class="s0">let </span><span class="s2">clonedChunk = </span><span class="s1">(</span><span class="s2">cloned.firstChunk = cloned.lastSearchedChunk = originalChunk.</span><span class="s4">clone</span><span class="s1">())</span><span class="s2">;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">originalChunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">cloned.byStart</span><span class="s1">[</span><span class="s2">clonedChunk.start</span><span class="s1">] </span><span class="s2">= clonedChunk;</span>
+			<span class="s2">cloned.byEnd</span><span class="s1">[</span><span class="s2">clonedChunk.end</span><span class="s1">] </span><span class="s2">= clonedChunk;</span>
+
+			<span class="s0">const </span><span class="s2">nextOriginalChunk = originalChunk.next;</span>
+			<span class="s0">const </span><span class="s2">nextClonedChunk = nextOriginalChunk &amp;&amp; nextOriginalChunk.</span><span class="s4">clone</span><span class="s1">()</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">nextClonedChunk</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">clonedChunk.next = nextClonedChunk;</span>
+				<span class="s2">nextClonedChunk.previous = clonedChunk;</span>
+
+				<span class="s2">clonedChunk = nextClonedChunk;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">originalChunk = nextOriginalChunk;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">cloned.lastChunk = clonedChunk;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.indentExclusionRanges</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">cloned.indentExclusionRanges = this.indentExclusionRanges.</span><span class="s4">slice</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">cloned.sourcemapLocations = new </span><span class="s4">BitSet</span><span class="s1">(</span><span class="s2">this.sourcemapLocations</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">cloned.intro = this.intro;</span>
+		<span class="s2">cloned.outro = this.outro;</span>
+
+		<span class="s0">return </span><span class="s2">cloned;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">generateDecodedMap</span><span class="s2">(options) {</span>
+		<span class="s2">options = options || {};</span>
+
+		<span class="s0">const </span><span class="s2">sourceIndex = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">names = Object.</span><span class="s4">keys</span><span class="s1">(</span><span class="s2">this.storedNames</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">mappings = new </span><span class="s4">Mappings</span><span class="s1">(</span><span class="s2">options.hires</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">locate = </span><span class="s4">getLocator</span><span class="s1">(</span><span class="s2">this.original</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">this.intro</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.firstChunk.</span><span class="s4">eachNext</span><span class="s1">(</span><span class="s2">(chunk) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">loc = </span><span class="s4">locate</span><span class="s1">(</span><span class="s2">chunk.start</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.intro.</span><span class="s1">length) </span><span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">chunk.intro</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.edited</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">mappings.</span><span class="s4">addEdit</span><span class="s1">(</span>
+					<span class="s2">sourceIndex,</span>
+					<span class="s2">chunk.content,</span>
+					<span class="s2">loc,</span>
+					<span class="s2">chunk.storeName ? names.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">chunk.original</span><span class="s1">) </span><span class="s2">: -</span><span class="s5">1</span><span class="s2">,</span>
+				<span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s2">mappings.</span><span class="s4">addUneditedChunk</span><span class="s1">(</span><span class="s2">sourceIndex, chunk, this.original, loc, this.sourcemapLocations</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.outro.</span><span class="s1">length) </span><span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">chunk.outro</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.outro</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">this.outro</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">{</span>
+			<span class="s1">file</span><span class="s2">: options.file ? options.file.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">/</span><span class="s10">[</span><span class="s6">/</span><span class="s8">\\</span><span class="s10">]</span><span class="s2">/</span><span class="s1">)</span><span class="s2">.</span><span class="s4">pop</span><span class="s1">() </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+			<span class="s1">sources</span><span class="s2">: </span><span class="s1">[</span>
+				<span class="s2">options.source ? </span><span class="s4">getRelativePath</span><span class="s1">(</span><span class="s2">options.file || '', options.source</span><span class="s1">) </span><span class="s2">: options.file || '',</span>
+			<span class="s1">]</span><span class="s2">,</span>
+			<span class="s1">sourcesContent</span><span class="s2">: options.includeContent ? </span><span class="s1">[</span><span class="s2">this.original</span><span class="s1">] </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+			<span class="s2">names,</span>
+			<span class="s1">mappings</span><span class="s2">: mappings.raw,</span>
+			<span class="s1">x_google_ignoreList</span><span class="s2">: this.ignoreList ? </span><span class="s1">[</span><span class="s2">sourceIndex</span><span class="s1">] </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+		<span class="s2">};</span>
+	<span class="s2">}</span>
+
+	<span class="s4">generateMap</span><span class="s2">(options) {</span>
+		<span class="s0">return </span><span class="s2">new </span><span class="s4">SourceMap</span><span class="s1">(</span><span class="s2">this.</span><span class="s4">generateDecodedMap</span><span class="s1">(</span><span class="s2">options</span><span class="s1">))</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_ensureindentStr</span><span class="s2">() {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.indentStr === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.indentStr = </span><span class="s4">guessIndent</span><span class="s1">(</span><span class="s2">this.original</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_getRawIndentString</span><span class="s2">() {</span>
+		<span class="s2">this.</span><span class="s4">_ensureindentStr</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">this.indentStr;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">getIndentString</span><span class="s2">() {</span>
+		<span class="s2">this.</span><span class="s4">_ensureindentStr</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">this.indentStr === </span><span class="s6">null </span><span class="s2">? '</span><span class="s8">\t</span><span class="s2">' : this.indentStr;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">indent</span><span class="s2">(indentStr, options) {</span>
+		<span class="s0">const </span><span class="s2">pattern = /</span><span class="s0">^</span><span class="s10">[^</span><span class="s6">\r\n</span><span class="s10">]</span><span class="s2">/</span><span class="s0">gm</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s4">isObject</span><span class="s1">(</span><span class="s2">indentStr</span><span class="s1">)) </span><span class="s2">{</span>
+			<span class="s2">options = indentStr;</span>
+			<span class="s2">indentStr = </span><span class="s6">undefined</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">indentStr === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.</span><span class="s4">_ensureindentStr</span><span class="s1">()</span><span class="s2">;</span>
+			<span class="s2">indentStr = this.indentStr || '</span><span class="s8">\t</span><span class="s2">';</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">indentStr === ''</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this; // </span><span class="s7">noop</span>
+
+		<span class="s2">options = options || {};</span>
+
+		<span class="s2">// </span><span class="s7">Process exclusion ranges</span>
+		<span class="s0">const </span><span class="s2">isExcluded = {};</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">options.exclude</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">exclusions =</span>
+				<span class="s2">typeof options.exclude</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">=== '</span><span class="s3">number</span><span class="s2">' ? </span><span class="s1">[</span><span class="s2">options.exclude</span><span class="s1">] </span><span class="s2">: options.exclude;</span>
+			<span class="s2">exclusions.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(exclusion) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = exclusion</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">; i &lt; exclusion</span><span class="s1">[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">; i += </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">isExcluded</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">= </span><span class="s6">true</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">let </span><span class="s2">shouldIndentNextCharacter = options.indentStart !== </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s4">replacer </span><span class="s2">= (match) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">shouldIndentNextCharacter</span><span class="s1">) </span><span class="s0">return </span><span class="s2">`${indentStr}${match}`;</span>
+			<span class="s2">shouldIndentNextCharacter = </span><span class="s6">true</span><span class="s2">;</span>
+			<span class="s0">return </span><span class="s2">match;</span>
+		<span class="s2">};</span>
+
+		<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">pattern, replacer</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">charIndex = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">end = chunk.end;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.edited</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">!isExcluded</span><span class="s1">[</span><span class="s2">charIndex</span><span class="s1">]) </span><span class="s2">{</span>
+					<span class="s2">chunk.content = chunk.content.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">pattern, replacer</span><span class="s1">)</span><span class="s2">;</span>
+
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.content.</span><span class="s1">length) </span><span class="s2">{</span>
+						<span class="s2">shouldIndentNextCharacter = chunk.content</span><span class="s1">[</span><span class="s2">chunk.content.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">] </span><span class="s2">=== '</span><span class="s8">\n</span><span class="s2">';</span>
+					<span class="s2">}</span>
+				<span class="s2">}</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s2">charIndex = chunk.start;</span>
+
+				<span class="s0">while </span><span class="s1">(</span><span class="s2">charIndex &lt; end</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">!isExcluded</span><span class="s1">[</span><span class="s2">charIndex</span><span class="s1">]) </span><span class="s2">{</span>
+						<span class="s0">const </span><span class="s2">char = this.original</span><span class="s1">[</span><span class="s2">charIndex</span><span class="s1">]</span><span class="s2">;</span>
+
+						<span class="s0">if </span><span class="s1">(</span><span class="s2">char === '</span><span class="s8">\n</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+							<span class="s2">shouldIndentNextCharacter = </span><span class="s6">true</span><span class="s2">;</span>
+						<span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">char !== '</span><span class="s8">\r</span><span class="s2">' &amp;&amp; shouldIndentNextCharacter</span><span class="s1">) </span><span class="s2">{</span>
+							<span class="s2">shouldIndentNextCharacter = </span><span class="s6">false</span><span class="s2">;</span>
+
+							<span class="s0">if </span><span class="s1">(</span><span class="s2">charIndex === chunk.start</span><span class="s1">) </span><span class="s2">{</span>
+								<span class="s2">chunk.</span><span class="s4">prependRight</span><span class="s1">(</span><span class="s2">indentStr</span><span class="s1">)</span><span class="s2">;</span>
+							<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+								<span class="s2">this.</span><span class="s4">_splitChunk</span><span class="s1">(</span><span class="s2">chunk, charIndex</span><span class="s1">)</span><span class="s2">;</span>
+								<span class="s2">chunk = chunk.next;</span>
+								<span class="s2">chunk.</span><span class="s4">prependRight</span><span class="s1">(</span><span class="s2">indentStr</span><span class="s1">)</span><span class="s2">;</span>
+							<span class="s2">}</span>
+						<span class="s2">}</span>
+					<span class="s2">}</span>
+
+					<span class="s2">charIndex += </span><span class="s5">1</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span>
+
+			<span class="s2">charIndex = chunk.end;</span>
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.outro = this.outro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">pattern, replacer</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">insert</span><span class="s2">() {</span>
+		<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span>
+			<span class="s2">'</span><span class="s3">magicString.insert(...) is deprecated. Use prependRight(...) or appendLeft(...)</span><span class="s2">',</span>
+		<span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">insertLeft</span><span class="s2">(index, content) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!warned.insertLeft</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">console.</span><span class="s4">warn</span><span class="s1">(</span>
+				<span class="s2">'</span><span class="s3">magicString.insertLeft(...) is deprecated. Use magicString.appendLeft(...) instead</span><span class="s2">',</span>
+			<span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">warned.insertLeft = </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">appendLeft</span><span class="s1">(</span><span class="s2">index, content</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">insertRight</span><span class="s2">(index, content) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!warned.insertRight</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">console.</span><span class="s4">warn</span><span class="s1">(</span>
+				<span class="s2">'</span><span class="s3">magicString.insertRight(...) is deprecated. Use magicString.prependRight(...) instead</span><span class="s2">',</span>
+			<span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">warned.insertRight = </span><span class="s6">true</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">prependRight</span><span class="s1">(</span><span class="s2">index, content</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">move</span><span class="s2">(start, end, index) {</span>
+		<span class="s2">start = start + this.offset;</span>
+		<span class="s2">end = end + this.offset;</span>
+		<span class="s2">index = index + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">index &gt;= start &amp;&amp; index &lt;= end</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Cannot move a selection inside itself</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">start</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">end</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">first = this.byStart</span><span class="s1">[</span><span class="s2">start</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">last = this.byEnd</span><span class="s1">[</span><span class="s2">end</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">oldLeft = first.previous;</span>
+		<span class="s0">const </span><span class="s2">oldRight = last.next;</span>
+
+		<span class="s0">const </span><span class="s2">newRight = this.byStart</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!newRight &amp;&amp; last === this.lastChunk</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this;</span>
+		<span class="s0">const </span><span class="s2">newLeft = newRight ? newRight.previous : this.lastChunk;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">oldLeft</span><span class="s1">) </span><span class="s2">oldLeft.next = oldRight;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">oldRight</span><span class="s1">) </span><span class="s2">oldRight.previous = oldLeft;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">newLeft</span><span class="s1">) </span><span class="s2">newLeft.next = first;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">newRight</span><span class="s1">) </span><span class="s2">newRight.previous = last;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!first.previous</span><span class="s1">) </span><span class="s2">this.firstChunk = last.next;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!last.next</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.lastChunk = first.previous;</span>
+			<span class="s2">this.lastChunk.next = </span><span class="s6">null</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">first.previous = newLeft;</span>
+		<span class="s2">last.next = newRight || </span><span class="s6">null</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!newLeft</span><span class="s1">) </span><span class="s2">this.firstChunk = first;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!newRight</span><span class="s1">) </span><span class="s2">this.lastChunk = last;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">overwrite</span><span class="s2">(start, end, content, options) {</span>
+		<span class="s2">options = options || {};</span>
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">update</span><span class="s1">(</span><span class="s2">start, end, content, { ...options, </span><span class="s1">overwrite</span><span class="s2">: !options.contentOnly }</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">update</span><span class="s2">(start, end, content, options) {</span>
+		<span class="s2">start = start + this.offset;</span>
+		<span class="s2">end = end + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">replacement content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.original.</span><span class="s1">length </span><span class="s2">!== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">start += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">end &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">end += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">end &gt; this.original.</span><span class="s1">length) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">end is out of bounds</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start === end</span><span class="s1">)</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span>
+				<span class="s2">'</span><span class="s3">Cannot overwrite a zero-length range – use appendLeft or prependRight instead</span><span class="s2">',</span>
+			<span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">start</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">end</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">options === </span><span class="s6">true</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">!warned.storeName</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">console.</span><span class="s4">warn</span><span class="s1">(</span>
+					<span class="s2">'</span><span class="s3">The final argument to magicString.overwrite(...) should be an options object. See https://github.com/rich-harris/magic-string</span><span class="s2">',</span>
+				<span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">warned.storeName = </span><span class="s6">true</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">options = { </span><span class="s1">storeName</span><span class="s2">: </span><span class="s6">true </span><span class="s2">};</span>
+		<span class="s2">}</span>
+		<span class="s0">const </span><span class="s2">storeName = options !== </span><span class="s6">undefined </span><span class="s2">? options.storeName : </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">overwrite = options !== </span><span class="s6">undefined </span><span class="s2">? options.overwrite : </span><span class="s6">false</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">storeName</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">original = this.original.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">start, end</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">Object.</span><span class="s4">defineProperty</span><span class="s1">(</span><span class="s2">this.storedNames, original, {</span>
+				<span class="s1">writable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+				<span class="s1">value</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+				<span class="s1">enumerable</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">const </span><span class="s2">first = this.byStart</span><span class="s1">[</span><span class="s2">start</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">const </span><span class="s2">last = this.byEnd</span><span class="s1">[</span><span class="s2">end</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">first</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">let </span><span class="s2">chunk = first;</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk !== last</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.next !== this.byStart</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">]) </span><span class="s2">{</span>
+					<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Cannot overwrite across a split point</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+				<span class="s2">chunk = chunk.next;</span>
+				<span class="s2">chunk.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">'', </span><span class="s6">false</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">first.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">content, storeName, !overwrite</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">// </span><span class="s7">must be inserting at the end</span>
+			<span class="s0">const </span><span class="s2">newChunk = new </span><span class="s4">Chunk</span><span class="s1">(</span><span class="s2">start, end, ''</span><span class="s1">)</span><span class="s2">.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">content, storeName</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">// </span><span class="s7">TODO last chunk in the array may not be the last chunk, if it's moved...</span>
+			<span class="s2">last.next = newChunk;</span>
+			<span class="s2">newChunk.previous = last;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prepend</span><span class="s2">(content) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">outro content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.intro = content + this.intro;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prependLeft</span><span class="s2">(index, content) {</span>
+		<span class="s2">index = index + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">inserted content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">chunk = this.byEnd</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.</span><span class="s4">prependLeft</span><span class="s1">(</span><span class="s2">content</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.intro = content + this.intro;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prependRight</span><span class="s2">(index, content) {</span>
+		<span class="s2">index = index + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof content !== '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">inserted content must be a string</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">chunk = this.byStart</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.</span><span class="s4">prependRight</span><span class="s1">(</span><span class="s2">content</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s2">this.outro = content + this.outro;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">remove</span><span class="s2">(start, end) {</span>
+		<span class="s2">start = start + this.offset;</span>
+		<span class="s2">end = end + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.original.</span><span class="s1">length </span><span class="s2">!== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">start += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">end &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">end += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start === end</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0 </span><span class="s2">|| end &gt; this.original.</span><span class="s1">length) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Character is out of bounds</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start &gt; end</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">end must be greater than start</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">start</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">end</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.byStart</span><span class="s1">[</span><span class="s2">start</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.intro = '';</span>
+			<span class="s2">chunk.outro = '';</span>
+			<span class="s2">chunk.</span><span class="s4">edit</span><span class="s1">(</span><span class="s2">''</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">chunk = end &gt; chunk.end ? this.byStart</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">] </span><span class="s2">: </span><span class="s6">null</span><span class="s2">;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">reset</span><span class="s2">(start, end) {</span>
+		<span class="s2">start = start + this.offset;</span>
+		<span class="s2">end = end + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.original.</span><span class="s1">length </span><span class="s2">!== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">start += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">end &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">end += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start === end</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0 </span><span class="s2">|| end &gt; this.original.</span><span class="s1">length) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Character is out of bounds</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">start &gt; end</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">end must be greater than start</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">start</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.</span><span class="s4">_split</span><span class="s1">(</span><span class="s2">end</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.byStart</span><span class="s1">[</span><span class="s2">start</span><span class="s1">]</span><span class="s2">;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">chunk.</span><span class="s4">reset</span><span class="s1">()</span><span class="s2">;</span>
+
+			<span class="s2">chunk = end &gt; chunk.end ? this.byStart</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">] </span><span class="s2">: </span><span class="s6">null</span><span class="s2">;</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">lastChar</span><span class="s2">() {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.outro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">this.outro</span><span class="s1">[</span><span class="s2">this.outro.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">let </span><span class="s2">chunk = this.lastChunk;</span>
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.outro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">chunk.outro</span><span class="s1">[</span><span class="s2">chunk.outro.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.content.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">chunk.content</span><span class="s1">[</span><span class="s2">chunk.content.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.intro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">chunk.intro</span><span class="s1">[</span><span class="s2">chunk.intro.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">((</span><span class="s2">chunk = chunk.previous</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">this.intro</span><span class="s1">[</span><span class="s2">this.intro.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">'';</span>
+	<span class="s2">}</span>
+
+	<span class="s4">lastLine</span><span class="s2">() {</span>
+		<span class="s0">let </span><span class="s2">lineIndex = this.outro.</span><span class="s4">lastIndexOf</span><span class="s1">(</span><span class="s2">n</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">lineIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this.outro.</span><span class="s4">substr</span><span class="s1">(</span><span class="s2">lineIndex + </span><span class="s5">1</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">let </span><span class="s2">lineStr = this.outro;</span>
+		<span class="s0">let </span><span class="s2">chunk = this.lastChunk;</span>
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.outro.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">lineIndex = chunk.outro.</span><span class="s4">lastIndexOf</span><span class="s1">(</span><span class="s2">n</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">lineIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">chunk.outro.</span><span class="s4">substr</span><span class="s1">(</span><span class="s2">lineIndex + </span><span class="s5">1</span><span class="s1">) </span><span class="s2">+ lineStr;</span>
+				<span class="s2">lineStr = chunk.outro + lineStr;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.content.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">lineIndex = chunk.content.</span><span class="s4">lastIndexOf</span><span class="s1">(</span><span class="s2">n</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">lineIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">chunk.content.</span><span class="s4">substr</span><span class="s1">(</span><span class="s2">lineIndex + </span><span class="s5">1</span><span class="s1">) </span><span class="s2">+ lineStr;</span>
+				<span class="s2">lineStr = chunk.content + lineStr;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.intro.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">lineIndex = chunk.intro.</span><span class="s4">lastIndexOf</span><span class="s1">(</span><span class="s2">n</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">lineIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">chunk.intro.</span><span class="s4">substr</span><span class="s1">(</span><span class="s2">lineIndex + </span><span class="s5">1</span><span class="s1">) </span><span class="s2">+ lineStr;</span>
+				<span class="s2">lineStr = chunk.intro + lineStr;</span>
+			<span class="s2">}</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">((</span><span class="s2">chunk = chunk.previous</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s2">lineIndex = this.intro.</span><span class="s4">lastIndexOf</span><span class="s1">(</span><span class="s2">n</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">lineIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this.intro.</span><span class="s4">substr</span><span class="s1">(</span><span class="s2">lineIndex + </span><span class="s5">1</span><span class="s1">) </span><span class="s2">+ lineStr;</span>
+		<span class="s0">return </span><span class="s2">this.intro + lineStr;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">slice</span><span class="s2">(start = </span><span class="s5">0</span><span class="s2">, end = this.original.</span><span class="s1">length </span><span class="s2">- this.offset) {</span>
+		<span class="s2">start = start + this.offset;</span>
+		<span class="s2">end = end + this.offset;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.original.</span><span class="s1">length </span><span class="s2">!== </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">start &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">start += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+			<span class="s0">while </span><span class="s1">(</span><span class="s2">end &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">end += this.original.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">let </span><span class="s2">result = '';</span>
+
+		<span class="s2">// </span><span class="s7">find start chunk</span>
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk &amp;&amp; </span><span class="s1">(</span><span class="s2">chunk.start &gt; start || chunk.end &lt;= start</span><span class="s1">)) </span><span class="s2">{</span>
+			<span class="s2">// </span><span class="s7">found end chunk before start</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.start &lt; end &amp;&amp; chunk.end &gt;= end</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s2">result;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk &amp;&amp; chunk.edited &amp;&amp; chunk.start !== start</span><span class="s1">)</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">Cannot use replaced character </span><span class="s2">${start} </span><span class="s3">as slice start anchor.</span><span class="s2">`</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">startChunk = chunk;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.intro &amp;&amp; </span><span class="s1">(</span><span class="s2">startChunk !== chunk || chunk.start === start</span><span class="s1">)) </span><span class="s2">{</span>
+				<span class="s2">result += chunk.intro;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">const </span><span class="s2">containsEnd = chunk.start &lt; end &amp;&amp; chunk.end &gt;= end;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">containsEnd &amp;&amp; chunk.edited &amp;&amp; chunk.end !== end</span><span class="s1">)</span>
+				<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">Cannot use replaced character </span><span class="s2">${end} </span><span class="s3">as slice end anchor.</span><span class="s2">`</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">const </span><span class="s2">sliceStart = startChunk === chunk ? start - chunk.start : </span><span class="s5">0</span><span class="s2">;</span>
+			<span class="s0">const </span><span class="s2">sliceEnd = containsEnd ? chunk.content.</span><span class="s1">length </span><span class="s2">+ end - chunk.end : chunk.content.</span><span class="s1">length</span><span class="s2">;</span>
+
+			<span class="s2">result += chunk.content.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">sliceStart, sliceEnd</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.outro &amp;&amp; </span><span class="s1">(</span><span class="s2">!containsEnd || chunk.end === end</span><span class="s1">)) </span><span class="s2">{</span>
+				<span class="s2">result += chunk.outro;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">containsEnd</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">break</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">result;</span>
+	<span class="s2">}</span>
+
+	<span class="s2">// </span><span class="s7">TODO deprecate this? not really very useful</span>
+	<span class="s4">snip</span><span class="s2">(start, end) {</span>
+		<span class="s0">const </span><span class="s2">clone = this.</span><span class="s4">clone</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s2">clone.</span><span class="s4">remove</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, start</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">clone.</span><span class="s4">remove</span><span class="s1">(</span><span class="s2">end, clone.original.</span><span class="s1">length)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">clone;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_split</span><span class="s2">(index) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.byStart</span><span class="s1">[</span><span class="s2">index</span><span class="s1">] </span><span class="s2">|| this.byEnd</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]) </span><span class="s0">return</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.lastSearchedChunk;</span>
+		<span class="s0">let </span><span class="s2">previousChunk = chunk;</span>
+		<span class="s0">const </span><span class="s2">searchForward = index &gt; chunk.end;</span>
+
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.</span><span class="s4">contains</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)) </span><span class="s0">return </span><span class="s2">this.</span><span class="s4">_splitChunk</span><span class="s1">(</span><span class="s2">chunk, index</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">chunk = searchForward ? this.byStart</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">] </span><span class="s2">: this.byEnd</span><span class="s1">[</span><span class="s2">chunk.start</span><span class="s1">]</span><span class="s2">;</span>
+
+			<span class="s2">// </span><span class="s7">Prevent infinite loop (e.g. via empty chunks, where start === end)</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk === previousChunk</span><span class="s1">) </span><span class="s0">return</span><span class="s2">;</span>
+
+			<span class="s2">previousChunk = chunk;</span>
+		<span class="s2">}</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_splitChunk</span><span class="s2">(chunk, index) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.edited &amp;&amp; chunk.content.</span><span class="s1">length) </span><span class="s2">{</span>
+			<span class="s2">// </span><span class="s7">zero-length edited chunks are a special case (overlapping replacements)</span>
+			<span class="s0">const </span><span class="s2">loc = </span><span class="s4">getLocator</span><span class="s1">(</span><span class="s2">this.original</span><span class="s1">)(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span>
+				<span class="s2">`</span><span class="s3">Cannot split a chunk that has already been edited (</span><span class="s2">${loc.line}</span><span class="s3">:</span><span class="s2">${loc.column} </span><span class="s3">– &quot;</span><span class="s2">${chunk.original}</span><span class="s3">&quot;)</span><span class="s2">`,</span>
+			<span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">const </span><span class="s2">newChunk = chunk.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">index</span><span class="s1">] </span><span class="s2">= chunk;</span>
+		<span class="s2">this.byStart</span><span class="s1">[</span><span class="s2">index</span><span class="s1">] </span><span class="s2">= newChunk;</span>
+		<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">newChunk.end</span><span class="s1">] </span><span class="s2">= newChunk;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk === this.lastChunk</span><span class="s1">) </span><span class="s2">this.lastChunk = newChunk;</span>
+
+		<span class="s2">this.lastSearchedChunk = chunk;</span>
+		<span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">toString</span><span class="s2">() {</span>
+		<span class="s0">let </span><span class="s2">str = this.intro;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+		<span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">str += chunk.</span><span class="s4">toString</span><span class="s1">()</span><span class="s2">;</span>
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">str + this.outro;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">isEmpty</span><span class="s2">() {</span>
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span>
+				<span class="s1">(</span><span class="s2">chunk.intro.</span><span class="s1">length </span><span class="s2">&amp;&amp; chunk.intro.</span><span class="s4">trim</span><span class="s1">()) </span><span class="s2">||</span>
+				<span class="s1">(</span><span class="s2">chunk.content.</span><span class="s1">length </span><span class="s2">&amp;&amp; chunk.content.</span><span class="s4">trim</span><span class="s1">()) </span><span class="s2">||</span>
+				<span class="s1">(</span><span class="s2">chunk.outro.</span><span class="s1">length </span><span class="s2">&amp;&amp; chunk.outro.</span><span class="s4">trim</span><span class="s1">())</span>
+			<span class="s1">)</span>
+				<span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">((</span><span class="s2">chunk = chunk.next</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">length</span><span class="s2">() {</span>
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+		<span class="s0">let </span><span class="s2">length = </span><span class="s5">0</span><span class="s2">;</span>
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s2">length += chunk.intro.</span><span class="s1">length </span><span class="s2">+ chunk.content.</span><span class="s1">length </span><span class="s2">+ chunk.outro.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">((</span><span class="s2">chunk = chunk.next</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">length;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimLines</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">trim</span><span class="s1">(</span><span class="s2">'</span><span class="s3">[</span><span class="s8">\\</span><span class="s3">r</span><span class="s8">\\</span><span class="s3">n]</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trim</span><span class="s2">(charType) {</span>
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">trimStart</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">.</span><span class="s4">trimEnd</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimEndAborted</span><span class="s2">(charType) {</span>
+		<span class="s0">const </span><span class="s2">rx = new </span><span class="s4">RegExp</span><span class="s1">((</span><span class="s2">charType || '</span><span class="s8">\\</span><span class="s3">s</span><span class="s2">'</span><span class="s1">) </span><span class="s2">+ '</span><span class="s3">+$</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.outro = this.outro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.outro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.lastChunk;</span>
+
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">end = chunk.end;</span>
+			<span class="s0">const </span><span class="s2">aborted = chunk.</span><span class="s4">trimEnd</span><span class="s1">(</span><span class="s2">rx</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">// </span><span class="s7">if chunk was trimmed, we have a new lastChunk</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.end !== end</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">this.lastChunk === chunk</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">this.lastChunk = chunk.next;</span>
+				<span class="s2">}</span>
+
+				<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">] </span><span class="s2">= chunk;</span>
+				<span class="s2">this.byStart</span><span class="s1">[</span><span class="s2">chunk.next.start</span><span class="s1">] </span><span class="s2">= chunk.next;</span>
+				<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">chunk.next.end</span><span class="s1">] </span><span class="s2">= chunk.next;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">aborted</span><span class="s1">) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+			<span class="s2">chunk = chunk.previous;</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimEnd</span><span class="s2">(charType) {</span>
+		<span class="s2">this.</span><span class="s4">trimEndAborted</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+	<span class="s4">trimStartAborted</span><span class="s2">(charType) {</span>
+		<span class="s0">const </span><span class="s2">rx = new </span><span class="s4">RegExp</span><span class="s1">(</span><span class="s2">'</span><span class="s3">^</span><span class="s2">' + </span><span class="s1">(</span><span class="s2">charType || '</span><span class="s8">\\</span><span class="s3">s</span><span class="s2">'</span><span class="s1">) </span><span class="s2">+ '</span><span class="s3">+</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">chunk = this.firstChunk;</span>
+
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">end = chunk.end;</span>
+			<span class="s0">const </span><span class="s2">aborted = chunk.</span><span class="s4">trimStart</span><span class="s1">(</span><span class="s2">rx</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.end !== end</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">// </span><span class="s7">special case...</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk === this.lastChunk</span><span class="s1">) </span><span class="s2">this.lastChunk = chunk.next;</span>
+
+				<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">chunk.end</span><span class="s1">] </span><span class="s2">= chunk;</span>
+				<span class="s2">this.byStart</span><span class="s1">[</span><span class="s2">chunk.next.start</span><span class="s1">] </span><span class="s2">= chunk.next;</span>
+				<span class="s2">this.byEnd</span><span class="s1">[</span><span class="s2">chunk.next.end</span><span class="s1">] </span><span class="s2">= chunk.next;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">aborted</span><span class="s1">) </span><span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+			<span class="s2">chunk = chunk.next;</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">chunk</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimStart</span><span class="s2">(charType) {</span>
+		<span class="s2">this.</span><span class="s4">trimStartAborted</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">hasChanged</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">this.original !== this.</span><span class="s4">toString</span><span class="s1">()</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_replaceRegexp</span><span class="s2">(searchValue, replacement) {</span>
+		<span class="s0">function </span><span class="s4">getReplacement</span><span class="s2">(match, str) {</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof replacement === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s2">replacement.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s8">\$</span><span class="s2">(</span><span class="s8">\$</span><span class="s2">|</span><span class="s9">&amp;</span><span class="s2">|</span><span class="s6">\d</span><span class="s2">+)/</span><span class="s0">g</span><span class="s2">, (_, i) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+					<span class="s2">// </span><span class="s7">https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace#specifying_a_string_as_a_parameter</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">i === '</span><span class="s3">$</span><span class="s2">'</span><span class="s1">) </span><span class="s0">return </span><span class="s2">'</span><span class="s3">$</span><span class="s2">';</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">i === '</span><span class="s3">&amp;</span><span class="s2">'</span><span class="s1">) </span><span class="s0">return </span><span class="s2">match</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+					<span class="s0">const </span><span class="s2">num = +i;</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">num &lt; match.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">match</span><span class="s1">[</span><span class="s2">+i</span><span class="s1">]</span><span class="s2">;</span>
+					<span class="s0">return </span><span class="s2">`</span><span class="s3">$</span><span class="s2">${i}`;</span>
+				<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s4">replacement</span><span class="s1">(</span><span class="s2">...match, match.index, str, match.groups</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span>
+		<span class="s0">function </span><span class="s4">matchAll</span><span class="s2">(re, str) {</span>
+			<span class="s0">let </span><span class="s2">match;</span>
+			<span class="s0">const </span><span class="s2">matches = </span><span class="s1">[]</span><span class="s2">;</span>
+			<span class="s0">while </span><span class="s1">((</span><span class="s2">match = re.</span><span class="s4">exec</span><span class="s1">(</span><span class="s2">str</span><span class="s1">))) </span><span class="s2">{</span>
+				<span class="s2">matches.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">match</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s0">return </span><span class="s2">matches;</span>
+		<span class="s2">}</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">searchValue.global</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">matches = </span><span class="s4">matchAll</span><span class="s1">(</span><span class="s2">searchValue, this.original</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">matches.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(match) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">match.index != </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s0">const </span><span class="s2">replacement = </span><span class="s4">getReplacement</span><span class="s1">(</span><span class="s2">match, this.original</span><span class="s1">)</span><span class="s2">;</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">replacement !== match</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]) </span><span class="s2">{</span>
+						<span class="s2">this.</span><span class="s4">overwrite</span><span class="s1">(</span><span class="s2">match.index, match.index + match</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length</span><span class="s2">, replacement</span><span class="s1">)</span><span class="s2">;</span>
+					<span class="s2">}</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">match = this.original.</span><span class="s4">match</span><span class="s1">(</span><span class="s2">searchValue</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">match &amp;&amp; match.index != </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">replacement = </span><span class="s4">getReplacement</span><span class="s1">(</span><span class="s2">match, this.original</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">replacement !== match</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]) </span><span class="s2">{</span>
+					<span class="s2">this.</span><span class="s4">overwrite</span><span class="s1">(</span><span class="s2">match.index, match.index + match</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">.</span><span class="s1">length</span><span class="s2">, replacement</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_replaceString</span><span class="s2">(string, replacement) {</span>
+		<span class="s0">const </span><span class="s2">{ original } = this;</span>
+		<span class="s0">const </span><span class="s2">index = original.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">string</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">index !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof replacement === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">replacement = </span><span class="s4">replacement</span><span class="s1">(</span><span class="s2">string, index, original</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">string !== replacement</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">this.</span><span class="s4">overwrite</span><span class="s1">(</span><span class="s2">index, index + string.</span><span class="s1">length</span><span class="s2">, replacement</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">replace</span><span class="s2">(searchValue, replacement) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof searchValue === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">return </span><span class="s2">this.</span><span class="s4">_replaceString</span><span class="s1">(</span><span class="s2">searchValue, replacement</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">_replaceRegexp</span><span class="s1">(</span><span class="s2">searchValue, replacement</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">_replaceAllString</span><span class="s2">(string, replacement) {</span>
+		<span class="s0">const </span><span class="s2">{ original } = this;</span>
+		<span class="s0">const </span><span class="s2">stringLength = string.</span><span class="s1">length</span><span class="s2">;</span>
+		<span class="s0">for </span><span class="s1">(</span>
+			<span class="s0">let </span><span class="s2">index = original.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">string</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">index !== -</span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s2">index = original.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">string, index + stringLength</span><span class="s1">)</span>
+		<span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">previous = original.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">index, index + stringLength</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s0">let </span><span class="s2">_replacement = replacement;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof replacement === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">_replacement = </span><span class="s4">replacement</span><span class="s1">(</span><span class="s2">previous, index, original</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">previous !== _replacement</span><span class="s1">) </span><span class="s2">this.</span><span class="s4">overwrite</span><span class="s1">(</span><span class="s2">index, index + stringLength, _replacement</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">replaceAll</span><span class="s2">(searchValue, replacement) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">typeof searchValue === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">return </span><span class="s2">this.</span><span class="s4">_replaceAllString</span><span class="s1">(</span><span class="s2">searchValue, replacement</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!searchValue.global</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">TypeError</span><span class="s1">(</span>
+				<span class="s2">'</span><span class="s3">MagicString.prototype.replaceAll called with a non-global RegExp argument</span><span class="s2">',</span>
+			<span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">_replaceRegexp</span><span class="s1">(</span><span class="s2">searchValue, replacement</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">hasOwnProp = </span><span class="s1">Object</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">.hasOwnProperty;</span>
+
+<span class="s0">class </span><span class="s2">Bundle {</span>
+	<span class="s0">constructor</span><span class="s2">(options = {}) {</span>
+		<span class="s2">this.intro = options.intro || '';</span>
+		<span class="s2">this.separator = options.separator !== </span><span class="s6">undefined </span><span class="s2">? options.separator : '</span><span class="s8">\n</span><span class="s2">';</span>
+		<span class="s2">this.sources = </span><span class="s1">[]</span><span class="s2">;</span>
+		<span class="s2">this.uniqueSources = </span><span class="s1">[]</span><span class="s2">;</span>
+		<span class="s2">this.uniqueSourceIndexByFilename = {};</span>
+	<span class="s2">}</span>
+
+	<span class="s4">addSource</span><span class="s2">(source) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">source instanceof MagicString</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">return </span><span class="s2">this.</span><span class="s4">addSource</span><span class="s1">(</span><span class="s2">{</span>
+				<span class="s1">content</span><span class="s2">: source,</span>
+				<span class="s1">filename</span><span class="s2">: source.filename,</span>
+				<span class="s1">separator</span><span class="s2">: this.separator,</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s4">isObject</span><span class="s1">(</span><span class="s2">source</span><span class="s1">) </span><span class="s2">|| !source.content</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span>
+				<span class="s2">'</span><span class="s3">bundle.addSource() takes an object with a `content` property, which should be an instance of MagicString, and an optional `filename`</span><span class="s2">',</span>
+			<span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s1">[</span><span class="s2">'</span><span class="s3">filename</span><span class="s2">', '</span><span class="s3">ignoreList</span><span class="s2">', '</span><span class="s3">indentExclusionRanges</span><span class="s2">', '</span><span class="s3">separator</span><span class="s2">'</span><span class="s1">]</span><span class="s2">.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(option) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">!hasOwnProp.</span><span class="s4">call</span><span class="s1">(</span><span class="s2">source, option</span><span class="s1">)) </span><span class="s2">source</span><span class="s1">[</span><span class="s2">option</span><span class="s1">] </span><span class="s2">= source.content</span><span class="s1">[</span><span class="s2">option</span><span class="s1">]</span><span class="s2">;</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">source.separator === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">// </span><span class="s7">TODO there's a bunch of this sort of thing, needs cleaning up</span>
+			<span class="s2">source.separator = this.separator;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">source.filename</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">!hasOwnProp.</span><span class="s4">call</span><span class="s1">(</span><span class="s2">this.uniqueSourceIndexByFilename, source.filename</span><span class="s1">)) </span><span class="s2">{</span>
+				<span class="s2">this.uniqueSourceIndexByFilename</span><span class="s1">[</span><span class="s2">source.filename</span><span class="s1">] </span><span class="s2">= this.uniqueSources.</span><span class="s1">length</span><span class="s2">;</span>
+				<span class="s2">this.uniqueSources.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">filename</span><span class="s2">: source.filename, </span><span class="s1">content</span><span class="s2">: source.content.original }</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">uniqueSource = this.uniqueSources</span><span class="s1">[</span><span class="s2">this.uniqueSourceIndexByFilename</span><span class="s1">[</span><span class="s2">source.filename</span><span class="s1">]]</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">source.content.original !== uniqueSource.content</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">Illegal source: same filename (</span><span class="s2">${source.filename}</span><span class="s3">), different contents</span><span class="s2">`</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.sources.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">append</span><span class="s2">(str, options) {</span>
+		<span class="s2">this.</span><span class="s4">addSource</span><span class="s1">(</span><span class="s2">{</span>
+			<span class="s1">content</span><span class="s2">: new </span><span class="s4">MagicString</span><span class="s1">(</span><span class="s2">str</span><span class="s1">)</span><span class="s2">,</span>
+			<span class="s1">separator</span><span class="s2">: </span><span class="s1">(</span><span class="s2">options &amp;&amp; options.separator</span><span class="s1">) </span><span class="s2">|| '',</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">clone</span><span class="s2">() {</span>
+		<span class="s0">const </span><span class="s2">bundle = new </span><span class="s4">Bundle</span><span class="s1">(</span><span class="s2">{</span>
+			<span class="s1">intro</span><span class="s2">: this.intro,</span>
+			<span class="s1">separator</span><span class="s2">: this.separator,</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s2">this.sources.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s2">bundle.</span><span class="s4">addSource</span><span class="s1">(</span><span class="s2">{</span>
+				<span class="s1">filename</span><span class="s2">: source.filename,</span>
+				<span class="s1">content</span><span class="s2">: source.content.</span><span class="s4">clone</span><span class="s1">()</span><span class="s2">,</span>
+				<span class="s1">separator</span><span class="s2">: source.separator,</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">bundle;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">generateDecodedMap</span><span class="s2">(options = {}) {</span>
+		<span class="s0">const </span><span class="s2">names = </span><span class="s1">[]</span><span class="s2">;</span>
+		<span class="s0">let </span><span class="s2">x_google_ignoreList = </span><span class="s6">undefined</span><span class="s2">;</span>
+		<span class="s2">this.sources.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s2">Object.</span><span class="s4">keys</span><span class="s1">(</span><span class="s2">source.content.storedNames</span><span class="s1">)</span><span class="s2">.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(name) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">!~names.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">name</span><span class="s1">)) </span><span class="s2">names.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">name</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">const </span><span class="s2">mappings = new </span><span class="s4">Mappings</span><span class="s1">(</span><span class="s2">options.hires</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">this.intro</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s2">this.sources.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(source, i) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">i &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">this.separator</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">const </span><span class="s2">sourceIndex = source.filename ? this.uniqueSourceIndexByFilename</span><span class="s1">[</span><span class="s2">source.filename</span><span class="s1">] </span><span class="s2">: -</span><span class="s5">1</span><span class="s2">;</span>
+			<span class="s0">const </span><span class="s2">magicString = source.content;</span>
+			<span class="s0">const </span><span class="s2">locate = </span><span class="s4">getLocator</span><span class="s1">(</span><span class="s2">magicString.original</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">magicString.intro</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">magicString.intro</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s2">magicString.firstChunk.</span><span class="s4">eachNext</span><span class="s1">(</span><span class="s2">(chunk) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">loc = </span><span class="s4">locate</span><span class="s1">(</span><span class="s2">chunk.start</span><span class="s1">)</span><span class="s2">;</span>
+
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.intro.</span><span class="s1">length) </span><span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">chunk.intro</span><span class="s1">)</span><span class="s2">;</span>
+
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">source.filename</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.edited</span><span class="s1">) </span><span class="s2">{</span>
+						<span class="s2">mappings.</span><span class="s4">addEdit</span><span class="s1">(</span>
+							<span class="s2">sourceIndex,</span>
+							<span class="s2">chunk.content,</span>
+							<span class="s2">loc,</span>
+							<span class="s2">chunk.storeName ? names.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">chunk.original</span><span class="s1">) </span><span class="s2">: -</span><span class="s5">1</span><span class="s2">,</span>
+						<span class="s1">)</span><span class="s2">;</span>
+					<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+						<span class="s2">mappings.</span><span class="s4">addUneditedChunk</span><span class="s1">(</span>
+							<span class="s2">sourceIndex,</span>
+							<span class="s2">chunk,</span>
+							<span class="s2">magicString.original,</span>
+							<span class="s2">loc,</span>
+							<span class="s2">magicString.sourcemapLocations,</span>
+						<span class="s1">)</span><span class="s2">;</span>
+					<span class="s2">}</span>
+				<span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+					<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">chunk.content</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s2">}</span>
+
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">chunk.outro.</span><span class="s1">length) </span><span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">chunk.outro</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">magicString.outro</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">mappings.</span><span class="s4">advance</span><span class="s1">(</span><span class="s2">magicString.outro</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">source.ignoreList &amp;&amp; sourceIndex !== -</span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">x_google_ignoreList === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s2">x_google_ignoreList = </span><span class="s1">[]</span><span class="s2">;</span>
+				<span class="s2">}</span>
+				<span class="s2">x_google_ignoreList.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">sourceIndex</span><span class="s1">)</span><span class="s2">;</span>
+			<span class="s2">}</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">{</span>
+			<span class="s1">file</span><span class="s2">: options.file ? options.file.</span><span class="s4">split</span><span class="s1">(</span><span class="s2">/</span><span class="s10">[</span><span class="s6">/</span><span class="s8">\\</span><span class="s10">]</span><span class="s2">/</span><span class="s1">)</span><span class="s2">.</span><span class="s4">pop</span><span class="s1">() </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+			<span class="s1">sources</span><span class="s2">: this.uniqueSources.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s2">options.file ? </span><span class="s4">getRelativePath</span><span class="s1">(</span><span class="s2">options.file, source.filename</span><span class="s1">) </span><span class="s2">: source.filename;</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+			<span class="s1">sourcesContent</span><span class="s2">: this.uniqueSources.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s2">options.includeContent ? source.content : </span><span class="s6">null</span><span class="s2">;</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+			<span class="s2">names,</span>
+			<span class="s1">mappings</span><span class="s2">: mappings.raw,</span>
+			<span class="s2">x_google_ignoreList,</span>
+		<span class="s2">};</span>
+	<span class="s2">}</span>
+
+	<span class="s4">generateMap</span><span class="s2">(options) {</span>
+		<span class="s0">return </span><span class="s2">new </span><span class="s4">SourceMap</span><span class="s1">(</span><span class="s2">this.</span><span class="s4">generateDecodedMap</span><span class="s1">(</span><span class="s2">options</span><span class="s1">))</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">getIndentString</span><span class="s2">() {</span>
+		<span class="s0">const </span><span class="s2">indentStringCounts = {};</span>
+
+		<span class="s2">this.sources.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">indentStr = source.content.</span><span class="s4">_getRawIndentString</span><span class="s1">()</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">indentStr === </span><span class="s6">null</span><span class="s1">) </span><span class="s0">return</span><span class="s2">;</span>
+
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">!indentStringCounts</span><span class="s1">[</span><span class="s2">indentStr</span><span class="s1">]) </span><span class="s2">indentStringCounts</span><span class="s1">[</span><span class="s2">indentStr</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+			<span class="s2">indentStringCounts</span><span class="s1">[</span><span class="s2">indentStr</span><span class="s1">] </span><span class="s2">+= </span><span class="s5">1</span><span class="s2">;</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s1">(</span>
+			<span class="s2">Object.</span><span class="s4">keys</span><span class="s1">(</span><span class="s2">indentStringCounts</span><span class="s1">)</span><span class="s2">.</span><span class="s4">sort</span><span class="s1">(</span><span class="s2">(a, b) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">return </span><span class="s2">indentStringCounts</span><span class="s1">[</span><span class="s2">a</span><span class="s1">] </span><span class="s2">- indentStringCounts</span><span class="s1">[</span><span class="s2">b</span><span class="s1">]</span><span class="s2">;</span>
+			<span class="s2">}</span><span class="s1">)[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">|| '</span><span class="s8">\t</span><span class="s2">'</span>
+		<span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">indent</span><span class="s2">(indentStr) {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!arguments.</span><span class="s1">length) </span><span class="s2">{</span>
+			<span class="s2">indentStr = this.</span><span class="s4">getIndentString</span><span class="s1">()</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">indentStr === ''</span><span class="s1">) </span><span class="s0">return </span><span class="s2">this; // </span><span class="s7">noop</span>
+
+		<span class="s0">let </span><span class="s2">trailingNewline = !this.intro || this.intro.</span><span class="s4">slice</span><span class="s1">(</span><span class="s2">-</span><span class="s5">1</span><span class="s1">) </span><span class="s2">=== '</span><span class="s8">\n</span><span class="s2">';</span>
+
+		<span class="s2">this.sources.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(source, i) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+			<span class="s0">const </span><span class="s2">separator = source.separator !== </span><span class="s6">undefined </span><span class="s2">? source.separator : this.separator;</span>
+			<span class="s0">const </span><span class="s2">indentStart = trailingNewline || </span><span class="s1">(</span><span class="s2">i &gt; </span><span class="s5">0 </span><span class="s2">&amp;&amp; /</span><span class="s6">\r</span><span class="s2">?</span><span class="s6">\n</span><span class="s0">$</span><span class="s2">/.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">separator</span><span class="s1">))</span><span class="s2">;</span>
+
+			<span class="s2">source.content.</span><span class="s4">indent</span><span class="s1">(</span><span class="s2">indentStr, {</span>
+				<span class="s1">exclude</span><span class="s2">: source.indentExclusionRanges,</span>
+				<span class="s2">indentStart, //</span><span class="s7">: trailingNewline || /\r?\n$/.test( separator )  //true///\r?\n/.test( separator )</span>
+			<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+			<span class="s2">trailingNewline = source.content.</span><span class="s4">lastChar</span><span class="s1">() </span><span class="s2">=== '</span><span class="s8">\n</span><span class="s2">';</span>
+		<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s2">this.intro =</span>
+				<span class="s2">indentStr +</span>
+				<span class="s2">this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s0">^</span><span class="s10">[^</span><span class="s6">\n</span><span class="s10">]</span><span class="s2">/</span><span class="s0">gm</span><span class="s2">, (match, index) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+					<span class="s0">return </span><span class="s2">index &gt; </span><span class="s5">0 </span><span class="s2">? indentStr + match : match;</span>
+				<span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">prepend</span><span class="s2">(str) {</span>
+		<span class="s2">this.intro = str + this.intro;</span>
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">toString</span><span class="s2">() {</span>
+		<span class="s0">const </span><span class="s2">body = this.sources</span>
+			<span class="s2">.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(source, i) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+				<span class="s0">const </span><span class="s2">separator = source.separator !== </span><span class="s6">undefined </span><span class="s2">? source.separator : this.separator;</span>
+				<span class="s0">const </span><span class="s2">str = </span><span class="s1">(</span><span class="s2">i &gt; </span><span class="s5">0 </span><span class="s2">? separator : ''</span><span class="s1">) </span><span class="s2">+ source.content.</span><span class="s4">toString</span><span class="s1">()</span><span class="s2">;</span>
+
+				<span class="s0">return </span><span class="s2">str;</span>
+			<span class="s2">}</span><span class="s1">)</span>
+			<span class="s2">.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">''</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">this.intro + body;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">isEmpty</span><span class="s2">() {</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.intro.</span><span class="s1">length </span><span class="s2">&amp;&amp; this.intro.</span><span class="s4">trim</span><span class="s1">()) </span><span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">this.sources.</span><span class="s4">some</span><span class="s1">(</span><span class="s2">(source) </span><span class="s0">=&gt; </span><span class="s2">!source.content.</span><span class="s4">isEmpty</span><span class="s1">())) </span><span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+		<span class="s0">return </span><span class="s6">true</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">length</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">this.sources.</span><span class="s4">reduce</span><span class="s1">(</span>
+			<span class="s2">(length, source) </span><span class="s0">=&gt; </span><span class="s2">length + source.content.</span><span class="s4">length</span><span class="s1">()</span><span class="s2">,</span>
+			<span class="s2">this.intro.</span><span class="s1">length</span><span class="s2">,</span>
+		<span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimLines</span><span class="s2">() {</span>
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">trim</span><span class="s1">(</span><span class="s2">'</span><span class="s3">[</span><span class="s8">\\</span><span class="s3">r</span><span class="s8">\\</span><span class="s3">n]</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trim</span><span class="s2">(charType) {</span>
+		<span class="s0">return </span><span class="s2">this.</span><span class="s4">trimStart</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">.</span><span class="s4">trimEnd</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">)</span><span class="s2">;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimStart</span><span class="s2">(charType) {</span>
+		<span class="s0">const </span><span class="s2">rx = new </span><span class="s4">RegExp</span><span class="s1">(</span><span class="s2">'</span><span class="s3">^</span><span class="s2">' + </span><span class="s1">(</span><span class="s2">charType || '</span><span class="s8">\\</span><span class="s3">s</span><span class="s2">'</span><span class="s1">) </span><span class="s2">+ '</span><span class="s3">+</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+		<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">if </span><span class="s1">(</span><span class="s2">!this.intro</span><span class="s1">) </span><span class="s2">{</span>
+			<span class="s0">let </span><span class="s2">source;</span>
+			<span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">;</span>
+
+			<span class="s0">do </span><span class="s2">{</span>
+				<span class="s2">source = this.sources</span><span class="s1">[</span><span class="s2">i++</span><span class="s1">]</span><span class="s2">;</span>
+				<span class="s0">if </span><span class="s1">(</span><span class="s2">!source</span><span class="s1">) </span><span class="s2">{</span>
+					<span class="s0">break</span><span class="s2">;</span>
+				<span class="s2">}</span>
+			<span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">!source.content.</span><span class="s4">trimStartAborted</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">))</span><span class="s2">;</span>
+		<span class="s2">}</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+
+	<span class="s4">trimEnd</span><span class="s2">(charType) {</span>
+		<span class="s0">const </span><span class="s2">rx = new </span><span class="s4">RegExp</span><span class="s1">((</span><span class="s2">charType || '</span><span class="s8">\\</span><span class="s3">s</span><span class="s2">'</span><span class="s1">) </span><span class="s2">+ '</span><span class="s3">+$</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+
+		<span class="s0">let </span><span class="s2">source;</span>
+		<span class="s0">let </span><span class="s2">i = this.sources.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s2">;</span>
+
+		<span class="s0">do </span><span class="s2">{</span>
+			<span class="s2">source = this.sources</span><span class="s1">[</span><span class="s2">i--</span><span class="s1">]</span><span class="s2">;</span>
+			<span class="s0">if </span><span class="s1">(</span><span class="s2">!source</span><span class="s1">) </span><span class="s2">{</span>
+				<span class="s2">this.intro = this.intro.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">rx, ''</span><span class="s1">)</span><span class="s2">;</span>
+				<span class="s0">break</span><span class="s2">;</span>
+			<span class="s2">}</span>
+		<span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">!source.content.</span><span class="s4">trimEndAborted</span><span class="s1">(</span><span class="s2">charType</span><span class="s1">))</span><span class="s2">;</span>
+
+		<span class="s0">return </span><span class="s2">this;</span>
+	<span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ Bundle, SourceMap, MagicString </span><span class="s0">as default </span><span class="s2">};</span>
+<span class="s2">//</span><span class="s7"># sourceMappingURL=magic-string.es.mjs.map</span>
+</pre>
+</body>
+</html>

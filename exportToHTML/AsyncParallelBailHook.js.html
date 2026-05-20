@@ -1,0 +1,108 @@
+<html>
+<head>
+<title>AsyncParallelBailHook.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+AsyncParallelBailHook.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const Hook = require(</span><span class="s2">&quot;./Hook&quot;</span><span class="s1">);</span>
+<span class="s1">const HookCodeFactory = require(</span><span class="s2">&quot;./HookCodeFactory&quot;</span><span class="s1">);</span>
+
+<span class="s1">class AsyncParallelBailHookCodeFactory extends HookCodeFactory {</span>
+	<span class="s1">content({ onError, onResult, onDone }) {</span>
+		<span class="s1">let code = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+		<span class="s1">code += `</span><span class="s3">var </span><span class="s1">_results = </span><span class="s3">new </span><span class="s1">Array(${</span><span class="s3">this</span><span class="s1">.options.taps.length});\n`;</span>
+		<span class="s1">code += </span><span class="s2">&quot;var _checkDone = function() {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;for(var i = 0; i &lt; _results.length; i++) {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;var item = _results[i];</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;if(item === undefined) return false;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;if(item.result !== undefined) {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += onResult(</span><span class="s2">&quot;item.result&quot;</span><span class="s1">);</span>
+		<span class="s1">code += </span><span class="s2">&quot;return true;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;if(item.error) {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += onError(</span><span class="s2">&quot;item.error&quot;</span><span class="s1">);</span>
+		<span class="s1">code += </span><span class="s2">&quot;return true;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;return false;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+		<span class="s1">code += </span><span class="s3">this</span><span class="s1">.callTapsParallel({</span>
+			<span class="s1">onError: (i, err, done, doneBreak) =&gt; {</span>
+				<span class="s1">let code = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+				<span class="s1">code += `</span><span class="s3">if</span><span class="s1">(${i} &lt; _results.length &amp;&amp; ((_results.length = ${</span>
+					<span class="s1">i + </span><span class="s4">1</span>
+				<span class="s1">}), (_results[${i}] = { error: ${err} }), _checkDone())) {\n`;</span>
+				<span class="s1">code += doneBreak(</span><span class="s3">true</span><span class="s1">);</span>
+				<span class="s1">code += </span><span class="s2">&quot;} else {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s1">code += done();</span>
+				<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s3">return </span><span class="s1">code;</span>
+			<span class="s1">},</span>
+			<span class="s1">onResult: (i, result, done, doneBreak) =&gt; {</span>
+				<span class="s1">let code = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+				<span class="s1">code += `</span><span class="s3">if</span><span class="s1">(${i} &lt; _results.length &amp;&amp; (${result} !== undefined &amp;&amp; (_results.length = ${</span>
+					<span class="s1">i + </span><span class="s4">1</span>
+				<span class="s1">}), (_results[${i}] = { result: ${result} }), _checkDone())) {\n`;</span>
+				<span class="s1">code += doneBreak(</span><span class="s3">true</span><span class="s1">);</span>
+				<span class="s1">code += </span><span class="s2">&quot;} else {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s1">code += done();</span>
+				<span class="s1">code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s3">return </span><span class="s1">code;</span>
+			<span class="s1">},</span>
+			<span class="s1">onTap: (i, run, done, _doneBreak) =&gt; {</span>
+				<span class="s1">let code = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+				<span class="s3">if </span><span class="s1">(i &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+					<span class="s1">code += `</span><span class="s3">if</span><span class="s1">(${i} &gt;= _results.length) {\n`;</span>
+					<span class="s1">code += done();</span>
+					<span class="s1">code += </span><span class="s2">&quot;} else {</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s1">}</span>
+				<span class="s1">code += run();</span>
+				<span class="s3">if </span><span class="s1">(i &gt; </span><span class="s4">0</span><span class="s1">) code += </span><span class="s2">&quot;}</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">;</span>
+				<span class="s3">return </span><span class="s1">code;</span>
+			<span class="s1">},</span>
+			<span class="s1">onDone</span>
+		<span class="s1">});</span>
+		<span class="s3">return </span><span class="s1">code;</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">const factory = </span><span class="s3">new </span><span class="s1">AsyncParallelBailHookCodeFactory();</span>
+
+<span class="s3">function </span><span class="s1">COMPILE(options) {</span>
+	<span class="s1">factory.setup(</span><span class="s3">this</span><span class="s1">, options);</span>
+	<span class="s3">return </span><span class="s1">factory.create(options);</span>
+<span class="s1">}</span>
+
+<span class="s3">function </span><span class="s1">AsyncParallelBailHook(args = [], name = undefined) {</span>
+	<span class="s1">const hook = </span><span class="s3">new </span><span class="s1">Hook(args, name);</span>
+	<span class="s1">hook.constructor = AsyncParallelBailHook;</span>
+	<span class="s1">hook.compile = COMPILE;</span>
+	<span class="s1">hook._call = undefined;</span>
+	<span class="s1">hook.call = undefined;</span>
+	<span class="s3">return </span><span class="s1">hook;</span>
+<span class="s1">}</span>
+
+<span class="s1">AsyncParallelBailHook.prototype = </span><span class="s3">null</span><span class="s1">;</span>
+
+<span class="s1">module.exports = AsyncParallelBailHook;</span>
+</pre>
+</body>
+</html>

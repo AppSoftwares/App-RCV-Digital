@@ -1,0 +1,149 @@
+<html>
+<head>
+<title>delta-apply.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+delta-apply.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ mixNumber } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../utils/mix/number.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ hasTransform } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/has-transform.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Scales a point based on a factor and an originPoint 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">scalePoint</span><span class="s2">(point, scale, originPoint) {</span>
+    <span class="s0">const </span><span class="s2">distanceFromOrigin = point - originPoint;</span>
+    <span class="s0">const </span><span class="s2">scaled = scale * distanceFromOrigin;</span>
+    <span class="s0">return </span><span class="s2">originPoint + scaled;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Applies a translate/scale delta to a point 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">applyPointDelta</span><span class="s2">(point, translate, scale, originPoint, boxScale) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">boxScale !== </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">point = </span><span class="s5">scalePoint</span><span class="s1">(</span><span class="s2">point, boxScale, originPoint</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s5">scalePoint</span><span class="s1">(</span><span class="s2">point, scale, originPoint</span><span class="s1">) </span><span class="s2">+ translate;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Applies a translate/scale delta to an axis 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">applyAxisDelta</span><span class="s2">(axis, translate = </span><span class="s7">0</span><span class="s2">, scale = </span><span class="s7">1</span><span class="s2">, originPoint, boxScale) {</span>
+    <span class="s2">axis.min = </span><span class="s5">applyPointDelta</span><span class="s1">(</span><span class="s2">axis.min, translate, scale, originPoint, boxScale</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">axis.max = </span><span class="s5">applyPointDelta</span><span class="s1">(</span><span class="s2">axis.max, translate, scale, originPoint, boxScale</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Applies a translate/scale delta to a box 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">applyBoxDelta</span><span class="s2">(box, { x, y }) {</span>
+    <span class="s5">applyAxisDelta</span><span class="s1">(</span><span class="s2">box.x, x.translate, x.scale, x.originPoint</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s5">applyAxisDelta</span><span class="s1">(</span><span class="s2">box.y, y.translate, y.scale, y.originPoint</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">const </span><span class="s2">TREE_SCALE_SNAP_MIN = </span><span class="s7">0.999999999999</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">TREE_SCALE_SNAP_MAX = </span><span class="s7">1.0000000000001</span><span class="s2">;</span>
+<span class="s2">/**</span>
+ <span class="s4">* Apply a tree of deltas to a box. We do this to calculate the effect of all the transforms 
+ * in a tree upon our box before then calculating how to project it into our desired viewport-relative box 
+ * 
+ * This is the final nested loop within updateLayoutDelta for future refactoring 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">applyTreeDeltas</span><span class="s2">(box, treeScale, treePath, isSharedTransition = </span><span class="s6">false</span><span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">treeLength = treePath.</span><span class="s1">length</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!treeLength</span><span class="s1">)</span>
+        <span class="s0">return</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s4">Reset the treeScale</span>
+    <span class="s2">treeScale.x = treeScale.y = </span><span class="s7">1</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">node;</span>
+    <span class="s0">let </span><span class="s2">delta;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; treeLength; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">node = treePath</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">delta = node.projectionDelta;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* TODO: Prefer to remove this, but currently we have motion components with 
+         * display: contents in Framer. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">{ visualElement } = node.options;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">visualElement &amp;&amp;</span>
+            <span class="s2">visualElement.props.style &amp;&amp;</span>
+            <span class="s2">visualElement.props.style.display === &quot;</span><span class="s3">contents</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">continue</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isSharedTransition &amp;&amp;</span>
+            <span class="s2">node.options.layoutScroll &amp;&amp;</span>
+            <span class="s2">node.scroll &amp;&amp;</span>
+            <span class="s2">node !== node.root</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s5">translateAxis</span><span class="s1">(</span><span class="s2">box.x, -node.scroll.offset.x</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s5">translateAxis</span><span class="s1">(</span><span class="s2">box.y, -node.scroll.offset.y</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">delta</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">// </span><span class="s4">Incoporate each ancestor's scale into a cumulative treeScale for this component</span>
+            <span class="s2">treeScale.x *= delta.x.scale;</span>
+            <span class="s2">treeScale.y *= delta.y.scale;</span>
+            <span class="s2">// </span><span class="s4">Apply each ancestor's calculated delta into this component's recorded layout box</span>
+            <span class="s5">applyBoxDelta</span><span class="s1">(</span><span class="s2">box, delta</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isSharedTransition &amp;&amp; </span><span class="s5">hasTransform</span><span class="s1">(</span><span class="s2">node.latestValues</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s5">transformBox</span><span class="s1">(</span><span class="s2">box, node.latestValues, node.layout?.layoutBox</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Snap tree scale back to 1 if it's within a non-perceivable threshold. 
+     * This will help reduce useless scales getting rendered. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">treeScale.x &lt; TREE_SCALE_SNAP_MAX &amp;&amp;</span>
+        <span class="s2">treeScale.x &gt; TREE_SCALE_SNAP_MIN</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">treeScale.x = </span><span class="s7">1.0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">treeScale.y &lt; TREE_SCALE_SNAP_MAX &amp;&amp;</span>
+        <span class="s2">treeScale.y &gt; TREE_SCALE_SNAP_MIN</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">treeScale.y = </span><span class="s7">1.0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">translateAxis</span><span class="s2">(axis, distance) {</span>
+    <span class="s2">axis.min += distance;</span>
+    <span class="s2">axis.max += distance;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Apply a transform to an axis from the latest resolved motion values. 
+ * This function basically acts as a bridge between a flat motion value map 
+ * and applyAxisDelta 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">transformAxis</span><span class="s2">(axis, axisTranslate, axisScale, boxScale, axisOrigin = </span><span class="s7">0.5</span><span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">originPoint = </span><span class="s5">mixNumber</span><span class="s1">(</span><span class="s2">axis.min, axis.max, axisOrigin</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s4">Apply the axis delta to the final axis</span>
+    <span class="s5">applyAxisDelta</span><span class="s1">(</span><span class="s2">axis, axisTranslate, axisScale, originPoint, boxScale</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">resolveAxisTranslate</span><span class="s2">(value, axis) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value === &quot;</span><span class="s3">string</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s1">(</span><span class="s5">parseFloat</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">/ </span><span class="s7">100</span><span class="s1">) </span><span class="s2">* </span><span class="s1">(</span><span class="s2">axis.max - axis.min</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">value;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Apply a transform to a box from the latest resolved motion values. 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">transformBox</span><span class="s2">(box, transform, sourceBox) {</span>
+    <span class="s0">const </span><span class="s2">resolveBox = sourceBox ?? box;</span>
+    <span class="s5">transformAxis</span><span class="s1">(</span><span class="s2">box.x, </span><span class="s5">resolveAxisTranslate</span><span class="s1">(</span><span class="s2">transform.x, resolveBox.x</span><span class="s1">)</span><span class="s2">, transform.scaleX, transform.scale, transform.originX</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s5">transformAxis</span><span class="s1">(</span><span class="s2">box.y, </span><span class="s5">resolveAxisTranslate</span><span class="s1">(</span><span class="s2">transform.y, resolveBox.y</span><span class="s1">)</span><span class="s2">, transform.scaleY, transform.scale, transform.originY</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ applyAxisDelta, applyBoxDelta, applyPointDelta, applyTreeDeltas, scalePoint, transformAxis, transformBox, translateAxis };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=delta-apply.mjs.map</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<html>
+<head>
+<title>jwtclient.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+jwtclient.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2013 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.JWT = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const googleToken_1 = require(</span><span class="s0">&quot;../gtoken/googleToken&quot;</span><span class="s1">);</span>
+<span class="s1">const getCredentials_1 = require(</span><span class="s0">&quot;../gtoken/getCredentials&quot;</span><span class="s1">);</span>
+<span class="s1">const jwtaccess_1 = require(</span><span class="s0">&quot;./jwtaccess&quot;</span><span class="s1">);</span>
+<span class="s1">const oauth2client_1 = require(</span><span class="s0">&quot;./oauth2client&quot;</span><span class="s1">);</span>
+<span class="s1">const authclient_1 = require(</span><span class="s0">&quot;./authclient&quot;</span><span class="s1">);</span>
+<span class="s1">class JWT extends oauth2client_1.OAuth2Client {</span>
+    <span class="s1">email;</span>
+    <span class="s1">keyFile;</span>
+    <span class="s1">key;</span>
+    <span class="s1">keyId;</span>
+    <span class="s1">defaultScopes;</span>
+    <span class="s1">scopes;</span>
+    <span class="s1">scope;</span>
+    <span class="s1">subject;</span>
+    <span class="s1">gtoken;</span>
+    <span class="s1">additionalClaims;</span>
+    <span class="s1">useJWTAccessWithScope;</span>
+    <span class="s1">defaultServicePath;</span>
+    <span class="s1">access;</span>
+    <span class="s2">/** 
+     * JWT service account credentials. 
+     * 
+     * Retrieve access token using gtoken. 
+     * 
+     * @param options the 
+     */</span>
+    <span class="s1">constructor(options = {}) {</span>
+        <span class="s1">super(options);</span>
+        <span class="s3">this</span><span class="s1">.email = options.email;</span>
+        <span class="s3">this</span><span class="s1">.keyFile = options.keyFile;</span>
+        <span class="s3">this</span><span class="s1">.key = options.key;</span>
+        <span class="s3">this</span><span class="s1">.keyId = options.keyId;</span>
+        <span class="s3">this</span><span class="s1">.scopes = options.scopes;</span>
+        <span class="s3">this</span><span class="s1">.subject = options.subject;</span>
+        <span class="s3">this</span><span class="s1">.additionalClaims = options.additionalClaims;</span>
+        <span class="s2">// Start with an expired refresh token, which will automatically be</span>
+        <span class="s2">// refreshed before the first API call is made.</span>
+        <span class="s3">this</span><span class="s1">.credentials = { refresh_token: </span><span class="s0">'jwt-placeholder'</span><span class="s1">, expiry_date: </span><span class="s4">1 </span><span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Creates a copy of the credential with the specified scopes. 
+     * @param scopes List of requested scopes or a single scope. 
+     * @return The cloned instance. 
+     */</span>
+    <span class="s1">createScoped(scopes) {</span>
+        <span class="s1">const jwt = </span><span class="s3">new </span><span class="s1">JWT(</span><span class="s3">this</span><span class="s1">);</span>
+        <span class="s1">jwt.scopes = scopes;</span>
+        <span class="s3">return </span><span class="s1">jwt;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Obtains the metadata to be sent with the request. 
+     * 
+     * @param url the URI being authorized. 
+     */</span>
+    <span class="s1">async getRequestMetadataAsync(url) {</span>
+        <span class="s1">url = </span><span class="s3">this</span><span class="s1">.defaultServicePath ? `https:</span><span class="s2">//${this.defaultServicePath}/` : url;</span>
+        <span class="s1">const useSelfSignedJWT = (!</span><span class="s3">this</span><span class="s1">.hasUserScopes() &amp;&amp; url) ||</span>
+            <span class="s1">(</span><span class="s3">this</span><span class="s1">.useJWTAccessWithScope &amp;&amp; </span><span class="s3">this</span><span class="s1">.hasAnyScopes()) ||</span>
+            <span class="s3">this</span><span class="s1">.universeDomain !== authclient_1.DEFAULT_UNIVERSE;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.subject &amp;&amp; </span><span class="s3">this</span><span class="s1">.universeDomain !== authclient_1.DEFAULT_UNIVERSE) {</span>
+            <span class="s3">throw new </span><span class="s1">RangeError(`Service Account user is configured </span><span class="s3">for </span><span class="s1">the credential. Domain-wide delegation is not supported </span><span class="s3">in </span><span class="s1">universes other than ${authclient_1.DEFAULT_UNIVERSE}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.apiKey &amp;&amp; useSelfSignedJWT) {</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.additionalClaims &amp;&amp;</span>
+                <span class="s3">this</span><span class="s1">.additionalClaims.target_audience) {</span>
+                <span class="s1">const { tokens } = await </span><span class="s3">this</span><span class="s1">.refreshToken();</span>
+                <span class="s3">return </span><span class="s1">{</span>
+                    <span class="s1">headers: </span><span class="s3">this</span><span class="s1">.addSharedMetadataHeaders(</span><span class="s3">new </span><span class="s1">Headers({</span>
+                        <span class="s1">authorization: `Bearer ${tokens.id_token}`,</span>
+                    <span class="s1">})),</span>
+                <span class="s1">};</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s2">// no scopes have been set, but a uri has been provided. Use JWTAccess</span>
+                <span class="s2">// credentials.</span>
+                <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.access) {</span>
+                    <span class="s3">this</span><span class="s1">.access = </span><span class="s3">new </span><span class="s1">jwtaccess_1.JWTAccess(</span><span class="s3">this</span><span class="s1">.email, </span><span class="s3">this</span><span class="s1">.key, </span><span class="s3">this</span><span class="s1">.keyId, </span><span class="s3">this</span><span class="s1">.eagerRefreshThresholdMillis);</span>
+                <span class="s1">}</span>
+                <span class="s1">let scopes;</span>
+                <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.hasUserScopes()) {</span>
+                    <span class="s1">scopes = </span><span class="s3">this</span><span class="s1">.scopes;</span>
+                <span class="s1">}</span>
+                <span class="s3">else if </span><span class="s1">(!url) {</span>
+                    <span class="s1">scopes = </span><span class="s3">this</span><span class="s1">.defaultScopes;</span>
+                <span class="s1">}</span>
+                <span class="s1">const useScopes = </span><span class="s3">this</span><span class="s1">.useJWTAccessWithScope ||</span>
+                    <span class="s3">this</span><span class="s1">.universeDomain !== authclient_1.DEFAULT_UNIVERSE;</span>
+                <span class="s1">const headers = await </span><span class="s3">this</span><span class="s1">.access.getRequestHeaders(url ?? undefined, </span><span class="s3">this</span><span class="s1">.additionalClaims, </span>
+                <span class="s2">// Scopes take precedent over audience for signing,</span>
+                <span class="s2">// so we only provide them if `useJWTAccessWithScope` is on or</span>
+                <span class="s2">// if we are in a non-default universe</span>
+                <span class="s1">useScopes ? scopes : undefined);</span>
+                <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">this</span><span class="s1">.addSharedMetadataHeaders(headers) };</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.hasAnyScopes() || </span><span class="s3">this</span><span class="s1">.apiKey) {</span>
+            <span class="s3">return </span><span class="s1">super.getRequestMetadataAsync(url);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s2">// If no audience, apiKey, or scopes are provided, we should not attempt</span>
+            <span class="s2">// to populate any headers:</span>
+            <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">new </span><span class="s1">Headers() };</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Fetches an ID token. 
+     * @param targetAudience the audience for the fetched ID token. 
+     */</span>
+    <span class="s1">async fetchIdToken(targetAudience) {</span>
+        <span class="s2">// Create a new gToken for fetching an ID token</span>
+        <span class="s1">const gtoken = </span><span class="s3">new </span><span class="s1">googleToken_1.GoogleToken({</span>
+            <span class="s1">iss: </span><span class="s3">this</span><span class="s1">.email,</span>
+            <span class="s1">sub: </span><span class="s3">this</span><span class="s1">.subject,</span>
+            <span class="s1">scope: </span><span class="s3">this</span><span class="s1">.scopes || </span><span class="s3">this</span><span class="s1">.defaultScopes,</span>
+            <span class="s1">keyFile: </span><span class="s3">this</span><span class="s1">.keyFile,</span>
+            <span class="s1">key: </span><span class="s3">this</span><span class="s1">.key,</span>
+            <span class="s1">additionalClaims: { target_audience: targetAudience },</span>
+            <span class="s1">transporter: </span><span class="s3">this</span><span class="s1">.transporter,</span>
+        <span class="s1">});</span>
+        <span class="s1">await gtoken.getToken({</span>
+            <span class="s1">forceRefresh: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s3">if </span><span class="s1">(!gtoken.idToken) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Unknown error: Failed to fetch ID token'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">gtoken.idToken;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Determine if there are currently scopes available. 
+     */</span>
+    <span class="s1">hasUserScopes() {</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.scopes) {</span>
+            <span class="s3">return false</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.scopes.length &gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Are there any default or user scopes defined. 
+     */</span>
+    <span class="s1">hasAnyScopes() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.scopes &amp;&amp; </span><span class="s3">this</span><span class="s1">.scopes.length &gt; </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s3">return true</span><span class="s1">;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.defaultScopes &amp;&amp; </span><span class="s3">this</span><span class="s1">.defaultScopes.length &gt; </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s3">return true</span><span class="s1">;</span>
+        <span class="s3">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">authorize(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.authorizeAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.authorizeAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async authorizeAsync() {</span>
+        <span class="s1">const result = await </span><span class="s3">this</span><span class="s1">.refreshToken();</span>
+        <span class="s3">if </span><span class="s1">(!result) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No result returned'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.credentials = result.tokens;</span>
+        <span class="s3">this</span><span class="s1">.credentials.refresh_token = </span><span class="s0">'jwt-placeholder'</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.key = </span><span class="s3">this</span><span class="s1">.gtoken.googleTokenOptions?.key;</span>
+        <span class="s3">this</span><span class="s1">.email = </span><span class="s3">this</span><span class="s1">.gtoken.googleTokenOptions?.iss;</span>
+        <span class="s3">return </span><span class="s1">result.tokens;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Refreshes the access token. 
+     * @param refreshToken ignored 
+     * @private 
+     */</span>
+    <span class="s1">async refreshTokenNoCache() {</span>
+        <span class="s1">const gtoken = </span><span class="s3">this</span><span class="s1">.createGToken();</span>
+        <span class="s1">const token = await gtoken.getToken({</span>
+            <span class="s1">forceRefresh: </span><span class="s3">this</span><span class="s1">.isTokenExpiring(),</span>
+        <span class="s1">});</span>
+        <span class="s1">const tokens = {</span>
+            <span class="s1">access_token: token.access_token,</span>
+            <span class="s1">token_type: </span><span class="s0">'Bearer'</span><span class="s1">,</span>
+            <span class="s1">expiry_date: gtoken.expiresAt,</span>
+            <span class="s1">id_token: gtoken.idToken,</span>
+        <span class="s1">};</span>
+        <span class="s3">this</span><span class="s1">.emit(</span><span class="s0">'tokens'</span><span class="s1">, tokens);</span>
+        <span class="s3">return </span><span class="s1">{ res: </span><span class="s3">null</span><span class="s1">, tokens };</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a gToken if it doesn't already exist. 
+     */</span>
+    <span class="s1">createGToken() {</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.gtoken) {</span>
+            <span class="s3">this</span><span class="s1">.gtoken = </span><span class="s3">new </span><span class="s1">googleToken_1.GoogleToken({</span>
+                <span class="s1">iss: </span><span class="s3">this</span><span class="s1">.email,</span>
+                <span class="s1">sub: </span><span class="s3">this</span><span class="s1">.subject,</span>
+                <span class="s1">scope: </span><span class="s3">this</span><span class="s1">.scopes || </span><span class="s3">this</span><span class="s1">.defaultScopes,</span>
+                <span class="s1">keyFile: </span><span class="s3">this</span><span class="s1">.keyFile,</span>
+                <span class="s1">key: </span><span class="s3">this</span><span class="s1">.key,</span>
+                <span class="s1">additionalClaims: </span><span class="s3">this</span><span class="s1">.additionalClaims,</span>
+                <span class="s1">transporter: </span><span class="s3">this</span><span class="s1">.transporter,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.gtoken;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a JWT credentials instance using the given input options. 
+     * @param json The input object. 
+     * 
+     * @remarks 
+     * 
+     * **Important**: If you accept a credential configuration (credential JSON/File/Stream) from an external source for authentication to Google Cloud, you must validate it before providing it to any Google API or library. Providing an unvalidated credential configuration to Google APIs can compromise the security of your systems and data. For more information, refer to {@link https://cloud.google.com/docs/authentication/external/externally-sourced-credentials Validate credential configurations from external sources}. 
+     */</span>
+    <span class="s1">fromJSON(json) {</span>
+        <span class="s3">if </span><span class="s1">(!json) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must pass in a JSON object containing the service account auth settings.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.client_email) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a client_email field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.private_key) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a private_key field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Extract the relevant information from the json key file.</span>
+        <span class="s3">this</span><span class="s1">.email = json.client_email;</span>
+        <span class="s3">this</span><span class="s1">.key = json.private_key;</span>
+        <span class="s3">this</span><span class="s1">.keyId = json.private_key_id;</span>
+        <span class="s3">this</span><span class="s1">.projectId = json.project_id;</span>
+        <span class="s3">this</span><span class="s1">.quotaProjectId = json.quota_project_id;</span>
+        <span class="s3">this</span><span class="s1">.universeDomain = json.universe_domain || </span><span class="s3">this</span><span class="s1">.universeDomain;</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStream(inputStream, callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.fromStreamAsync(inputStream).then(() =&gt; callback(), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.fromStreamAsync(inputStream);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStreamAsync(inputStream) {</span>
+        <span class="s3">return new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+            <span class="s3">if </span><span class="s1">(!inputStream) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must pass in a stream containing the service account auth settings.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s1">let s = </span><span class="s0">''</span><span class="s1">;</span>
+            <span class="s1">inputStream</span>
+                <span class="s1">.setEncoding(</span><span class="s0">'utf8'</span><span class="s1">)</span>
+                <span class="s1">.on(</span><span class="s0">'error'</span><span class="s1">, reject)</span>
+                <span class="s1">.on(</span><span class="s0">'data'</span><span class="s1">, chunk =&gt; (s += chunk))</span>
+                <span class="s1">.on(</span><span class="s0">'end'</span><span class="s1">, () =&gt; {</span>
+                <span class="s3">try </span><span class="s1">{</span>
+                    <span class="s1">const data = JSON.parse(s);</span>
+                    <span class="s3">this</span><span class="s1">.fromJSON(data);</span>
+                    <span class="s1">resolve();</span>
+                <span class="s1">}</span>
+                <span class="s3">catch </span><span class="s1">(e) {</span>
+                    <span class="s1">reject(e);</span>
+                <span class="s1">}</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Creates a JWT credentials instance using an API Key for authentication. 
+     * @param apiKey The API Key in string form. 
+     */</span>
+    <span class="s1">fromAPIKey(apiKey) {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">apiKey !== </span><span class="s0">'string'</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must provide an API Key string.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.apiKey = apiKey;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Using the key or keyFile on the JWT client, obtain an object that contains 
+     * the key and the client email. 
+     */</span>
+    <span class="s1">async getCredentials() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.key) {</span>
+            <span class="s3">return </span><span class="s1">{ private_key: </span><span class="s3">this</span><span class="s1">.key, client_email: </span><span class="s3">this</span><span class="s1">.email };</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.keyFile) {</span>
+            <span class="s1">const gtoken = </span><span class="s3">this</span><span class="s1">.createGToken();</span>
+            <span class="s1">const creds = await (</span><span class="s4">0</span><span class="s1">, getCredentials_1.getCredentials)(</span><span class="s3">this</span><span class="s1">.keyFile);</span>
+            <span class="s3">return </span><span class="s1">{ private_key: creds.privateKey, client_email: creds.clientEmail };</span>
+        <span class="s1">}</span>
+        <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'A key or a keyFile must be provided to getCredentials.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.JWT = JWT;</span>
+<span class="s2">//# sourceMappingURL=jwtclient.js.map</span></pre>
+</body>
+</html>

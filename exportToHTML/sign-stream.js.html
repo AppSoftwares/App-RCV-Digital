@@ -1,0 +1,103 @@
+<html>
+<head>
+<title>sign-stream.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+sign-stream.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/*global module*/</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s3">'safe-buffer'</span><span class="s1">).Buffer;</span>
+<span class="s2">var </span><span class="s1">DataStream = require(</span><span class="s3">'./data-stream'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">jwa = require(</span><span class="s3">'jwa'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">Stream = require(</span><span class="s3">'stream'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">toString = require(</span><span class="s3">'./tostring'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s3">'util'</span><span class="s1">);</span>
+
+<span class="s2">function </span><span class="s1">base64url(string, encoding) {</span>
+  <span class="s2">return </span><span class="s1">Buffer</span>
+    <span class="s1">.from(string, encoding)</span>
+    <span class="s1">.toString(</span><span class="s3">'base64'</span><span class="s1">)</span>
+    <span class="s1">.replace(/=/g, </span><span class="s3">''</span><span class="s1">)</span>
+    <span class="s1">.replace(/\+/g, </span><span class="s3">'-'</span><span class="s1">)</span>
+    <span class="s1">.replace(/\</span><span class="s0">//g, '_');</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">jwsSecuredInput(header, payload, encoding) {</span>
+  <span class="s1">encoding = encoding || </span><span class="s3">'utf8'</span><span class="s1">;</span>
+  <span class="s2">var </span><span class="s1">encodedHeader = base64url(toString(header), </span><span class="s3">'binary'</span><span class="s1">);</span>
+  <span class="s2">var </span><span class="s1">encodedPayload = base64url(toString(payload), encoding);</span>
+  <span class="s2">return </span><span class="s1">util.format(</span><span class="s3">'%s.%s'</span><span class="s1">, encodedHeader, encodedPayload);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">jwsSign(opts) {</span>
+  <span class="s2">var </span><span class="s1">header = opts.header;</span>
+  <span class="s2">var </span><span class="s1">payload = opts.payload;</span>
+  <span class="s2">var </span><span class="s1">secretOrKey = opts.secret || opts.privateKey;</span>
+  <span class="s2">var </span><span class="s1">encoding = opts.encoding;</span>
+  <span class="s2">var </span><span class="s1">algo = jwa(header.alg);</span>
+  <span class="s2">var </span><span class="s1">securedInput = jwsSecuredInput(header, payload, encoding);</span>
+  <span class="s2">var </span><span class="s1">signature = algo.sign(securedInput, secretOrKey);</span>
+  <span class="s2">return </span><span class="s1">util.format(</span><span class="s3">'%s.%s'</span><span class="s1">, securedInput, signature);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">SignStream(opts) {</span>
+  <span class="s2">var </span><span class="s1">secret = opts.secret;</span>
+  <span class="s1">secret = secret == </span><span class="s2">null </span><span class="s1">? opts.privateKey : secret;</span>
+  <span class="s1">secret = secret == </span><span class="s2">null </span><span class="s1">? opts.key : secret;</span>
+  <span class="s2">if </span><span class="s1">(/^hs/i.test(opts.header.alg) === </span><span class="s2">true </span><span class="s1">&amp;&amp; secret == </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s3">'secret must be a string or buffer or a KeyObject'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+  <span class="s2">var </span><span class="s1">secretStream = </span><span class="s2">new </span><span class="s1">DataStream(secret);</span>
+  <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.header = opts.header;</span>
+  <span class="s2">this</span><span class="s1">.encoding = opts.encoding;</span>
+  <span class="s2">this</span><span class="s1">.secret = </span><span class="s2">this</span><span class="s1">.privateKey = </span><span class="s2">this</span><span class="s1">.key = secretStream;</span>
+  <span class="s2">this</span><span class="s1">.payload = </span><span class="s2">new </span><span class="s1">DataStream(opts.payload);</span>
+  <span class="s2">this</span><span class="s1">.secret.once(</span><span class="s3">'close'</span><span class="s1">, </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.payload.writable &amp;&amp; </span><span class="s2">this</span><span class="s1">.readable)</span>
+      <span class="s2">this</span><span class="s1">.sign();</span>
+  <span class="s1">}.bind(</span><span class="s2">this</span><span class="s1">));</span>
+
+  <span class="s2">this</span><span class="s1">.payload.once(</span><span class="s3">'close'</span><span class="s1">, </span><span class="s2">function </span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.secret.writable &amp;&amp; </span><span class="s2">this</span><span class="s1">.readable)</span>
+      <span class="s2">this</span><span class="s1">.sign();</span>
+  <span class="s1">}.bind(</span><span class="s2">this</span><span class="s1">));</span>
+<span class="s1">}</span>
+<span class="s1">util.inherits(SignStream, Stream);</span>
+
+<span class="s1">SignStream.prototype.sign = </span><span class="s2">function </span><span class="s1">sign() {</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s2">var </span><span class="s1">signature = jwsSign({</span>
+      <span class="s1">header: </span><span class="s2">this</span><span class="s1">.header,</span>
+      <span class="s1">payload: </span><span class="s2">this</span><span class="s1">.payload.buffer,</span>
+      <span class="s1">secret: </span><span class="s2">this</span><span class="s1">.secret.buffer,</span>
+      <span class="s1">encoding: </span><span class="s2">this</span><span class="s1">.encoding</span>
+    <span class="s1">});</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'done'</span><span class="s1">, signature);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'data'</span><span class="s1">, signature);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'end'</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">signature;</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+    <span class="s2">this</span><span class="s1">.readable = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'error'</span><span class="s1">, e);</span>
+    <span class="s2">this</span><span class="s1">.emit(</span><span class="s3">'close'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s1">SignStream.sign = jwsSign;</span>
+
+<span class="s1">module.exports = SignStream;</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,410 @@
+<html>
+<head>
+<title>animation-state.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #c77dbb; font-style: italic;}
+.s6 { color: #7a7e85;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+animation-state.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ animateVisualElement } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../animation/interfaces/visual-element.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ calcChildStagger } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../animation/utils/calc-child-stagger.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getVariantContext } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./get-variant-context.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isAnimationControls } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./is-animation-controls.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isKeyframesTarget } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./is-keyframes-target.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isVariantLabel } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./is-variant-label.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ resolveVariant } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./resolve-dynamic-variants.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ shallowCompare } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./shallow-compare.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ variantPriorityOrder } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./variant-props.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">reversePriorityOrder = </span><span class="s1">[</span><span class="s2">...variantPriorityOrder</span><span class="s1">]</span><span class="s2">.</span><span class="s4">reverse</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">numAnimationTypes = variantPriorityOrder.</span><span class="s1">length</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s4">createAnimateFunction</span><span class="s2">(visualElement) {</span>
+    <span class="s0">return </span><span class="s2">(animations) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s1">Promise</span><span class="s2">.</span><span class="s4">all</span><span class="s1">(</span><span class="s2">animations.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">({ animation, options }) </span><span class="s0">=&gt; </span><span class="s4">animateVisualElement</span><span class="s1">(</span><span class="s2">visualElement, animation, options</span><span class="s1">)))</span><span class="s2">;</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">createAnimationState</span><span class="s2">(visualElement) {</span>
+    <span class="s0">let </span><span class="s2">animate = </span><span class="s4">createAnimateFunction</span><span class="s1">(</span><span class="s2">visualElement</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">state = </span><span class="s4">createState</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">isInitialRender = </span><span class="s5">true</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Track whether the animation state has been reset (e.g. via StrictMode 
+     * double-invocation or Suspense unmount/remount). On the first 
+     * animateChanges() call after a reset we need to behave like the initial 
+     * render for variant-inheritance checks, even though isInitialRender is 
+     * already false. 
+     </span><span class="s2">*/</span>
+    <span class="s0">let </span><span class="s2">wasReset = </span><span class="s5">false</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s6">* This function will be used to reduce the animation definitions for 
+     * each active animation type into an object of resolved values for it. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s4">buildResolvedTypeValues </span><span class="s2">= (type) </span><span class="s0">=&gt; </span><span class="s2">(acc, definition) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">resolved = </span><span class="s4">resolveVariant</span><span class="s1">(</span><span class="s2">visualElement, definition, type === &quot;</span><span class="s3">exit</span><span class="s2">&quot;</span>
+            <span class="s2">? visualElement.presenceContext?.custom</span>
+            <span class="s2">: </span><span class="s5">undefined</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">resolved</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">{ transition, transitionEnd, ...target } = resolved;</span>
+            <span class="s2">acc = { ...acc, ...target, ...transitionEnd };</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">acc;</span>
+    <span class="s2">};</span>
+    <span class="s2">/**</span>
+     <span class="s6">* This just allows us to inject mocked animation functions 
+     * </span><span class="s2">@</span><span class="s0">internal</span>
+     <span class="s2">*/</span>
+    <span class="s0">function </span><span class="s4">setAnimateFunction</span><span class="s2">(makeAnimator) {</span>
+        <span class="s2">animate = </span><span class="s4">makeAnimator</span><span class="s1">(</span><span class="s2">visualElement</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s6">* When we receive new props, we need to: 
+     * 1. Create a list of protected keys for each type. This is a directory of 
+     *    value keys that are currently being &quot;handled&quot; by types of a higher priority 
+     *    so that whenever an animation is played of a given type, these values are 
+     *    protected from being animated. 
+     * 2. Determine if an animation type needs animating. 
+     * 3. Determine if any values have been removed from a type and figure out 
+     *    what to animate those to. 
+     </span><span class="s2">*/</span>
+    <span class="s0">function </span><span class="s4">animateChanges</span><span class="s2">(changedActiveType) {</span>
+        <span class="s0">const </span><span class="s2">{ props } = visualElement;</span>
+        <span class="s0">const </span><span class="s2">context = </span><span class="s4">getVariantContext</span><span class="s1">(</span><span class="s2">visualElement.parent</span><span class="s1">) </span><span class="s2">|| {};</span>
+        <span class="s2">/**</span>
+         <span class="s6">* A list of animations that we'll build into as we iterate through the animation 
+         * types. This will get executed at the end of the function. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">animations = </span><span class="s1">[]</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* Keep track of which values have been removed. Then, as we hit lower priority 
+         * animation types, we can check if they contain removed values and animate to that. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">removedKeys = new </span><span class="s4">Set</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* A dictionary of all encountered keys. This is an object to let us build into and 
+         * copy it without iteration. Each time we hit an animation type we set its protected 
+         * keys - the keys its not allowed to animate - to the latest version of this object. 
+         </span><span class="s2">*/</span>
+        <span class="s0">let </span><span class="s2">encounteredKeys = {};</span>
+        <span class="s2">/**</span>
+         <span class="s6">* If a variant has been removed at a given index, and this component is controlling 
+         * variant animations, we want to ensure lower-priority variants are forced to animate. 
+         </span><span class="s2">*/</span>
+        <span class="s0">let </span><span class="s2">removedVariantIndex = </span><span class="s5">Infinity</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* Iterate through all animation types in reverse priority order. For each, we want to 
+         * detect which values it's handling and whether or not they've changed (and therefore 
+         * need to be animated). If any values have been removed, we want to detect those in 
+         * lower priority props and flag for animation. 
+         </span><span class="s2">*/</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; numAnimationTypes; i++</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">type = reversePriorityOrder</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">typeState = state</span><span class="s1">[</span><span class="s2">type</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">prop = props</span><span class="s1">[</span><span class="s2">type</span><span class="s1">] </span><span class="s2">!== </span><span class="s5">undefined</span>
+                <span class="s2">? props</span><span class="s1">[</span><span class="s2">type</span><span class="s1">]</span>
+                <span class="s2">: context</span><span class="s1">[</span><span class="s2">type</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">propIsVariant = </span><span class="s4">isVariantLabel</span><span class="s1">(</span><span class="s2">prop</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If this type has *just* changed isActive status, set activeDelta 
+             * to that status. Otherwise set to null. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">activeDelta = type === changedActiveType ? typeState.isActive : </span><span class="s5">null</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">activeDelta === </span><span class="s5">false</span><span class="s1">)</span>
+                <span class="s2">removedVariantIndex = i;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If this prop is an inherited variant, rather than been set directly on the 
+             * component itself, we want to make sure we allow the parent to trigger animations. 
+             * 
+             * TODO: Can probably change this to a !isControllingVariants check 
+             </span><span class="s2">*/</span>
+            <span class="s0">let </span><span class="s2">isInherited = prop === context</span><span class="s1">[</span><span class="s2">type</span><span class="s1">] </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">prop !== props</span><span class="s1">[</span><span class="s2">type</span><span class="s1">] </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">propIsVariant;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">isInherited &amp;&amp;</span>
+                <span class="s1">(</span><span class="s2">isInitialRender || wasReset</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">visualElement.manuallyAnimateOnMount</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">isInherited = </span><span class="s5">false</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Set all encountered keys so far as the protected keys for this type. This will 
+             * be any key that has been animated or otherwise handled by active, higher-priortiy types. 
+             </span><span class="s2">*/</span>
+            <span class="s2">typeState.protectedKeys = { ...encounteredKeys };</span>
+            <span class="s2">// </span><span class="s6">Check if we can skip analysing this prop early</span>
+            <span class="s0">if </span><span class="s1">(</span>
+            <span class="s2">// </span><span class="s6">If it isn't active and hasn't *just* been set as inactive</span>
+            <span class="s1">(</span><span class="s2">!typeState.isActive &amp;&amp; activeDelta === </span><span class="s5">null</span><span class="s1">) </span><span class="s2">||</span>
+                <span class="s2">// </span><span class="s6">If we didn't and don't have any defined prop for this animation type</span>
+                <span class="s1">(</span><span class="s2">!prop &amp;&amp; !typeState.prevProp</span><span class="s1">) </span><span class="s2">||</span>
+                <span class="s2">// </span><span class="s6">Or if the prop doesn't define an animation</span>
+                <span class="s4">isAnimationControls</span><span class="s1">(</span><span class="s2">prop</span><span class="s1">) </span><span class="s2">||</span>
+                <span class="s2">typeof prop === &quot;</span><span class="s3">boolean</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">continue</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If exit is already active and wasn't just activated, skip 
+             * re-processing to prevent interrupting running exit animations. 
+             * Re-resolving exit with a changed custom value can start new 
+             * value animations that stop the originals, leaving the exit 
+             * animation promise unresolved and the component stuck in the DOM. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">type === &quot;</span><span class="s3">exit</span><span class="s2">&quot; &amp;&amp; typeState.isActive &amp;&amp; activeDelta !== </span><span class="s5">true</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">typeState.prevResolvedValues</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">encounteredKeys = {</span>
+                        <span class="s2">...encounteredKeys,</span>
+                        <span class="s2">...typeState.prevResolvedValues,</span>
+                    <span class="s2">};</span>
+                <span class="s2">}</span>
+                <span class="s0">continue</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* As we go look through the values defined on this type, if we detect 
+             * a changed value or a value that was removed in a higher priority, we set 
+             * this to true and add this prop to the animation list. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">variantDidChange = </span><span class="s4">checkVariantsDidChange</span><span class="s1">(</span><span class="s2">typeState.prevProp, prop</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">let </span><span class="s2">shouldAnimateType = variantDidChange ||</span>
+                <span class="s2">// </span><span class="s6">If we're making this variant active, we want to always make it active</span>
+                <span class="s1">(</span><span class="s2">type === changedActiveType &amp;&amp;</span>
+                    <span class="s2">typeState.isActive &amp;&amp;</span>
+                    <span class="s2">!isInherited &amp;&amp;</span>
+                    <span class="s2">propIsVariant</span><span class="s1">) </span><span class="s2">||</span>
+                <span class="s2">// </span><span class="s6">If we removed a higher-priority variant (i is in reverse order)</span>
+                <span class="s1">(</span><span class="s2">i &gt; removedVariantIndex &amp;&amp; propIsVariant</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">let </span><span class="s2">handledRemovedValues = </span><span class="s5">false</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* As animations can be set as variant lists, variants or target objects, we 
+             * coerce everything to an array if it isn't one already 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">definitionList = Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">prop</span><span class="s1">) </span><span class="s2">? prop : </span><span class="s1">[</span><span class="s2">prop</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Build an object of all the resolved values. We'll use this in the subsequent 
+             * animateChanges calls to determine whether a value has changed. 
+             </span><span class="s2">*/</span>
+            <span class="s0">let </span><span class="s2">resolvedValues = definitionList.</span><span class="s4">reduce</span><span class="s1">(</span><span class="s4">buildResolvedTypeValues</span><span class="s1">(</span><span class="s2">type</span><span class="s1">)</span><span class="s2">, {}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">activeDelta === </span><span class="s5">false</span><span class="s1">)</span>
+                <span class="s2">resolvedValues = {};</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Now we need to loop through all the keys in the prev prop and this prop, 
+             * and decide: 
+             * 1. If the value has changed, and needs animating 
+             * 2. If it has been removed, and needs adding to the removedKeys set 
+             * 3. If it has been removed in a higher priority type and needs animating 
+             * 4. If it hasn't been removed in a higher priority but hasn't changed, and 
+             *    needs adding to the type's protectedKeys list. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">{ prevResolvedValues = {} } = typeState;</span>
+            <span class="s0">const </span><span class="s2">allKeys = {</span>
+                <span class="s2">...prevResolvedValues,</span>
+                <span class="s2">...resolvedValues,</span>
+            <span class="s2">};</span>
+            <span class="s0">const </span><span class="s4">markToAnimate </span><span class="s2">= (key) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s2">shouldAnimateType = </span><span class="s5">true</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">removedKeys.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)) </span><span class="s2">{</span>
+                    <span class="s2">handledRemovedValues = </span><span class="s5">true</span><span class="s2">;</span>
+                    <span class="s2">removedKeys.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s2">typeState.needsAnimating</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s5">true</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">motionValue = visualElement.</span><span class="s4">getValue</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">motionValue</span><span class="s1">)</span>
+                    <span class="s2">motionValue.liveStyle = </span><span class="s5">false</span><span class="s2">;</span>
+            <span class="s2">};</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in allKeys</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">next = resolvedValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">prev = prevResolvedValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s2">// </span><span class="s6">If we've already handled this we can just skip ahead</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">encounteredKeys.</span><span class="s4">hasOwnProperty</span><span class="s1">(</span><span class="s2">key</span><span class="s1">))</span>
+                    <span class="s0">continue</span><span class="s2">;</span>
+                <span class="s2">/**</span>
+                 <span class="s6">* If the value has changed, we probably want to animate it. 
+                 </span><span class="s2">*/</span>
+                <span class="s0">let </span><span class="s2">valueHasChanged = </span><span class="s5">false</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s4">isKeyframesTarget</span><span class="s1">(</span><span class="s2">next</span><span class="s1">) </span><span class="s2">&amp;&amp; </span><span class="s4">isKeyframesTarget</span><span class="s1">(</span><span class="s2">prev</span><span class="s1">)) </span><span class="s2">{</span>
+                    <span class="s2">valueHasChanged = !</span><span class="s4">shallowCompare</span><span class="s1">(</span><span class="s2">next, prev</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s0">else </span><span class="s2">{</span>
+                    <span class="s2">valueHasChanged = next !== prev;</span>
+                <span class="s2">}</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">valueHasChanged</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s0">if </span><span class="s1">(</span><span class="s2">next !== </span><span class="s5">undefined </span><span class="s2">&amp;&amp; next !== </span><span class="s5">null</span><span class="s1">) </span><span class="s2">{</span>
+                        <span class="s2">// </span><span class="s6">If next is defined and doesn't equal prev, it needs animating</span>
+                        <span class="s4">markToAnimate</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                    <span class="s2">}</span>
+                    <span class="s0">else </span><span class="s2">{</span>
+                        <span class="s2">// </span><span class="s6">If it's undefined, it's been removed.</span>
+                        <span class="s2">removedKeys.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                    <span class="s2">}</span>
+                <span class="s2">}</span>
+                <span class="s0">else if </span><span class="s1">(</span><span class="s2">next !== </span><span class="s5">undefined </span><span class="s2">&amp;&amp; removedKeys.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)) </span><span class="s2">{</span>
+                    <span class="s2">/**</span>
+                     <span class="s6">* If next hasn't changed and it isn't undefined, we want to check if it's 
+                     * been removed by a higher priority 
+                     </span><span class="s2">*/</span>
+                    <span class="s4">markToAnimate</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s0">else </span><span class="s2">{</span>
+                    <span class="s2">/**</span>
+                     <span class="s6">* If it hasn't changed, we add it to the list of protected values 
+                     * to ensure it doesn't get animated. 
+                     </span><span class="s2">*/</span>
+                    <span class="s2">typeState.protectedKeys</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s5">true</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Update the typeState so next time animateChanges is called we can compare the 
+             * latest prop and resolvedValues to these. 
+             </span><span class="s2">*/</span>
+            <span class="s2">typeState.prevProp = prop;</span>
+            <span class="s2">typeState.prevResolvedValues = resolvedValues;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">typeState.isActive</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">encounteredKeys = { ...encounteredKeys, ...resolvedValues };</span>
+            <span class="s2">}</span>
+            <span class="s0">if </span><span class="s1">((</span><span class="s2">isInitialRender || wasReset</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">visualElement.blockInitialAnimation</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">shouldAnimateType = </span><span class="s5">false</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If this is an inherited prop we want to skip this animation 
+             * unless the inherited variants haven't changed on this render. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">willAnimateViaParent = isInherited &amp;&amp; variantDidChange;</span>
+            <span class="s0">const </span><span class="s2">needsAnimating = !willAnimateViaParent || handledRemovedValues;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">shouldAnimateType &amp;&amp; needsAnimating</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">animations.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">...definitionList.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(animation) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                    <span class="s0">const </span><span class="s2">options = { type };</span>
+                    <span class="s2">/**</span>
+                     <span class="s6">* If we're performing the initial animation, but we're not 
+                     * rendering at the same time as the variant-controlling parent, 
+                     * we want to use the parent's transition to calculate the stagger. 
+                     </span><span class="s2">*/</span>
+                    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof animation === &quot;</span><span class="s3">string</span><span class="s2">&quot; &amp;&amp;</span>
+                        <span class="s1">(</span><span class="s2">isInitialRender || wasReset</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+                        <span class="s2">!willAnimateViaParent &amp;&amp;</span>
+                        <span class="s2">visualElement.manuallyAnimateOnMount &amp;&amp;</span>
+                        <span class="s2">visualElement.parent</span><span class="s1">) </span><span class="s2">{</span>
+                        <span class="s0">const </span><span class="s2">{ parent } = visualElement;</span>
+                        <span class="s0">const </span><span class="s2">parentVariant = </span><span class="s4">resolveVariant</span><span class="s1">(</span><span class="s2">parent, animation</span><span class="s1">)</span><span class="s2">;</span>
+                        <span class="s0">if </span><span class="s1">(</span><span class="s2">parent.enteringChildren &amp;&amp; parentVariant</span><span class="s1">) </span><span class="s2">{</span>
+                            <span class="s0">const </span><span class="s2">{ delayChildren } = parentVariant.transition || {};</span>
+                            <span class="s2">options.delay = </span><span class="s4">calcChildStagger</span><span class="s1">(</span><span class="s2">parent.enteringChildren, visualElement, delayChildren</span><span class="s1">)</span><span class="s2">;</span>
+                        <span class="s2">}</span>
+                    <span class="s2">}</span>
+                    <span class="s0">return </span><span class="s2">{</span>
+                        <span class="s1">animation</span><span class="s2">: animation,</span>
+                        <span class="s2">options,</span>
+                    <span class="s2">};</span>
+                <span class="s2">}</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s6">* If there are some removed value that haven't been dealt with, 
+         * we need to create a new animation that falls back either to the value 
+         * defined in the style prop, or the last read value. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">removedKeys.size</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">fallbackAnimation = {};</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If the initial prop contains a transition we can use that, otherwise 
+             * allow the animation function to use the visual element's default. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof props.initial !== &quot;</span><span class="s3">boolean</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">initialTransition = </span><span class="s4">resolveVariant</span><span class="s1">(</span><span class="s2">visualElement, Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">props.initial</span><span class="s1">)</span>
+                    <span class="s2">? props.initial</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span>
+                    <span class="s2">: props.initial</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">initialTransition &amp;&amp; initialTransition.transition</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">fallbackAnimation.transition = initialTransition.transition;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+            <span class="s2">removedKeys.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(key) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">fallbackTarget = visualElement.</span><span class="s4">getBaseTarget</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">motionValue = visualElement.</span><span class="s4">getValue</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">motionValue</span><span class="s1">)</span>
+                    <span class="s2">motionValue.liveStyle = </span><span class="s5">true</span><span class="s2">;</span>
+                <span class="s2">// </span><span class="s6">@ts-expect-error - @mattgperry to figure if we should do something here</span>
+                <span class="s2">fallbackAnimation</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= fallbackTarget ?? </span><span class="s5">null</span><span class="s2">;</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">animations.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">animation</span><span class="s2">: fallbackAnimation }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">let </span><span class="s2">shouldAnimate = </span><span class="s4">Boolean</span><span class="s1">(</span><span class="s2">animations.</span><span class="s1">length)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isInitialRender &amp;&amp;</span>
+            <span class="s1">(</span><span class="s2">props.initial === </span><span class="s5">false </span><span class="s2">|| props.initial === props.animate</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">!visualElement.manuallyAnimateOnMount</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">shouldAnimate = </span><span class="s5">false</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">isInitialRender = </span><span class="s5">false</span><span class="s2">;</span>
+        <span class="s2">wasReset = </span><span class="s5">false</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">shouldAnimate ? </span><span class="s4">animate</span><span class="s1">(</span><span class="s2">animations</span><span class="s1">) </span><span class="s2">: </span><span class="s1">Promise</span><span class="s2">.</span><span class="s4">resolve</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Change whether a certain animation type is active. 
+     </span><span class="s2">*/</span>
+    <span class="s0">function </span><span class="s4">setActive</span><span class="s2">(type, isActive) {</span>
+        <span class="s2">// </span><span class="s6">If the active state hasn't changed, we can safely do nothing here</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">state</span><span class="s1">[</span><span class="s2">type</span><span class="s1">]</span><span class="s2">.isActive === isActive</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s1">Promise</span><span class="s2">.</span><span class="s4">resolve</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s6">Propagate active change to children</span>
+        <span class="s2">visualElement.variantChildren?.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">(child) </span><span class="s0">=&gt; </span><span class="s2">child.animationState?.</span><span class="s4">setActive</span><span class="s1">(</span><span class="s2">type, isActive</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">state</span><span class="s1">[</span><span class="s2">type</span><span class="s1">]</span><span class="s2">.isActive = isActive;</span>
+        <span class="s0">const </span><span class="s2">animations = </span><span class="s4">animateChanges</span><span class="s1">(</span><span class="s2">type</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in state</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">state</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">.protectedKeys = {};</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">animations;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">animateChanges,</span>
+        <span class="s2">setActive,</span>
+        <span class="s2">setAnimateFunction,</span>
+        <span class="s4">getState</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">state,</span>
+        <span class="s4">reset</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">state = </span><span class="s4">createState</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">wasReset = </span><span class="s5">true</span><span class="s2">;</span>
+        <span class="s2">},</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">checkVariantsDidChange</span><span class="s2">(prev, next) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof next === &quot;</span><span class="s3">string</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">next !== prev;</span>
+    <span class="s2">}</span>
+    <span class="s0">else if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">next</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">!</span><span class="s4">shallowCompare</span><span class="s1">(</span><span class="s2">next, prev</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s5">false</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">createTypeState</span><span class="s2">(isActive = </span><span class="s5">false</span><span class="s2">) {</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">isActive,</span>
+        <span class="s1">protectedKeys</span><span class="s2">: {},</span>
+        <span class="s1">needsAnimating</span><span class="s2">: {},</span>
+        <span class="s1">prevResolvedValues</span><span class="s2">: {},</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s4">createState</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">animate</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">(</span><span class="s5">true</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s1">whileInView</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s1">whileHover</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s1">whileTap</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s1">whileDrag</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s1">whileFocus</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s1">exit</span><span class="s2">: </span><span class="s4">createTypeState</span><span class="s1">()</span><span class="s2">,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ checkVariantsDidChange, createAnimationState };</span>
+<span class="s2">//</span><span class="s6"># sourceMappingURL=animation-state.mjs.map</span>
+</pre>
+</body>
+</html>

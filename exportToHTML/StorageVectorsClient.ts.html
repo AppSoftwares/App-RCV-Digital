@@ -1,0 +1,666 @@
+<html>
+<head>
+<title>StorageVectorsClient.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+StorageVectorsClient.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">VectorIndexApi, { CreateIndexOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./VectorIndexApi</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">VectorDataApi </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./VectorDataApi</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ Fetch } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/fetch</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">VectorBucketApi </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./VectorBucketApi</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">ApiResponse,</span>
+  <span class="s2">DeleteVectorsOptions,</span>
+  <span class="s2">GetVectorsOptions,</span>
+  <span class="s2">ListIndexesOptions,</span>
+  <span class="s2">ListVectorsOptions,</span>
+  <span class="s2">ListVectorBucketsOptions,</span>
+  <span class="s2">ListVectorBucketsResponse,</span>
+  <span class="s2">PutVectorsOptions,</span>
+  <span class="s2">QueryVectorsOptions,</span>
+  <span class="s2">VectorBucket,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/types</span><span class="s2">'</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* 
+ * </span><span class="s2">@</span><span class="s0">alpha</span>
+ <span class="s4">* 
+ * Configuration options for the Storage Vectors client 
+ * 
+ * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+ </span><span class="s2">*/</span>
+<span class="s0">export interface </span><span class="s2">StorageVectorsClientOptions {</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Custom headers to include in all requests 
+   </span><span class="s2">*/</span>
+  <span class="s2">headers?: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string }</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Custom fetch implementation (optional) 
+   * Useful for testing or custom request handling 
+   </span><span class="s2">*/</span>
+  <span class="s2">fetch?: Fetch</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* 
+ * </span><span class="s2">@</span><span class="s0">alpha</span>
+ <span class="s4">* 
+ * Main client for interacting with S3 Vectors API 
+ * Provides access to bucket, index, and vector data operations 
+ * 
+ * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+ * 
+ * **Usage Patterns:** 
+ * 
+ * ```typescript 
+ * const { data, error } = await supabase 
+ *  .storage 
+ *  .vectors 
+ *  .createBucket('embeddings-prod') 
+ * 
+ * // Access index operations via buckets 
+ * const bucket = supabase.storage.vectors.from('embeddings-prod') 
+ * await bucket.createIndex({ 
+ *   indexName: 'documents', 
+ *   dataType: 'float32', 
+ *   dimension: 1536, 
+ *   distanceMetric: 'cosine' 
+ * }) 
+ * 
+ * // Access vector operations via index 
+ * const index = bucket.index('documents') 
+ * await index.putVectors({ 
+ *   vectors: [ 
+ *     { key: 'doc-1', data: { float32: [...] }, metadata: { title: 'Intro' } } 
+ *   ] 
+ * }) 
+ * 
+ * // Query similar vectors 
+ * const { data } = await index.queryVectors({ 
+ *   queryVector: { float32: [...] }, 
+ *   topK: 5, 
+ *   returnDistance: true 
+ * }) 
+ * ``` 
+ </span><span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">StorageVectorsClient </span><span class="s0">extends </span><span class="s2">VectorBucketApi {</span>
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a StorageVectorsClient that can manage buckets, indexes, and vectors. 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">url </span><span class="s4">- Base URL of the Storage Vectors REST API. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.headers </span><span class="s4">- Optional headers (for example `Authorization`) applied to every request. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.fetch </span><span class="s4">- Optional custom `fetch` implementation for non-browser runtimes. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">import { StorageVectorsClient } from '@supabase/storage-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const client = new StorageVectorsClient(url, options) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(url: string, options: StorageVectorsClientOptions = {}) {</span>
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">url, options.headers || {}, options.fetch</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Access operations for a specific vector bucket 
+   * Returns a scoped client for index and vector operations within the bucket 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">vectorBucketName </span><span class="s4">- Name of the vector bucket 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Bucket-scoped client with index and vector operations 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Accessing a vector bucket 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s5">from</span><span class="s2">(vectorBucketName: string): VectorBucketScope {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s5">VectorBucketScope</span><span class="s1">(</span><span class="s2">this.url, this.headers, vectorBucketName, this.fetch</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a new vector bucket 
+   * Vector buckets are containers for vector indexes and their data 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">vectorBucketName </span><span class="s4">- Unique name for the vector bucket 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Creating a vector bucket 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.vectors 
+   </span><span class="s4">*   </span><span class="s1">.createBucket('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">createBucket</span><span class="s2">(vectorBucketName: string): Promise&lt;ApiResponse&lt;undefined&gt;&gt; {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">createBucket</span><span class="s1">(</span><span class="s2">vectorBucketName</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Retrieves metadata for a specific vector bucket 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">vectorBucketName </span><span class="s4">- Name of the vector bucket 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with bucket metadata or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get bucket metadata 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.vectors 
+   </span><span class="s4">*   </span><span class="s1">.getBucket('embeddings-prod') 
+   </span><span class="s4">* 
+   * </span><span class="s1">console.log('Bucket created:', data?.vectorBucket.creationTime) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">getBucket</span><span class="s2">(vectorBucketName: string): Promise&lt;ApiResponse&lt;{ vectorBucket: VectorBucket }&gt;&gt; {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">getBucket</span><span class="s1">(</span><span class="s2">vectorBucketName</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Lists all vector buckets with optional filtering and pagination 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Optional filters (prefix, maxResults, nextToken) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with list of buckets or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List vector buckets 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.vectors 
+   </span><span class="s4">*   </span><span class="s1">.listBuckets({ prefix: 'embeddings-' }) 
+   </span><span class="s4">* 
+   * </span><span class="s1">data?.vectorBuckets.forEach(bucket =&gt; { 
+   </span><span class="s4">*   </span><span class="s1">console.log(bucket.vectorBucketName) 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">listBuckets</span><span class="s2">(</span>
+    <span class="s2">options: ListVectorBucketsOptions = {}</span>
+  <span class="s2">): Promise&lt;ApiResponse&lt;ListVectorBucketsResponse&gt;&gt; {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">listBuckets</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Deletes a vector bucket (bucket must be empty) 
+   * All indexes must be deleted before deleting the bucket 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">vectorBucketName </span><span class="s4">- Name of the vector bucket to delete 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete a vector bucket 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.vectors 
+   </span><span class="s4">*   </span><span class="s1">.deleteBucket('embeddings-old') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">deleteBucket</span><span class="s2">(vectorBucketName: string): Promise&lt;ApiResponse&lt;undefined&gt;&gt; {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">deleteBucket</span><span class="s1">(</span><span class="s2">vectorBucketName</span><span class="s1">)</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* 
+ * </span><span class="s2">@</span><span class="s0">alpha</span>
+ <span class="s4">* 
+ * Scoped client for operations within a specific vector bucket 
+ * Provides index management and access to vector operations 
+ * 
+ * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+ </span><span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">VectorBucketScope </span><span class="s0">extends </span><span class="s2">VectorIndexApi {</span>
+  <span class="s0">private </span><span class="s2">vectorBucketName: string</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a helper that automatically scopes all index operations to the provided bucket. 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Creating a vector bucket scope 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: string,</span>
+    <span class="s2">headers: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string },</span>
+    <span class="s2">vectorBucketName: string,</span>
+    <span class="s2">fetch?: Fetch</span>
+  <span class="s2">) {</span>
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">url, headers, fetch</span><span class="s1">)</span>
+    <span class="s2">this.vectorBucketName = vectorBucketName</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a new vector index in this bucket 
+   * Convenience method that automatically includes the bucket name 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Index configuration (vectorBucketName is automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Creating a vector index 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">await bucket.createIndex({ 
+   </span><span class="s4">*   </span><span class="s1">indexName: 'documents-openai', 
+   </span><span class="s4">*   </span><span class="s1">dataType: 'float32', 
+   </span><span class="s4">*   </span><span class="s1">dimension: 1536, 
+   </span><span class="s4">*   </span><span class="s1">distanceMetric: 'cosine', 
+   </span><span class="s4">*   </span><span class="s1">metadataConfiguration: { 
+   </span><span class="s4">*     </span><span class="s1">nonFilterableMetadataKeys: ['raw_text'] 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">createIndex</span><span class="s2">(options: Omit&lt;CreateIndexOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">'&gt;) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">createIndex</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Lists indexes in this bucket 
+   * Convenience method that automatically includes the bucket name 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Listing options (vectorBucketName is automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing indexes array and pagination token or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List indexes 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">const { data } = await bucket.listIndexes({ prefix: 'documents-' }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">listIndexes</span><span class="s2">(options: Omit&lt;ListIndexesOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">'&gt; = {}) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">listIndexes</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Retrieves metadata for a specific index in this bucket 
+   * Convenience method that automatically includes the bucket name 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">indexName </span><span class="s4">- Name of the index to retrieve 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with index metadata or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get index metadata 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">const { data } = await bucket.getIndex('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">console.log('Dimension:', data?.index.dimension) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">getIndex</span><span class="s2">(indexName: string) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">getIndex</span><span class="s1">(</span><span class="s2">this.vectorBucketName, indexName</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Deletes an index from this bucket 
+   * Convenience method that automatically includes the bucket name 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">indexName </span><span class="s4">- Name of the index to delete 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete an index 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const bucket = supabase.storage.vectors.from('embeddings-prod') 
+   </span><span class="s4">* </span><span class="s1">await bucket.deleteIndex('old-index') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">deleteIndex</span><span class="s2">(indexName: string) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">deleteIndex</span><span class="s1">(</span><span class="s2">this.vectorBucketName, indexName</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Access operations for a specific index within this bucket 
+   * Returns a scoped client for vector data operations 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">indexName </span><span class="s4">- Name of the index 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Index-scoped client with vector data operations 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Accessing an index 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Insert vectors 
+   </span><span class="s4">* </span><span class="s1">await index.putVectors({ 
+   </span><span class="s4">*   </span><span class="s1">vectors: [ 
+   </span><span class="s4">*     </span><span class="s1">{ key: 'doc-1', data: { float32: [...] }, metadata: { title: 'Intro' } } 
+   </span><span class="s4">*   </span><span class="s1">] 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Query similar vectors 
+   </span><span class="s4">* </span><span class="s1">const { data } = await index.queryVectors({ 
+   </span><span class="s4">*   </span><span class="s1">queryVector: { float32: [...] }, 
+   </span><span class="s4">*   </span><span class="s1">topK: 5 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s5">index</span><span class="s2">(indexName: string): VectorIndexScope {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s5">VectorIndexScope</span><span class="s1">(</span>
+      <span class="s2">this.url,</span>
+      <span class="s2">this.headers,</span>
+      <span class="s2">this.vectorBucketName,</span>
+      <span class="s2">indexName,</span>
+      <span class="s2">this.fetch</span>
+    <span class="s1">)</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* 
+ * </span><span class="s2">@</span><span class="s0">alpha</span>
+ <span class="s4">* 
+ * Scoped client for operations within a specific vector index 
+ * Provides vector data operations (put, get, list, query, delete) 
+ * 
+ * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+ </span><span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">VectorIndexScope </span><span class="s0">extends </span><span class="s2">VectorDataApi {</span>
+  <span class="s0">private </span><span class="s2">vectorBucketName: string</span>
+  <span class="s0">private </span><span class="s2">indexName: string</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a helper that automatically scopes all vector operations to the provided bucket/index names. 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Creating a vector index scope 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: string,</span>
+    <span class="s2">headers: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string },</span>
+    <span class="s2">vectorBucketName: string,</span>
+    <span class="s2">indexName: string,</span>
+    <span class="s2">fetch?: Fetch</span>
+  <span class="s2">) {</span>
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">url, headers, fetch</span><span class="s1">)</span>
+    <span class="s2">this.vectorBucketName = vectorBucketName</span>
+    <span class="s2">this.indexName = indexName</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Inserts or updates vectors in this index 
+   * Convenience method that automatically includes bucket and index names 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Vector insertion options (bucket and index names automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Insert vectors into an index 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">await index.putVectors({ 
+   </span><span class="s4">*   </span><span class="s1">vectors: [ 
+   </span><span class="s4">*     </span><span class="s1">{ 
+   </span><span class="s4">*       </span><span class="s1">key: 'doc-1', 
+   </span><span class="s4">*       </span><span class="s1">data: { float32: [0.1, 0.2, ...] }, 
+   </span><span class="s4">*       </span><span class="s1">metadata: { title: 'Introduction', page: 1 } 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">] 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">putVectors</span><span class="s2">(options: Omit&lt;PutVectorsOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">' | '</span><span class="s3">indexName</span><span class="s2">'&gt;) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">putVectors</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+      <span class="s1">indexName</span><span class="s2">: this.indexName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Retrieves vectors by keys from this index 
+   * Convenience method that automatically includes bucket and index names 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Vector retrieval options (bucket and index names automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing vectors array or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get vectors by keys 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">const { data } = await index.getVectors({ 
+   </span><span class="s4">*   </span><span class="s1">keys: ['doc-1', 'doc-2'], 
+   </span><span class="s4">*   </span><span class="s1">returnMetadata: true 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">getVectors</span><span class="s2">(options: Omit&lt;GetVectorsOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">' | '</span><span class="s3">indexName</span><span class="s2">'&gt;) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">getVectors</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+      <span class="s1">indexName</span><span class="s2">: this.indexName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Lists vectors in this index with pagination 
+   * Convenience method that automatically includes bucket and index names 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Listing options (bucket and index names automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing vectors array and pagination token or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List vectors with pagination 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">const { data } = await index.listVectors({ 
+   </span><span class="s4">*   </span><span class="s1">maxResults: 500, 
+   </span><span class="s4">*   </span><span class="s1">returnMetadata: true 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">listVectors</span><span class="s2">(</span>
+    <span class="s2">options: Omit&lt;ListVectorsOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">' | '</span><span class="s3">indexName</span><span class="s2">'&gt; = {}</span>
+  <span class="s2">) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">listVectors</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+      <span class="s1">indexName</span><span class="s2">: this.indexName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Queries for similar vectors in this index 
+   * Convenience method that automatically includes bucket and index names 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Query options (bucket and index names automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing matches array of similar vectors ordered by distance or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query similar vectors 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">const { data } = await index.queryVectors({ 
+   </span><span class="s4">*   </span><span class="s1">queryVector: { float32: [0.1, 0.2, ...] }, 
+   </span><span class="s4">*   </span><span class="s1">topK: 5, 
+   </span><span class="s4">*   </span><span class="s1">filter: { category: 'technical' }, 
+   </span><span class="s4">*   </span><span class="s1">returnDistance: true, 
+   </span><span class="s4">*   </span><span class="s1">returnMetadata: true 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">queryVectors</span><span class="s2">(</span>
+    <span class="s2">options: Omit&lt;QueryVectorsOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">' | '</span><span class="s3">indexName</span><span class="s2">'&gt;</span>
+  <span class="s2">) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">queryVectors</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+      <span class="s1">indexName</span><span class="s2">: this.indexName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Deletes vectors by keys from this index 
+   * Convenience method that automatically includes bucket and index names 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Vector Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Deletion options (bucket and index names automatically set) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with empty response on success or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete vectors by keys 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">const index = supabase.storage.vectors.from('embeddings-prod').index('documents-openai') 
+   </span><span class="s4">* </span><span class="s1">await index.deleteVectors({ 
+   </span><span class="s4">*   </span><span class="s1">keys: ['doc-1', 'doc-2', 'doc-3'] 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">override async </span><span class="s5">deleteVectors</span><span class="s2">(</span>
+    <span class="s2">options: Omit&lt;DeleteVectorsOptions, '</span><span class="s3">vectorBucketName</span><span class="s2">' | '</span><span class="s3">indexName</span><span class="s2">'&gt;</span>
+  <span class="s2">) {</span>
+    <span class="s0">return </span><span class="s2">super.</span><span class="s5">deleteVectors</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">...options,</span>
+      <span class="s1">vectorBucketName</span><span class="s2">: this.vectorBucketName,</span>
+      <span class="s1">indexName</span><span class="s2">: this.indexName,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

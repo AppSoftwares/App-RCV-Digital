@@ -1,0 +1,444 @@
+<html>
+<head>
+<title>StorageAnalyticsClient.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #cf8e6d; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+StorageAnalyticsClient.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ IcebergRestCatalog, IcebergError } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">iceberg-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ DEFAULT_HEADERS } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/constants</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ StorageError } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/errors</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ Fetch, get, post, remove } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/fetch</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ isValidBucketName } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/helpers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">BaseApiClient </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/BaseApiClient</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ AnalyticBucket } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/types</span><span class="s2">'</span>
+
+<span class="s0">type </span><span class="s2">WrapAsyncMethod&lt;T&gt; = T </span><span class="s0">extends </span><span class="s2">(...args: infer A) </span><span class="s0">=&gt; </span><span class="s2">Promise&lt;infer R&gt;</span>
+  <span class="s2">? (...args: A) </span><span class="s0">=&gt; </span><span class="s2">Promise&lt;{ data: R; error: null } | { data: null; error: IcebergError }&gt;</span>
+  <span class="s2">: T</span>
+
+<span class="s0">export type </span><span class="s2">WrappedIcebergRestCatalog = {</span>
+  <span class="s1">[</span><span class="s2">K in keyof IcebergRestCatalog</span><span class="s1">]</span><span class="s2">: WrapAsyncMethod&lt;IcebergRestCatalog</span><span class="s1">[</span><span class="s2">K</span><span class="s1">]</span><span class="s2">&gt;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Client class for managing Analytics Buckets using Iceberg tables 
+ * Provides methods for creating, listing, and deleting analytics buckets 
+ </span><span class="s2">*/</span>
+<span class="s0">export default class </span><span class="s2">StorageAnalyticsClient </span><span class="s0">extends </span><span class="s2">BaseApiClient&lt;StorageError&gt; {</span>
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a new StorageAnalyticsClient instance 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Analytics Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">url </span><span class="s4">- The base URL for the storage API 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">headers </span><span class="s4">- HTTP headers to include in requests 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fetch </span><span class="s4">- Optional custom fetch implementation 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.storage.analytics.listBuckets() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s4">* </span><span class="s1">```typescript 
+   </span><span class="s4">* </span><span class="s1">import { StorageAnalyticsClient } from '@supabase/storage-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const client = new StorageAnalyticsClient(url, headers) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(url: string, headers: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string } = {}, fetch?: Fetch) {</span>
+    <span class="s0">const </span><span class="s2">finalUrl = url.</span><span class="s5">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s6">\/</span><span class="s0">$</span><span class="s2">/, ''</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s2">finalHeaders = { ...DEFAULT_HEADERS, ...headers }</span>
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">finalUrl, finalHeaders, fetch, '</span><span class="s3">storage</span><span class="s2">'</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Creates a new analytics bucket using Iceberg tables 
+   * Analytics buckets are optimized for analytical queries and data processing 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Analytics Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">name </span><span class="s4">A unique name for the bucket you are creating 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing newly created analytics bucket or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create analytics bucket 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.analytics 
+   </span><span class="s4">*   </span><span class="s1">.createBucket('analytics-data') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s4">* </span><span class="s1">```json 
+   </span><span class="s4">* </span><span class="s1">{ 
+   </span><span class="s4">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s4">*     </span><span class="s1">&quot;name&quot;: &quot;analytics-data&quot;, 
+   </span><span class="s4">*     </span><span class="s1">&quot;type&quot;: &quot;ANALYTICS&quot;, 
+   </span><span class="s4">*     </span><span class="s1">&quot;format&quot;: &quot;iceberg&quot;, 
+   </span><span class="s4">*     </span><span class="s1">&quot;created_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot;, 
+   </span><span class="s4">*     </span><span class="s1">&quot;updated_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot; 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Creates a new analytics bucket using Iceberg tables 
+   * - Analytics buckets are optimized for analytical queries and data processing 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">createBucket</span><span class="s2">(name: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: AnalyticBucket</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s5">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s5">post</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/bucket</span><span class="s2">`, { name }, { </span><span class="s1">headers</span><span class="s2">: this.headers }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Retrieves the details of all Analytics Storage buckets within an existing project 
+   * Only returns buckets of type 'ANALYTICS' 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Analytics Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">Query parameters for listing buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.limit </span><span class="s4">Maximum number of buckets to return 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.offset </span><span class="s4">Number of buckets to skip 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.sortColumn </span><span class="s4">Column to sort by ('name', 'created_at', 'updated_at') 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.sortOrder </span><span class="s4">Sort order ('asc' or 'desc') 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.search </span><span class="s4">Search term to filter bucket names 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing array of analytics buckets or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List analytics buckets 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.analytics 
+   </span><span class="s4">*   </span><span class="s1">.listBuckets({ 
+   </span><span class="s4">*     </span><span class="s1">limit: 10, 
+   </span><span class="s4">*     </span><span class="s1">offset: 0, 
+   </span><span class="s4">*     </span><span class="s1">sortColumn: 'created_at', 
+   </span><span class="s4">*     </span><span class="s1">sortOrder: 'desc' 
+   </span><span class="s4">*   </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s4">* </span><span class="s1">```json 
+   </span><span class="s4">* </span><span class="s1">{ 
+   </span><span class="s4">*   </span><span class="s1">&quot;data&quot;: [ 
+   </span><span class="s4">*     </span><span class="s1">{ 
+   </span><span class="s4">*       </span><span class="s1">&quot;name&quot;: &quot;analytics-data&quot;, 
+   </span><span class="s4">*       </span><span class="s1">&quot;type&quot;: &quot;ANALYTICS&quot;, 
+   </span><span class="s4">*       </span><span class="s1">&quot;format&quot;: &quot;iceberg&quot;, 
+   </span><span class="s4">*       </span><span class="s1">&quot;created_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot;, 
+   </span><span class="s4">*       </span><span class="s1">&quot;updated_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot; 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">], 
+   </span><span class="s4">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Retrieves the details of all Analytics Storage buckets within an existing project 
+   * - Only returns buckets of type 'ANALYTICS' 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">listBuckets</span><span class="s2">(options?: {</span>
+    <span class="s2">limit?: number</span>
+    <span class="s2">offset?: number</span>
+    <span class="s2">sortColumn?: '</span><span class="s3">name</span><span class="s2">' | '</span><span class="s3">created_at</span><span class="s2">' | '</span><span class="s3">updated_at</span><span class="s2">'</span>
+    <span class="s2">sortOrder?: '</span><span class="s3">asc</span><span class="s2">' | '</span><span class="s3">desc</span><span class="s2">'</span>
+    <span class="s2">search?: string</span>
+  <span class="s2">}): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: AnalyticBucket</span><span class="s1">[]</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s5">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">Build query string from options</span>
+      <span class="s0">const </span><span class="s2">queryParams = new </span><span class="s5">URLSearchParams</span><span class="s1">()</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.limit !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">queryParams.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">limit</span><span class="s2">', options.limit.</span><span class="s5">toString</span><span class="s1">())</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.offset !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">queryParams.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">offset</span><span class="s2">', options.offset.</span><span class="s5">toString</span><span class="s1">())</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.sortColumn</span><span class="s1">) </span><span class="s2">queryParams.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">sortColumn</span><span class="s2">', options.sortColumn</span><span class="s1">)</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.sortOrder</span><span class="s1">) </span><span class="s2">queryParams.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">sortOrder</span><span class="s2">', options.sortOrder</span><span class="s1">)</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.search</span><span class="s1">) </span><span class="s2">queryParams.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">search</span><span class="s2">', options.search</span><span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">queryString = queryParams.</span><span class="s5">toString</span><span class="s1">()</span>
+      <span class="s0">const </span><span class="s2">url = queryString ? `${this.url}</span><span class="s3">/bucket?</span><span class="s2">${queryString}` : `${this.url}</span><span class="s3">/bucket</span><span class="s2">`</span>
+
+      <span class="s0">return await </span><span class="s5">get</span><span class="s1">(</span><span class="s2">this.fetch, url, { </span><span class="s1">headers</span><span class="s2">: this.headers }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Deletes an existing analytics bucket 
+   * A bucket can't be deleted with existing objects inside it 
+   * You must first empty the bucket before deletion 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Analytics Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">bucketName </span><span class="s4">The unique identifier of the bucket you would like to delete 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Promise with response containing success message or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete analytics bucket 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.analytics 
+   </span><span class="s4">*   </span><span class="s1">.deleteBucket('analytics-data') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s4">* </span><span class="s1">```json 
+   </span><span class="s4">* </span><span class="s1">{ 
+   </span><span class="s4">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s4">*     </span><span class="s1">&quot;message&quot;: &quot;Successfully deleted&quot; 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Deletes an analytics bucket 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">deleteBucket</span><span class="s2">(bucketName: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { message: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s5">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s5">remove</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/bucket/</span><span class="s2">${bucketName}`,</span>
+        <span class="s2">{},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">alpha</span>
+   <span class="s4">* 
+   * Get an Iceberg REST Catalog client configured for a specific analytics bucket 
+   * Use this to perform advanced table and namespace operations within the bucket 
+   * The returned client provides full access to the Apache Iceberg REST Catalog API 
+   * with the Supabase `{ data, error }` pattern for consistent error handling on all operations. 
+   * 
+   * **Public alpha:** This API is part of a public alpha release and may not be available to your account type. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s4">Analytics Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">bucketName </span><span class="s4">- The name of the analytics bucket (warehouse) to connect to 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">The wrapped Iceberg catalog client 
+   * </span><span class="s2">@</span><span class="s0">throws </span><span class="s2">{StorageError} </span><span class="s4">If the bucket name is invalid 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get catalog and create table 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">// First, create an analytics bucket 
+   </span><span class="s4">* </span><span class="s1">const { data: bucket, error: bucketError } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.storage 
+   </span><span class="s4">*   </span><span class="s1">.analytics 
+   </span><span class="s4">*   </span><span class="s1">.createBucket('analytics-data') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Get the Iceberg catalog for that bucket 
+   </span><span class="s4">* </span><span class="s1">const catalog = supabase.storage.analytics.from('analytics-data') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Create a namespace 
+   </span><span class="s4">* </span><span class="s1">const { error: nsError } = await catalog.createNamespace({ namespace: ['default'] }) 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Create a table with schema 
+   </span><span class="s4">* </span><span class="s1">const { data: tableMetadata, error: tableError } = await catalog.createTable( 
+   </span><span class="s4">*   </span><span class="s1">{ namespace: ['default'] }, 
+   </span><span class="s4">*   </span><span class="s1">{ 
+   </span><span class="s4">*     </span><span class="s1">name: 'events', 
+   </span><span class="s4">*     </span><span class="s1">schema: { 
+   </span><span class="s4">*       </span><span class="s1">type: 'struct', 
+   </span><span class="s4">*       </span><span class="s1">fields: [ 
+   </span><span class="s4">*         </span><span class="s1">{ id: 1, name: 'id', type: 'long', required: true }, 
+   </span><span class="s4">*         </span><span class="s1">{ id: 2, name: 'timestamp', type: 'timestamp', required: true }, 
+   </span><span class="s4">*         </span><span class="s1">{ id: 3, name: 'user_id', type: 'string', required: false } 
+   </span><span class="s4">*       </span><span class="s1">], 
+   </span><span class="s4">*       </span><span class="s1">'schema-id': 0, 
+   </span><span class="s4">*       </span><span class="s1">'identifier-field-ids': [1] 
+   </span><span class="s4">*     </span><span class="s1">}, 
+   </span><span class="s4">*     </span><span class="s1">'partition-spec': { 
+   </span><span class="s4">*       </span><span class="s1">'spec-id': 0, 
+   </span><span class="s4">*       </span><span class="s1">fields: [] 
+   </span><span class="s4">*     </span><span class="s1">}, 
+   </span><span class="s4">*     </span><span class="s1">'write-order': { 
+   </span><span class="s4">*       </span><span class="s1">'order-id': 0, 
+   </span><span class="s4">*       </span><span class="s1">fields: [] 
+   </span><span class="s4">*     </span><span class="s1">}, 
+   </span><span class="s4">*     </span><span class="s1">properties: { 
+   </span><span class="s4">*       </span><span class="s1">'write.format.default': 'parquet' 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List tables in namespace 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const catalog = supabase.storage.analytics.from('analytics-data') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// List all tables in the default namespace 
+   </span><span class="s4">* </span><span class="s1">const { data: tables, error: listError } = await catalog.listTables({ namespace: ['default'] }) 
+   </span><span class="s4">* </span><span class="s1">if (listError) { 
+   </span><span class="s4">*   </span><span class="s1">if (listError.isNotFound()) { 
+   </span><span class="s4">*     </span><span class="s1">console.log('Namespace not found') 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">return 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">console.log(tables) // [{ namespace: ['default'], name: 'events' }] 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Working with namespaces 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const catalog = supabase.storage.analytics.from('analytics-data') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// List all namespaces 
+   </span><span class="s4">* </span><span class="s1">const { data: namespaces } = await catalog.listNamespaces() 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Create namespace with properties 
+   </span><span class="s4">* </span><span class="s1">await catalog.createNamespace( 
+   </span><span class="s4">*   </span><span class="s1">{ namespace: ['production'] }, 
+   </span><span class="s4">*   </span><span class="s1">{ properties: { owner: 'data-team', env: 'prod' } } 
+   </span><span class="s4">* </span><span class="s1">) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Cleanup operations 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const catalog = supabase.storage.analytics.from('analytics-data') 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Drop table with purge option (removes all data) 
+   </span><span class="s4">* </span><span class="s1">const { error: dropError } = await catalog.dropTable( 
+   </span><span class="s4">*   </span><span class="s1">{ namespace: ['default'], name: 'events' }, 
+   </span><span class="s4">*   </span><span class="s1">{ purge: true } 
+   </span><span class="s4">* </span><span class="s1">) 
+   </span><span class="s4">* 
+   * </span><span class="s1">if (dropError?.isNotFound()) { 
+   </span><span class="s4">*   </span><span class="s1">console.log('Table does not exist') 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Drop namespace (must be empty) 
+   </span><span class="s4">* </span><span class="s1">await catalog.dropNamespace({ namespace: ['default'] }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* This method provides a bridge between Supabase's bucket management and the standard 
+   * Apache Iceberg REST Catalog API. The bucket name maps to the Iceberg warehouse parameter. 
+   * All authentication and configuration is handled automatically using your Supabase credentials. 
+   * 
+   * **Error Handling**: Invalid bucket names throw immediately. All catalog 
+   * operations return `{ data, error }` where errors are `IcebergError` instances from iceberg-js. 
+   * Use helper methods like `error.isNotFound()` or check `error.status` for specific error handling. 
+   * Use `.throwOnError()` on the analytics client if you prefer exceptions for catalog operations. 
+   * 
+   * **Cleanup Operations**: When using `dropTable`, the `purge: true` option permanently 
+   * deletes all table data. Without it, the table is marked as deleted but data remains. 
+   * 
+   * **Library Dependency**: The returned catalog wraps `IcebergRestCatalog` from iceberg-js. 
+   * For complete API documentation and advanced usage, refer to the 
+   * [iceberg-js documentation](https://supabase.github.io/iceberg-js/). 
+   </span><span class="s2">*/</span>
+  <span class="s5">from</span><span class="s2">(bucketName: string): WrappedIcebergRestCatalog {</span>
+    <span class="s2">// </span><span class="s4">Validate bucket name using same rules as Supabase Storage API backend</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s5">isValidBucketName</span><span class="s1">(</span><span class="s2">bucketName</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">StorageError</span><span class="s1">(</span>
+        <span class="s2">'</span><span class="s3">Invalid bucket name: File, folder, and bucket names must follow AWS object key naming guidelines </span><span class="s2">' +</span>
+          <span class="s2">'</span><span class="s3">and should avoid the use of any other characters.</span><span class="s2">'</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s4">Construct the Iceberg REST Catalog URL</span>
+    <span class="s2">// </span><span class="s4">The base URL is /storage/v1/iceberg</span>
+    <span class="s2">// </span><span class="s4">Note: IcebergRestCatalog from iceberg-js automatically adds /v1/ prefix to API paths</span>
+    <span class="s2">// </span><span class="s4">so we should NOT append /v1 here (it would cause double /v1/v1/ in the URL)</span>
+    <span class="s0">const </span><span class="s2">catalog = new </span><span class="s5">IcebergRestCatalog</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s1">baseUrl</span><span class="s2">: this.url,</span>
+      <span class="s1">catalogName</span><span class="s2">: bucketName, // </span><span class="s4">Maps to the warehouse parameter in Supabase's implementation</span>
+      <span class="s1">auth</span><span class="s2">: {</span>
+        <span class="s1">type</span><span class="s2">: '</span><span class="s3">custom</span><span class="s2">',</span>
+        <span class="s5">getHeaders</span><span class="s2">: </span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">this.headers,</span>
+      <span class="s2">},</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">shouldThrowOnError = this.shouldThrowOnError</span>
+
+    <span class="s0">const </span><span class="s2">wrappedCatalog = new </span><span class="s5">Proxy</span><span class="s1">(</span><span class="s2">catalog, {</span>
+      <span class="s5">get</span><span class="s2">(target, prop: keyof IcebergRestCatalog) {</span>
+        <span class="s0">const </span><span class="s2">value = target</span><span class="s1">[</span><span class="s2">prop</span><span class="s1">]</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value !== '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s2">value</span>
+        <span class="s2">}</span>
+
+        <span class="s0">return async </span><span class="s2">(...args: unknown</span><span class="s1">[]</span><span class="s2">) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s0">try </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s1">(</span><span class="s2">value </span><span class="s0">as </span><span class="s2">Function</span><span class="s1">)</span><span class="s2">.</span><span class="s5">apply</span><span class="s1">(</span><span class="s2">target, args</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">{ data, </span><span class="s1">error</span><span class="s2">: </span><span class="s7">null </span><span class="s2">}</span>
+          <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">shouldThrowOnError</span><span class="s1">) </span><span class="s2">{</span>
+              <span class="s0">throw </span><span class="s2">error</span>
+            <span class="s2">}</span>
+            <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s7">null</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: error </span><span class="s0">as </span><span class="s2">IcebergError }</span>
+          <span class="s2">}</span>
+        <span class="s2">}</span>
+      <span class="s2">},</span>
+    <span class="s2">}</span><span class="s1">) </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">WrappedIcebergRestCatalog</span>
+
+    <span class="s0">return </span><span class="s2">wrappedCatalog</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,221 @@
+<html>
+<head>
+<title>longbits.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+longbits.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = LongBits;</span>
+
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s0">&quot;../util/minimal&quot;</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * Constructs new long bits. 
+ * @classdesc Helper class for working with the low and high bits of a 64 bit value. 
+ * @memberof util 
+ * @constructor 
+ * @param {number} lo Low 32 bits, unsigned 
+ * @param {number} hi High 32 bits, unsigned 
+ */</span>
+<span class="s2">function </span><span class="s1">LongBits(lo, hi) {</span>
+
+    <span class="s3">// note that the casts below are theoretically unnecessary as of today, but older statically</span>
+    <span class="s3">// generated converter code might still call the ctor with signed 32bits. kept for compat.</span>
+
+    <span class="s3">/** 
+     * Low bits. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.lo = lo &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s3">/** 
+     * High bits. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.hi = hi &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Zero bits. 
+ * @memberof util.LongBits 
+ * @type {util.LongBits} 
+ */</span>
+<span class="s2">var </span><span class="s1">zero = LongBits.zero = </span><span class="s2">new </span><span class="s1">LongBits(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+
+<span class="s1">zero.toNumber = </span><span class="s2">function</span><span class="s1">() { </span><span class="s2">return </span><span class="s4">0</span><span class="s1">; };</span>
+<span class="s1">zero.zzEncode = zero.zzDecode = </span><span class="s2">function</span><span class="s1">() { </span><span class="s2">return this</span><span class="s1">; };</span>
+<span class="s1">zero.length = </span><span class="s2">function</span><span class="s1">() { </span><span class="s2">return </span><span class="s4">1</span><span class="s1">; };</span>
+
+<span class="s3">/** 
+ * Zero hash. 
+ * @memberof util.LongBits 
+ * @type {string} 
+ */</span>
+<span class="s2">var </span><span class="s1">zeroHash = LongBits.zeroHash = </span><span class="s0">&quot;</span><span class="s2">\0\0\0\0\0\0\0\0</span><span class="s0">&quot;</span><span class="s1">;</span>
+
+<span class="s3">/** 
+ * Constructs new long bits from the specified number. 
+ * @param {number} value Value 
+ * @returns {util.LongBits} Instance 
+ */</span>
+<span class="s1">LongBits.fromNumber = </span><span class="s2">function </span><span class="s1">fromNumber(value) {</span>
+    <span class="s2">if </span><span class="s1">(value === </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">zero;</span>
+    <span class="s2">var </span><span class="s1">sign = value &lt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(sign)</span>
+        <span class="s1">value = -value;</span>
+    <span class="s2">var </span><span class="s1">lo = value &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">,</span>
+        <span class="s1">hi = (value - lo) / </span><span class="s4">4294967296 </span><span class="s1">&gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(sign) {</span>
+        <span class="s1">hi = ~hi &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s1">lo = ~lo &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(++lo &gt; </span><span class="s4">4294967295</span><span class="s1">) {</span>
+            <span class="s1">lo = </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(++hi &gt; </span><span class="s4">4294967295</span><span class="s1">)</span>
+                <span class="s1">hi = </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return new </span><span class="s1">LongBits(lo, hi);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Constructs new long bits from a number, long or string. 
+ * @param {Long|number|string} value Value 
+ * @returns {util.LongBits} Instance 
+ */</span>
+<span class="s1">LongBits.from = </span><span class="s2">function </span><span class="s1">from(value) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">value === </span><span class="s0">&quot;number&quot;</span><span class="s1">)</span>
+        <span class="s2">return </span><span class="s1">LongBits.fromNumber(value);</span>
+    <span class="s2">if </span><span class="s1">(util.isString(value)) {</span>
+        <span class="s3">/* istanbul ignore else */</span>
+        <span class="s2">if </span><span class="s1">(util.Long)</span>
+            <span class="s1">value = util.Long.fromString(value);</span>
+        <span class="s2">else</span>
+            <span class="s2">return </span><span class="s1">LongBits.fromNumber(parseInt(value, </span><span class="s4">10</span><span class="s1">));</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">value.low || value.high ? </span><span class="s2">new </span><span class="s1">LongBits(value.low &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">, value.high &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">) : zero;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Converts this long bits to a possibly unsafe JavaScript number. 
+ * @param {boolean} [unsigned=false] Whether unsigned or not 
+ * @returns {number} Possibly unsafe number 
+ */</span>
+<span class="s1">LongBits.prototype.toNumber = </span><span class="s2">function </span><span class="s1">toNumber(unsigned) {</span>
+    <span class="s2">if </span><span class="s1">(!unsigned &amp;&amp; </span><span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">31</span><span class="s1">) {</span>
+        <span class="s2">var </span><span class="s1">lo = ~</span><span class="s2">this</span><span class="s1">.lo + </span><span class="s4">1 </span><span class="s1">&gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">,</span>
+            <span class="s1">hi = ~</span><span class="s2">this</span><span class="s1">.hi     &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(!lo)</span>
+            <span class="s1">hi = hi + </span><span class="s4">1 </span><span class="s1">&gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">-(lo + hi * </span><span class="s4">4294967296</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.lo + </span><span class="s2">this</span><span class="s1">.hi * </span><span class="s4">4294967296</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Converts this long bits to a long. 
+ * @param {boolean} [unsigned=false] Whether unsigned or not 
+ * @returns {Long} Long 
+ */</span>
+<span class="s1">LongBits.prototype.toLong = </span><span class="s2">function </span><span class="s1">toLong(unsigned) {</span>
+    <span class="s2">return </span><span class="s1">util.Long</span>
+        <span class="s1">? </span><span class="s2">new </span><span class="s1">util.Long(</span><span class="s2">this</span><span class="s1">.lo | </span><span class="s4">0</span><span class="s1">, </span><span class="s2">this</span><span class="s1">.hi | </span><span class="s4">0</span><span class="s1">, Boolean(unsigned))</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s1">: { low: </span><span class="s2">this</span><span class="s1">.lo | </span><span class="s4">0</span><span class="s1">, high: </span><span class="s2">this</span><span class="s1">.hi | </span><span class="s4">0</span><span class="s1">, unsigned: Boolean(unsigned) };</span>
+<span class="s1">};</span>
+
+<span class="s2">var </span><span class="s1">charCodeAt = String.prototype.charCodeAt;</span>
+
+<span class="s3">/** 
+ * Constructs new long bits from the specified 8 characters long hash. 
+ * @param {string} hash Hash 
+ * @returns {util.LongBits} Bits 
+ */</span>
+<span class="s1">LongBits.fromHash = </span><span class="s2">function </span><span class="s1">fromHash(hash) {</span>
+    <span class="s2">if </span><span class="s1">(hash === zeroHash)</span>
+        <span class="s2">return </span><span class="s1">zero;</span>
+    <span class="s2">return new </span><span class="s1">LongBits(</span>
+        <span class="s1">( charCodeAt.call(hash, </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">1</span><span class="s1">) &lt;&lt; </span><span class="s4">8</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">2</span><span class="s1">) &lt;&lt; </span><span class="s4">16</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">3</span><span class="s1">) &lt;&lt; </span><span class="s4">24</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span>
+    <span class="s1">,</span>
+        <span class="s1">( charCodeAt.call(hash, </span><span class="s4">4</span><span class="s1">)</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">5</span><span class="s1">) &lt;&lt; </span><span class="s4">8</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">6</span><span class="s1">) &lt;&lt; </span><span class="s4">16</span>
+        <span class="s1">| charCodeAt.call(hash, </span><span class="s4">7</span><span class="s1">) &lt;&lt; </span><span class="s4">24</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span>
+    <span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Converts this long bits to a 8 characters long hash. 
+ * @returns {string} Hash 
+ */</span>
+<span class="s1">LongBits.prototype.toHash = </span><span class="s2">function </span><span class="s1">toHash() {</span>
+    <span class="s2">return </span><span class="s1">String.fromCharCode(</span>
+        <span class="s2">this</span><span class="s1">.lo        &amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">8  </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">16 </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">24      </span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.hi        &amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">8  </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">16 </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">,</span>
+        <span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">24</span>
+    <span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Zig-zag encodes this long bits. 
+ * @returns {util.LongBits} `this` 
+ */</span>
+<span class="s1">LongBits.prototype.zzEncode = </span><span class="s2">function </span><span class="s1">zzEncode() {</span>
+    <span class="s2">var </span><span class="s1">mask =   </span><span class="s2">this</span><span class="s1">.hi &gt;&gt; </span><span class="s4">31</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.hi  = ((</span><span class="s2">this</span><span class="s1">.hi &lt;&lt; </span><span class="s4">1 </span><span class="s1">| </span><span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">31</span><span class="s1">) ^ mask) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.lo  = ( </span><span class="s2">this</span><span class="s1">.lo &lt;&lt; </span><span class="s4">1                   </span><span class="s1">^ mask) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Zig-zag decodes this long bits. 
+ * @returns {util.LongBits} `this` 
+ */</span>
+<span class="s1">LongBits.prototype.zzDecode = </span><span class="s2">function </span><span class="s1">zzDecode() {</span>
+    <span class="s2">var </span><span class="s1">mask = -(</span><span class="s2">this</span><span class="s1">.lo &amp; </span><span class="s4">1</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.lo  = ((</span><span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">1 </span><span class="s1">| </span><span class="s2">this</span><span class="s1">.hi &lt;&lt; </span><span class="s4">31</span><span class="s1">) ^ mask) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.hi  = ( </span><span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">1                  </span><span class="s1">^ mask) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Calculates the length of this longbits when encoded as a varint. 
+ * @returns {number} Length 
+ */</span>
+<span class="s1">LongBits.prototype.length = </span><span class="s2">function </span><span class="s1">length() {</span>
+    <span class="s2">var </span><span class="s1">part0 =  </span><span class="s2">this</span><span class="s1">.lo,</span>
+        <span class="s1">part1 = (</span><span class="s2">this</span><span class="s1">.lo &gt;&gt;&gt; </span><span class="s4">28 </span><span class="s1">| </span><span class="s2">this</span><span class="s1">.hi &lt;&lt; </span><span class="s4">4</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">,</span>
+        <span class="s1">part2 =  </span><span class="s2">this</span><span class="s1">.hi &gt;&gt;&gt; </span><span class="s4">24</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">part2 === </span><span class="s4">0</span>
+         <span class="s1">? part1 === </span><span class="s4">0</span>
+           <span class="s1">? part0 &lt; </span><span class="s4">16384</span>
+             <span class="s1">? part0 &lt; </span><span class="s4">128 </span><span class="s1">? </span><span class="s4">1 </span><span class="s1">: </span><span class="s4">2</span>
+             <span class="s1">: part0 &lt; </span><span class="s4">2097152 </span><span class="s1">? </span><span class="s4">3 </span><span class="s1">: </span><span class="s4">4</span>
+           <span class="s1">: part1 &lt; </span><span class="s4">16384</span>
+             <span class="s1">? part1 &lt; </span><span class="s4">128 </span><span class="s1">? </span><span class="s4">5 </span><span class="s1">: </span><span class="s4">6</span>
+             <span class="s1">: part1 &lt; </span><span class="s4">2097152 </span><span class="s1">? </span><span class="s4">7 </span><span class="s1">: </span><span class="s4">8</span>
+         <span class="s1">: part2 &lt; </span><span class="s4">128 </span><span class="s1">? </span><span class="s4">9 </span><span class="s1">: </span><span class="s4">10</span><span class="s1">;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

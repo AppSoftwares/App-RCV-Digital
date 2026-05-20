@@ -1,0 +1,154 @@
+<html>
+<head>
+<title>push.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+push.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * @import Channel from &quot;./channel&quot; 
+ * @import { ChannelEvent } from &quot;./types&quot; 
+ */</span>
+<span class="s1">export </span><span class="s2">default </span><span class="s1">class Push {</span>
+  <span class="s0">/** 
+   * Initializes the Push 
+   * @param {Channel} channel - The Channel 
+   * @param {ChannelEvent} event - The event, for example `&quot;phx_join&quot;` 
+   * @param {() =&gt; Record&lt;string, unknown&gt;} payload - The payload, for example `{user_id: 123}` 
+   * @param {number} timeout - The push timeout in milliseconds 
+   */</span>
+  <span class="s1">constructor(channel, event, payload, timeout){</span>
+    <span class="s0">/** @type{Channel} */</span>
+    <span class="s2">this</span><span class="s1">.channel = channel</span>
+    <span class="s0">/** @type{ChannelEvent} */</span>
+    <span class="s2">this</span><span class="s1">.event = event</span>
+    <span class="s0">/** @type{() =&gt; Record&lt;string, unknown&gt;} */</span>
+    <span class="s2">this</span><span class="s1">.payload = payload || </span><span class="s2">function </span><span class="s1">(){ </span><span class="s2">return </span><span class="s1">{} }</span>
+    <span class="s2">this</span><span class="s1">.receivedResp = </span><span class="s2">null</span>
+    <span class="s0">/** @type{number} */</span>
+    <span class="s2">this</span><span class="s1">.timeout = timeout</span>
+    <span class="s0">/** @type{(ReturnType&lt;typeof setTimeout&gt;) | null} */</span>
+    <span class="s2">this</span><span class="s1">.timeoutTimer = </span><span class="s2">null</span>
+    <span class="s0">/** @type{{status: string; callback: (response: any) =&gt; void}[]} */</span>
+    <span class="s2">this</span><span class="s1">.recHooks = []</span>
+    <span class="s0">/** @type{boolean} */</span>
+    <span class="s2">this</span><span class="s1">.sent = </span><span class="s2">false</span>
+    <span class="s0">/** @type{string | null | undefined} */</span>
+    <span class="s2">this</span><span class="s1">.ref = undefined</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * 
+   * @param {number} timeout 
+   */</span>
+  <span class="s1">resend(timeout){</span>
+    <span class="s2">this</span><span class="s1">.timeout = timeout</span>
+    <span class="s2">this</span><span class="s1">.reset()</span>
+    <span class="s2">this</span><span class="s1">.send()</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * 
+   */</span>
+  <span class="s1">send(){</span>
+    <span class="s2">if</span><span class="s1">(</span><span class="s2">this</span><span class="s1">.hasReceived(</span><span class="s3">&quot;timeout&quot;</span><span class="s1">)){ </span><span class="s2">return </span><span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.startTimeout()</span>
+    <span class="s2">this</span><span class="s1">.sent = </span><span class="s2">true</span>
+    <span class="s2">this</span><span class="s1">.channel.socket.push({</span>
+      <span class="s1">topic: </span><span class="s2">this</span><span class="s1">.channel.topic,</span>
+      <span class="s1">event: </span><span class="s2">this</span><span class="s1">.event,</span>
+      <span class="s1">payload: </span><span class="s2">this</span><span class="s1">.payload(),</span>
+      <span class="s1">ref: </span><span class="s2">this</span><span class="s1">.ref,</span>
+      <span class="s1">join_ref: </span><span class="s2">this</span><span class="s1">.channel.joinRef()</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * 
+   * @param {string} status 
+   * @param {(response: any) =&gt; void} callback 
+   */</span>
+  <span class="s1">receive(status, callback){</span>
+    <span class="s2">if</span><span class="s1">(</span><span class="s2">this</span><span class="s1">.hasReceived(status)){</span>
+      <span class="s1">callback(</span><span class="s2">this</span><span class="s1">.receivedResp.response)</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.recHooks.push({status, callback})</span>
+    <span class="s2">return this</span>
+  <span class="s1">}</span>
+
+  <span class="s1">reset(){</span>
+    <span class="s2">this</span><span class="s1">.cancelRefEvent()</span>
+    <span class="s2">this</span><span class="s1">.ref = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s1">.refEvent = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s1">.receivedResp = </span><span class="s2">null</span>
+    <span class="s2">this</span><span class="s1">.sent = </span><span class="s2">false</span>
+  <span class="s1">}</span>
+
+  <span class="s1">destroy(){</span>
+    <span class="s2">this</span><span class="s1">.cancelRefEvent()</span>
+    <span class="s2">this</span><span class="s1">.cancelTimeout()</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @private 
+   */</span>
+  <span class="s1">matchReceive({status, response, _ref}){</span>
+    <span class="s2">this</span><span class="s1">.recHooks.filter(h =&gt; h.status === status)</span>
+      <span class="s1">.forEach(h =&gt; h.callback(response))</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @private 
+   */</span>
+  <span class="s1">cancelRefEvent(){</span>
+    <span class="s2">if</span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.refEvent){ </span><span class="s2">return </span><span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.channel.off(</span><span class="s2">this</span><span class="s1">.refEvent)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">cancelTimeout(){</span>
+    <span class="s1">clearTimeout(</span><span class="s2">this</span><span class="s1">.timeoutTimer)</span>
+    <span class="s2">this</span><span class="s1">.timeoutTimer = </span><span class="s2">null</span>
+  <span class="s1">}</span>
+
+  <span class="s1">startTimeout(){</span>
+    <span class="s2">if</span><span class="s1">(</span><span class="s2">this</span><span class="s1">.timeoutTimer){ </span><span class="s2">this</span><span class="s1">.cancelTimeout() }</span>
+    <span class="s2">this</span><span class="s1">.ref = </span><span class="s2">this</span><span class="s1">.channel.socket.makeRef()</span>
+    <span class="s2">this</span><span class="s1">.refEvent = </span><span class="s2">this</span><span class="s1">.channel.replyEventName(</span><span class="s2">this</span><span class="s1">.ref)</span>
+
+    <span class="s2">this</span><span class="s1">.channel.on(</span><span class="s2">this</span><span class="s1">.refEvent, payload =&gt; {</span>
+      <span class="s2">this</span><span class="s1">.cancelRefEvent()</span>
+      <span class="s2">this</span><span class="s1">.cancelTimeout()</span>
+      <span class="s2">this</span><span class="s1">.receivedResp = payload</span>
+      <span class="s2">this</span><span class="s1">.matchReceive(payload)</span>
+    <span class="s1">})</span>
+
+    <span class="s2">this</span><span class="s1">.timeoutTimer = setTimeout(() =&gt; {</span>
+      <span class="s2">this</span><span class="s1">.trigger(</span><span class="s3">&quot;timeout&quot;</span><span class="s1">, {})</span>
+    <span class="s1">}, </span><span class="s2">this</span><span class="s1">.timeout)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @private 
+   */</span>
+  <span class="s1">hasReceived(status){</span>
+    <span class="s2">return this</span><span class="s1">.receivedResp &amp;&amp; </span><span class="s2">this</span><span class="s1">.receivedResp.status === status</span>
+  <span class="s1">}</span>
+
+  <span class="s1">trigger(status, response){</span>
+    <span class="s2">this</span><span class="s1">.channel.trigger(</span><span class="s2">this</span><span class="s1">.refEvent, {status, response})</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

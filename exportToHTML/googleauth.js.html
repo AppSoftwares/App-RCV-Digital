@@ -1,0 +1,919 @@
+<html>
+<head>
+<title>googleauth.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+googleauth.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2019 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.GoogleAuth = exports.GoogleAuthExceptionMessages = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const child_process_1 = require(</span><span class="s0">&quot;child_process&quot;</span><span class="s1">);</span>
+<span class="s1">const fs = require(</span><span class="s0">&quot;fs&quot;</span><span class="s1">);</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s1">const gcpMetadata = require(</span><span class="s0">&quot;gcp-metadata&quot;</span><span class="s1">);</span>
+<span class="s1">const os = require(</span><span class="s0">&quot;os&quot;</span><span class="s1">);</span>
+<span class="s1">const path = require(</span><span class="s0">&quot;path&quot;</span><span class="s1">);</span>
+<span class="s1">const crypto_1 = require(</span><span class="s0">&quot;../crypto/crypto&quot;</span><span class="s1">);</span>
+<span class="s1">const computeclient_1 = require(</span><span class="s0">&quot;./computeclient&quot;</span><span class="s1">);</span>
+<span class="s1">const idtokenclient_1 = require(</span><span class="s0">&quot;./idtokenclient&quot;</span><span class="s1">);</span>
+<span class="s1">const envDetect_1 = require(</span><span class="s0">&quot;./envDetect&quot;</span><span class="s1">);</span>
+<span class="s1">const jwtclient_1 = require(</span><span class="s0">&quot;./jwtclient&quot;</span><span class="s1">);</span>
+<span class="s1">const refreshclient_1 = require(</span><span class="s0">&quot;./refreshclient&quot;</span><span class="s1">);</span>
+<span class="s1">const impersonated_1 = require(</span><span class="s0">&quot;./impersonated&quot;</span><span class="s1">);</span>
+<span class="s1">const externalclient_1 = require(</span><span class="s0">&quot;./externalclient&quot;</span><span class="s1">);</span>
+<span class="s1">const baseexternalclient_1 = require(</span><span class="s0">&quot;./baseexternalclient&quot;</span><span class="s1">);</span>
+<span class="s1">const authclient_1 = require(</span><span class="s0">&quot;./authclient&quot;</span><span class="s1">);</span>
+<span class="s1">const externalAccountAuthorizedUserClient_1 = require(</span><span class="s0">&quot;./externalAccountAuthorizedUserClient&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">exports.GoogleAuthExceptionMessages = {</span>
+    <span class="s1">API_KEY_WITH_CREDENTIALS: </span><span class="s0">'API Keys and Credentials are mutually exclusive authentication methods and cannot be used together.'</span><span class="s1">,</span>
+    <span class="s1">NO_PROJECT_ID_FOUND: </span><span class="s0">'Unable to detect a Project Id in the current environment. </span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'To learn more about authentication and Google APIs, visit: </span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'https://cloud.google.com/docs/authentication/getting-started'</span><span class="s1">,</span>
+    <span class="s1">NO_CREDENTIALS_FOUND: </span><span class="s0">'Unable to find credentials in current environment. </span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'To learn more about authentication and Google APIs, visit: </span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'https://cloud.google.com/docs/authentication/getting-started'</span><span class="s1">,</span>
+    <span class="s1">NO_ADC_FOUND: </span><span class="s0">'Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.'</span><span class="s1">,</span>
+    <span class="s1">NO_UNIVERSE_DOMAIN_FOUND: </span><span class="s0">'Unable to detect a Universe Domain in the current environment.</span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'To learn more about Universe Domain retrieval, visit: </span><span class="s3">\n</span><span class="s0">' </span><span class="s1">+</span>
+        <span class="s0">'https://cloud.google.com/compute/docs/metadata/predefined-metadata-keys'</span><span class="s1">,</span>
+<span class="s1">};</span>
+<span class="s1">class GoogleAuth {</span>
+    <span class="s2">/** 
+     * Caches a value indicating whether the auth layer is running on Google 
+     * Compute Engine. 
+     * @private 
+     */</span>
+    <span class="s1">checkIsGCE = undefined;</span>
+    <span class="s1">useJWTAccessWithScope;</span>
+    <span class="s1">defaultServicePath;</span>
+    <span class="s2">// Note:  this properly is only public to satisfy unit tests.</span>
+    <span class="s2">// https://github.com/Microsoft/TypeScript/issues/5228</span>
+    <span class="s1">get isGCE() {</span>
+        <span class="s3">return this</span><span class="s1">.checkIsGCE;</span>
+    <span class="s1">}</span>
+    <span class="s1">_findProjectIdPromise;</span>
+    <span class="s1">_cachedProjectId;</span>
+    <span class="s2">// To save the contents of the JSON credential file</span>
+    <span class="s1">jsonContent = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s1">apiKey;</span>
+    <span class="s1">cachedCredential = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * A pending {@link AuthClient}. Used for concurrent {@link GoogleAuth.getClient} calls. 
+     */</span>
+    <span class="s1">#pendingAuthClient = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * Scopes populated by the client library by default. We differentiate between 
+     * these and user defined scopes when deciding whether to use a self-signed JWT. 
+     */</span>
+    <span class="s1">defaultScopes;</span>
+    <span class="s1">keyFilename;</span>
+    <span class="s1">scopes;</span>
+    <span class="s1">clientOptions = {};</span>
+    <span class="s2">/** 
+     * Configuration is resolved in the following order of precedence: 
+     * - {@link GoogleAuthOptions.credentials `credentials`} 
+     * - {@link GoogleAuthOptions.keyFilename `keyFilename`} 
+     * - {@link GoogleAuthOptions.keyFile `keyFile`} 
+     * 
+     * {@link GoogleAuthOptions.clientOptions `clientOptions`} are passed to the 
+     * {@link AuthClient `AuthClient`s}. 
+     * 
+     * @param opts 
+     */</span>
+    <span class="s1">constructor(opts = {}) {</span>
+        <span class="s3">this</span><span class="s1">._cachedProjectId = opts.projectId || </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.cachedCredential = opts.authClient || </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.keyFilename = opts.keyFilename || opts.keyFile;</span>
+        <span class="s3">this</span><span class="s1">.scopes = opts.scopes;</span>
+        <span class="s3">this</span><span class="s1">.clientOptions = opts.clientOptions || {};</span>
+        <span class="s3">this</span><span class="s1">.jsonContent = opts.credentials || </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.apiKey = opts.apiKey || </span><span class="s3">this</span><span class="s1">.clientOptions.apiKey || </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s2">// Cannot use both API Key + Credentials</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.apiKey &amp;&amp; (</span><span class="s3">this</span><span class="s1">.jsonContent || </span><span class="s3">this</span><span class="s1">.clientOptions.credentials)) {</span>
+            <span class="s3">throw new </span><span class="s1">RangeError(exports.GoogleAuthExceptionMessages.API_KEY_WITH_CREDENTIALS);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(opts.universeDomain) {</span>
+            <span class="s3">this</span><span class="s1">.clientOptions.universeDomain = opts.universeDomain;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">// GAPIC client libraries should always use self-signed JWTs. The following</span>
+    <span class="s2">// variables are set on the JWT client in order to indicate the type of library,</span>
+    <span class="s2">// and sign the JWT with the correct audience and scopes (if not supplied).</span>
+    <span class="s1">setGapicJWTValues(client) {</span>
+        <span class="s1">client.defaultServicePath = </span><span class="s3">this</span><span class="s1">.defaultServicePath;</span>
+        <span class="s1">client.useJWTAccessWithScope = </span><span class="s3">this</span><span class="s1">.useJWTAccessWithScope;</span>
+        <span class="s1">client.defaultScopes = </span><span class="s3">this</span><span class="s1">.defaultScopes;</span>
+    <span class="s1">}</span>
+    <span class="s1">getProjectId(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getProjectIdAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getProjectIdAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * A temporary method for internal `getProjectId` usages where `null` is 
+     * acceptable. In a future major release, `getProjectId` should return `null` 
+     * (as the `Promise&lt;string | null&gt;` base signature describes) and this private 
+     * method should be removed. 
+     * 
+     * @returns Promise that resolves with project id (or `null`) 
+     */</span>
+    <span class="s1">async getProjectIdOptional() {</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.getProjectId();</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">Error &amp;&amp;</span>
+                <span class="s1">e.message === exports.GoogleAuthExceptionMessages.NO_PROJECT_ID_FOUND) {</span>
+                <span class="s3">return null</span><span class="s1">;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s3">throw </span><span class="s1">e;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * A private method for finding and caching a projectId. 
+     * 
+     * Supports environments in order of precedence: 
+     * - GCLOUD_PROJECT or GOOGLE_CLOUD_PROJECT environment variable 
+     * - GOOGLE_APPLICATION_CREDENTIALS JSON file 
+     * - Cloud SDK: `gcloud config config-helper --format json` 
+     * - GCE project ID from metadata server 
+     * 
+     * @returns projectId 
+     */</span>
+    <span class="s1">async findAndCacheProjectId() {</span>
+        <span class="s1">let projectId = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">projectId ||= await </span><span class="s3">this</span><span class="s1">.getProductionProjectId();</span>
+        <span class="s1">projectId ||= await </span><span class="s3">this</span><span class="s1">.getFileProjectId();</span>
+        <span class="s1">projectId ||= await </span><span class="s3">this</span><span class="s1">.getDefaultServiceProjectId();</span>
+        <span class="s1">projectId ||= await </span><span class="s3">this</span><span class="s1">.getGCEProjectId();</span>
+        <span class="s1">projectId ||= await </span><span class="s3">this</span><span class="s1">.getExternalAccountClientProjectId();</span>
+        <span class="s3">if </span><span class="s1">(projectId) {</span>
+            <span class="s3">this</span><span class="s1">._cachedProjectId = projectId;</span>
+            <span class="s3">return </span><span class="s1">projectId;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">throw new </span><span class="s1">Error(exports.GoogleAuthExceptionMessages.NO_PROJECT_ID_FOUND);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getProjectIdAsync() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">._cachedProjectId) {</span>
+            <span class="s3">return this</span><span class="s1">._cachedProjectId;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">._findProjectIdPromise) {</span>
+            <span class="s3">this</span><span class="s1">._findProjectIdPromise = </span><span class="s3">this</span><span class="s1">.findAndCacheProjectId();</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">._findProjectIdPromise;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Retrieves a universe domain from the metadata server via 
+     * {@link gcpMetadata.universe}. 
+     * 
+     * @returns a universe domain 
+     */</span>
+    <span class="s1">async getUniverseDomainFromMetadataServer() {</span>
+        <span class="s1">let universeDomain;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">universeDomain = await gcpMetadata.universe(</span><span class="s0">'universe-domain'</span><span class="s1">);</span>
+            <span class="s1">universeDomain ||= authclient_1.DEFAULT_UNIVERSE;</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e &amp;&amp; e?.response?.status === </span><span class="s4">404</span><span class="s1">) {</span>
+                <span class="s1">universeDomain = authclient_1.DEFAULT_UNIVERSE;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s3">throw </span><span class="s1">e;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">universeDomain;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Retrieves, caches, and returns the universe domain in the following order 
+     * of precedence: 
+     * - The universe domain in {@link GoogleAuth.clientOptions} 
+     * - An existing or ADC {@link AuthClient}'s universe domain 
+     * - {@link gcpMetadata.universe}, if {@link Compute} client 
+     * 
+     * @returns The universe domain 
+     */</span>
+    <span class="s1">async getUniverseDomain() {</span>
+        <span class="s1">let universeDomain = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(</span><span class="s3">this</span><span class="s1">.clientOptions).get(</span><span class="s0">'universe_domain'</span><span class="s1">);</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">universeDomain ??= (await </span><span class="s3">this</span><span class="s1">.getClient()).universeDomain;</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">{</span>
+            <span class="s2">// client or ADC is not available</span>
+            <span class="s1">universeDomain ??= authclient_1.DEFAULT_UNIVERSE;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">universeDomain;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * @returns Any scopes (user-specified or default scopes specified by the 
+     *   client library) that need to be set on the current Auth client. 
+     */</span>
+    <span class="s1">getAnyScopes() {</span>
+        <span class="s3">return this</span><span class="s1">.scopes || </span><span class="s3">this</span><span class="s1">.defaultScopes;</span>
+    <span class="s1">}</span>
+    <span class="s1">getApplicationDefault(optionsOrCallback = {}, callback) {</span>
+        <span class="s1">let options;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">optionsOrCallback === </span><span class="s0">'function'</span><span class="s1">) {</span>
+            <span class="s1">callback = optionsOrCallback;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">options = optionsOrCallback;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getApplicationDefaultAsync(options).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.credential, r.projectId), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getApplicationDefaultAsync(options);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getApplicationDefaultAsync(options = {}) {</span>
+        <span class="s2">// If we've already got a cached credential, return it.</span>
+        <span class="s2">// This will also preserve one's configured quota project, in case they</span>
+        <span class="s2">// set one directly on the credential previously.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.cachedCredential) {</span>
+            <span class="s2">// cache, while preserving existing quota project preferences</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#prepareAndCacheClient(</span><span class="s3">this</span><span class="s1">.cachedCredential, </span><span class="s3">null</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">let credential;</span>
+        <span class="s2">// Check for the existence of a local environment variable pointing to the</span>
+        <span class="s2">// location of the credential file. This is typically used in local</span>
+        <span class="s2">// developer scenarios.</span>
+        <span class="s1">credential =</span>
+            <span class="s1">await </span><span class="s3">this</span><span class="s1">._tryGetApplicationCredentialsFromEnvironmentVariable(options);</span>
+        <span class="s3">if </span><span class="s1">(credential) {</span>
+            <span class="s3">if </span><span class="s1">(credential </span><span class="s3">instanceof </span><span class="s1">jwtclient_1.JWT) {</span>
+                <span class="s1">credential.scopes = </span><span class="s3">this</span><span class="s1">.scopes;</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(credential </span><span class="s3">instanceof </span><span class="s1">baseexternalclient_1.BaseExternalAccountClient) {</span>
+                <span class="s1">credential.scopes = </span><span class="s3">this</span><span class="s1">.getAnyScopes();</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#prepareAndCacheClient(credential);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Look in the well-known credential file location.</span>
+        <span class="s1">credential =</span>
+            <span class="s1">await </span><span class="s3">this</span><span class="s1">._tryGetApplicationCredentialsFromWellKnownFile(options);</span>
+        <span class="s3">if </span><span class="s1">(credential) {</span>
+            <span class="s3">if </span><span class="s1">(credential </span><span class="s3">instanceof </span><span class="s1">jwtclient_1.JWT) {</span>
+                <span class="s1">credential.scopes = </span><span class="s3">this</span><span class="s1">.scopes;</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(credential </span><span class="s3">instanceof </span><span class="s1">baseexternalclient_1.BaseExternalAccountClient) {</span>
+                <span class="s1">credential.scopes = </span><span class="s3">this</span><span class="s1">.getAnyScopes();</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#prepareAndCacheClient(credential);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Determine if we're running on GCE.</span>
+        <span class="s3">if </span><span class="s1">(await </span><span class="s3">this</span><span class="s1">._checkIsGCE()) {</span>
+            <span class="s1">options.scopes = </span><span class="s3">this</span><span class="s1">.getAnyScopes();</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#prepareAndCacheClient(</span><span class="s3">new </span><span class="s1">computeclient_1.Compute(options));</span>
+        <span class="s1">}</span>
+        <span class="s3">throw new </span><span class="s1">Error(exports.GoogleAuthExceptionMessages.NO_ADC_FOUND);</span>
+    <span class="s1">}</span>
+    <span class="s1">async #prepareAndCacheClient(credential, quotaProjectIdOverride = process.env[</span><span class="s0">'GOOGLE_CLOUD_QUOTA_PROJECT'</span><span class="s1">] || </span><span class="s3">null</span><span class="s1">) {</span>
+        <span class="s1">const projectId = await </span><span class="s3">this</span><span class="s1">.getProjectIdOptional();</span>
+        <span class="s3">if </span><span class="s1">(quotaProjectIdOverride) {</span>
+            <span class="s1">credential.quotaProjectId = quotaProjectIdOverride;</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.cachedCredential = credential;</span>
+        <span class="s3">return </span><span class="s1">{ credential, projectId };</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Determines whether the auth layer is running on Google Compute Engine. 
+     * Checks for GCP Residency, then fallback to checking if metadata server 
+     * is available. 
+     * 
+     * @returns A promise that resolves with the boolean. 
+     * @api private 
+     */</span>
+    <span class="s1">async _checkIsGCE() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.checkIsGCE === undefined) {</span>
+            <span class="s3">this</span><span class="s1">.checkIsGCE =</span>
+                <span class="s1">gcpMetadata.getGCPResidency() || (await gcpMetadata.isAvailable());</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.checkIsGCE;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Attempts to load default credentials from the environment variable path.. 
+     * @returns Promise that resolves with the OAuth2Client or null. 
+     * @api private 
+     */</span>
+    <span class="s1">async _tryGetApplicationCredentialsFromEnvironmentVariable(options) {</span>
+        <span class="s1">const credentialsPath = process.env[</span><span class="s0">'GOOGLE_APPLICATION_CREDENTIALS'</span><span class="s1">] ||</span>
+            <span class="s1">process.env[</span><span class="s0">'google_application_credentials'</span><span class="s1">];</span>
+        <span class="s3">if </span><span class="s1">(!credentialsPath || credentialsPath.length === </span><span class="s4">0</span><span class="s1">) {</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">._getApplicationCredentialsFromFilePath(credentialsPath, options);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">e.message = `Unable to read the credential file specified by the GOOGLE_APPLICATION_CREDENTIALS environment variable: ${e.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Attempts to load default credentials from a well-known file location 
+     * @return Promise that resolves with the OAuth2Client or null. 
+     * @api private 
+     */</span>
+    <span class="s1">async _tryGetApplicationCredentialsFromWellKnownFile(options) {</span>
+        <span class="s2">// First, figure out the location of the file, depending upon the OS type.</span>
+        <span class="s1">let location = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">._isWindows()) {</span>
+            <span class="s2">// Windows</span>
+            <span class="s1">location = process.env[</span><span class="s0">'APPDATA'</span><span class="s1">];</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s2">// Linux or Mac</span>
+            <span class="s1">const home = process.env[</span><span class="s0">'HOME'</span><span class="s1">];</span>
+            <span class="s3">if </span><span class="s1">(home) {</span>
+                <span class="s1">location = path.join(home, </span><span class="s0">'.config'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">// If we found the root path, expand it.</span>
+        <span class="s3">if </span><span class="s1">(location) {</span>
+            <span class="s1">location = path.join(location, </span><span class="s0">'gcloud'</span><span class="s1">, </span><span class="s0">'application_default_credentials.json'</span><span class="s1">);</span>
+            <span class="s3">if </span><span class="s1">(!fs.existsSync(location)) {</span>
+                <span class="s1">location = </span><span class="s3">null</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">// The file does not exist.</span>
+        <span class="s3">if </span><span class="s1">(!location) {</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s2">// The file seems to exist. Try to use it.</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">._getApplicationCredentialsFromFilePath(location, options);</span>
+        <span class="s3">return </span><span class="s1">client;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Attempts to load default credentials from a file at the given path.. 
+     * @param filePath The path to the file to read. 
+     * @returns Promise that resolves with the OAuth2Client 
+     * @api private 
+     */</span>
+    <span class="s1">async _getApplicationCredentialsFromFilePath(filePath, options = {}) {</span>
+        <span class="s2">// Make sure the path looks like a string.</span>
+        <span class="s3">if </span><span class="s1">(!filePath || filePath.length === </span><span class="s4">0</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The file path is invalid.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Make sure there is a file at the path. lstatSync will throw if there is</span>
+        <span class="s2">// nothing there.</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s2">// Resolve path to actual file in case of symlink. Expect a thrown error</span>
+            <span class="s2">// if not resolvable.</span>
+            <span class="s1">filePath = fs.realpathSync(filePath);</span>
+            <span class="s3">if </span><span class="s1">(!fs.lstatSync(filePath).isFile()) {</span>
+                <span class="s3">throw new </span><span class="s1">Error();</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s3">if </span><span class="s1">(err </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">err.message = `The file at ${filePath} does not exist, or it is not a file. ${err.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">err;</span>
+        <span class="s1">}</span>
+        <span class="s2">// Now open a read stream on the file, and parse it.</span>
+        <span class="s1">const readStream = fs.createReadStream(filePath);</span>
+        <span class="s3">return this</span><span class="s1">.fromStream(readStream, options);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a credentials instance using a given impersonated input options. 
+     * @param json The impersonated input object. 
+     * @returns JWT or UserRefresh Client with data 
+     */</span>
+    <span class="s1">fromImpersonatedJSON(json) {</span>
+        <span class="s3">if </span><span class="s1">(!json) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must pass in a JSON object containing an  impersonated refresh token'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(json.type !== impersonated_1.IMPERSONATED_ACCOUNT_TYPE) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(`The incoming JSON object does not have the </span><span class="s0">&quot;${impersonated_1.IMPERSONATED_ACCOUNT_TYPE}&quot; </span><span class="s1">type`);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.source_credentials) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a source_credentials field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.service_account_impersonation_url) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a service_account_impersonation_url field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const sourceClient = </span><span class="s3">this</span><span class="s1">.fromJSON(json.source_credentials);</span>
+        <span class="s3">if </span><span class="s1">(json.service_account_impersonation_url?.length &gt; </span><span class="s4">256</span><span class="s1">) {</span>
+            <span class="s2">/** 
+             * Prevents DOS attacks. 
+             * @see {@link https://github.com/googleapis/google-auth-library-nodejs/security/code-scanning/85} 
+             **/</span>
+            <span class="s3">throw new </span><span class="s1">RangeError(`Target principal is too long: ${json.service_account_impersonation_url}`);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Extract service account from service_account_impersonation_url</span>
+        <span class="s1">const targetPrincipal = /(?&lt;target&gt;[^/]+):(generateAccessToken|generateIdToken)$/.exec(json.service_account_impersonation_url)?.groups?.target;</span>
+        <span class="s3">if </span><span class="s1">(!targetPrincipal) {</span>
+            <span class="s3">throw new </span><span class="s1">RangeError(`Cannot extract target principal from ${json.service_account_impersonation_url}`);</span>
+        <span class="s1">}</span>
+        <span class="s1">const targetScopes = (</span><span class="s3">this</span><span class="s1">.scopes || json.scopes || </span><span class="s3">this</span><span class="s1">.defaultScopes) ?? [];</span>
+        <span class="s3">return new </span><span class="s1">impersonated_1.Impersonated({</span>
+            <span class="s1">...json,</span>
+            <span class="s1">sourceClient,</span>
+            <span class="s1">targetPrincipal,</span>
+            <span class="s1">targetScopes: Array.isArray(targetScopes) ? targetScopes : [targetScopes],</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a credentials instance using the given input options. 
+     * This client is not cached. 
+     * 
+     * **Important**: If you accept a credential configuration (credential JSON/File/Stream) from an external source for authentication to Google Cloud, you must validate it before providing it to any Google API or library. Providing an unvalidated credential configuration to Google APIs can compromise the security of your systems and data. For more information, refer to {@link https://cloud.google.com/docs/authentication/external/externally-sourced-credentials Validate credential configurations from external sources}. 
+     * 
+     * @deprecated This method is being deprecated because of a potential security risk. 
+     * 
+     * This method does not validate the credential configuration. The security 
+     * risk occurs when a credential configuration is accepted from a source that 
+     * is not under your control and used without validation on your side. 
+     * 
+     * If you know that you will be loading credential configurations of a 
+     * specific type, it is recommended to use a credential-type-specific 
+     * constructor. This will ensure that an unexpected credential type with 
+     * potential for malicious intent is not loaded unintentionally. You might 
+     * still have to do validation for certain credential types. Please follow 
+     * the recommendation for that method. For example, if you want to load only 
+     * service accounts, you can use the `JWT` constructor: 
+     * ``` 
+     * const {JWT} = require('google-auth-library'); 
+     * const keys = require('/path/to/key.json'); 
+     * const client = new JWT({ 
+     *   email: keys.client_email, 
+     *   key: keys.private_key, 
+     *   scopes: ['https://www.googleapis.com/auth/cloud-platform'], 
+     * }); 
+     * ``` 
+     * 
+     * If you are loading your credential configuration from an untrusted source and have 
+     * not mitigated the risks (e.g. by validating the configuration yourself), make 
+     * these changes as soon as possible to prevent security risks to your environment. 
+     * 
+     * Regardless of the method used, it is always your responsibility to validate 
+     * configurations received from external sources. 
+     * 
+     * For more details, see https://cloud.google.com/docs/authentication/external/externally-sourced-credentials. 
+     * 
+     * @param json The input object. 
+     * @param options The JWT or UserRefresh options for the client 
+     * @returns JWT or UserRefresh Client with data 
+     */</span>
+    <span class="s1">fromJSON(json, options = {}) {</span>
+        <span class="s1">let client;</span>
+        <span class="s2">// user's preferred universe domain</span>
+        <span class="s1">const preferredUniverseDomain = (</span><span class="s4">0</span><span class="s1">, util_1.originalOrCamelOptions)(options).get(</span><span class="s0">'universe_domain'</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(json.type === refreshclient_1.USER_REFRESH_ACCOUNT_TYPE) {</span>
+            <span class="s1">client = </span><span class="s3">new </span><span class="s1">refreshclient_1.UserRefreshClient(options);</span>
+            <span class="s1">client.fromJSON(json);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(json.type === impersonated_1.IMPERSONATED_ACCOUNT_TYPE) {</span>
+            <span class="s1">client = </span><span class="s3">this</span><span class="s1">.fromImpersonatedJSON(json);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(json.type === baseexternalclient_1.EXTERNAL_ACCOUNT_TYPE) {</span>
+            <span class="s1">client = externalclient_1.ExternalAccountClient.fromJSON({</span>
+                <span class="s1">...json,</span>
+                <span class="s1">...options,</span>
+            <span class="s1">});</span>
+            <span class="s1">client.scopes = </span><span class="s3">this</span><span class="s1">.getAnyScopes();</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(json.type === externalAccountAuthorizedUserClient_1.EXTERNAL_ACCOUNT_AUTHORIZED_USER_TYPE) {</span>
+            <span class="s1">client = </span><span class="s3">new </span><span class="s1">externalAccountAuthorizedUserClient_1.ExternalAccountAuthorizedUserClient({</span>
+                <span class="s1">...json,</span>
+                <span class="s1">...options,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">options.scopes = </span><span class="s3">this</span><span class="s1">.scopes;</span>
+            <span class="s1">client = </span><span class="s3">new </span><span class="s1">jwtclient_1.JWT(options);</span>
+            <span class="s3">this</span><span class="s1">.setGapicJWTValues(client);</span>
+            <span class="s1">client.fromJSON(json);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(preferredUniverseDomain) {</span>
+            <span class="s1">client.universeDomain = preferredUniverseDomain;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">client;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Return a JWT or UserRefreshClient from JavaScript object, caching both the 
+     * object used to instantiate and the client. 
+     * @param json The input object. 
+     * @param options The JWT or UserRefresh options for the client 
+     * @returns JWT or UserRefresh Client with data 
+     */</span>
+    <span class="s1">_cacheClientFromJSON(json, options) {</span>
+        <span class="s1">const client = </span><span class="s3">this</span><span class="s1">.fromJSON(json, options);</span>
+        <span class="s2">// cache both raw data used to instantiate client and client itself.</span>
+        <span class="s3">this</span><span class="s1">.jsonContent = json;</span>
+        <span class="s3">this</span><span class="s1">.cachedCredential = client;</span>
+        <span class="s3">return </span><span class="s1">client;</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStream(inputStream, optionsOrCallback = {}, callback) {</span>
+        <span class="s1">let options = {};</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">optionsOrCallback === </span><span class="s0">'function'</span><span class="s1">) {</span>
+            <span class="s1">callback = optionsOrCallback;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">options = optionsOrCallback;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.fromStreamAsync(inputStream, options).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.fromStreamAsync(inputStream, options);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStreamAsync(inputStream, options) {</span>
+        <span class="s3">return new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+            <span class="s3">if </span><span class="s1">(!inputStream) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must pass in a stream containing the Google auth settings.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s1">const chunks = [];</span>
+            <span class="s1">inputStream</span>
+                <span class="s1">.setEncoding(</span><span class="s0">'utf8'</span><span class="s1">)</span>
+                <span class="s1">.on(</span><span class="s0">'error'</span><span class="s1">, reject)</span>
+                <span class="s1">.on(</span><span class="s0">'data'</span><span class="s1">, chunk =&gt; chunks.push(chunk))</span>
+                <span class="s1">.on(</span><span class="s0">'end'</span><span class="s1">, () =&gt; {</span>
+                <span class="s3">try </span><span class="s1">{</span>
+                    <span class="s3">try </span><span class="s1">{</span>
+                        <span class="s1">const data = JSON.parse(chunks.join(</span><span class="s0">''</span><span class="s1">));</span>
+                        <span class="s1">const r = </span><span class="s3">this</span><span class="s1">._cacheClientFromJSON(data, options);</span>
+                        <span class="s3">return </span><span class="s1">resolve(r);</span>
+                    <span class="s1">}</span>
+                    <span class="s3">catch </span><span class="s1">(err) {</span>
+                        <span class="s2">// If we failed parsing this.keyFileName, assume that it</span>
+                        <span class="s2">// is a PEM or p12 certificate:</span>
+                        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.keyFilename)</span>
+                            <span class="s3">throw </span><span class="s1">err;</span>
+                        <span class="s1">const client = </span><span class="s3">new </span><span class="s1">jwtclient_1.JWT({</span>
+                            <span class="s1">...</span><span class="s3">this</span><span class="s1">.clientOptions,</span>
+                            <span class="s1">keyFile: </span><span class="s3">this</span><span class="s1">.keyFilename,</span>
+                        <span class="s1">});</span>
+                        <span class="s3">this</span><span class="s1">.cachedCredential = client;</span>
+                        <span class="s3">this</span><span class="s1">.setGapicJWTValues(client);</span>
+                        <span class="s3">return </span><span class="s1">resolve(client);</span>
+                    <span class="s1">}</span>
+                <span class="s1">}</span>
+                <span class="s3">catch </span><span class="s1">(err) {</span>
+                    <span class="s3">return </span><span class="s1">reject(err);</span>
+                <span class="s1">}</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a credentials instance using the given API key string. 
+     * The created client is not cached. In order to create and cache it use the {@link GoogleAuth.getClient `getClient`} method after first providing an {@link GoogleAuth.apiKey `apiKey`}. 
+     * 
+     * @param apiKey The API key string 
+     * @param options An optional options object. 
+     * @returns A JWT loaded from the key 
+     */</span>
+    <span class="s1">fromAPIKey(apiKey, options = {}) {</span>
+        <span class="s3">return new </span><span class="s1">jwtclient_1.JWT({ ...options, apiKey });</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Determines whether the current operating system is Windows. 
+     * @api private 
+     */</span>
+    <span class="s1">_isWindows() {</span>
+        <span class="s1">const sys = os.platform();</span>
+        <span class="s3">if </span><span class="s1">(sys &amp;&amp; sys.length &gt;= </span><span class="s4">3</span><span class="s1">) {</span>
+            <span class="s3">if </span><span class="s1">(sys.substring(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">3</span><span class="s1">).toLowerCase() === </span><span class="s0">'win'</span><span class="s1">) {</span>
+                <span class="s3">return true</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Run the Google Cloud SDK command that prints the default project ID 
+     */</span>
+    <span class="s1">async getDefaultServiceProjectId() {</span>
+        <span class="s3">return new </span><span class="s1">Promise(resolve =&gt; {</span>
+            <span class="s1">(</span><span class="s4">0</span><span class="s1">, child_process_1.exec)(</span><span class="s0">'gcloud config config-helper --format json'</span><span class="s1">, (err, stdout) =&gt; {</span>
+                <span class="s3">if </span><span class="s1">(!err &amp;&amp; stdout) {</span>
+                    <span class="s3">try </span><span class="s1">{</span>
+                        <span class="s1">const projectId = JSON.parse(stdout).configuration.properties.core.project;</span>
+                        <span class="s1">resolve(projectId);</span>
+                        <span class="s3">return</span><span class="s1">;</span>
+                    <span class="s1">}</span>
+                    <span class="s3">catch </span><span class="s1">(e) {</span>
+                        <span class="s2">// ignore errors</span>
+                    <span class="s1">}</span>
+                <span class="s1">}</span>
+                <span class="s1">resolve(</span><span class="s3">null</span><span class="s1">);</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Loads the project id from environment variables. 
+     * @api private 
+     */</span>
+    <span class="s1">getProductionProjectId() {</span>
+        <span class="s3">return </span><span class="s1">(process.env[</span><span class="s0">'GCLOUD_PROJECT'</span><span class="s1">] ||</span>
+            <span class="s1">process.env[</span><span class="s0">'GOOGLE_CLOUD_PROJECT'</span><span class="s1">] ||</span>
+            <span class="s1">process.env[</span><span class="s0">'gcloud_project'</span><span class="s1">] ||</span>
+            <span class="s1">process.env[</span><span class="s0">'google_cloud_project'</span><span class="s1">]);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Loads the project id from the GOOGLE_APPLICATION_CREDENTIALS json file. 
+     * @api private 
+     */</span>
+    <span class="s1">async getFileProjectId() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.cachedCredential) {</span>
+            <span class="s2">// Try to read the project ID from the cached credentials file</span>
+            <span class="s3">return this</span><span class="s1">.cachedCredential.projectId;</span>
+        <span class="s1">}</span>
+        <span class="s2">// Ensure the projectId is loaded from the keyFile if available.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.keyFilename) {</span>
+            <span class="s1">const creds = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+            <span class="s3">if </span><span class="s1">(creds &amp;&amp; creds.projectId) {</span>
+                <span class="s3">return </span><span class="s1">creds.projectId;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">// Try to load a credentials file and read its project ID</span>
+        <span class="s1">const r = await </span><span class="s3">this</span><span class="s1">._tryGetApplicationCredentialsFromEnvironmentVariable();</span>
+        <span class="s3">if </span><span class="s1">(r) {</span>
+            <span class="s3">return </span><span class="s1">r.projectId;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Gets the project ID from external account client if available. 
+     */</span>
+    <span class="s1">async getExternalAccountClientProjectId() {</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.jsonContent || </span><span class="s3">this</span><span class="s1">.jsonContent.type !== baseexternalclient_1.EXTERNAL_ACCOUNT_TYPE) {</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">const creds = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s2">// Do not suppress the underlying error, as the error could contain helpful</span>
+        <span class="s2">// information for debugging and fixing. This is especially true for</span>
+        <span class="s2">// external account creds as in order to get the project ID, the following</span>
+        <span class="s2">// operations have to succeed:</span>
+        <span class="s2">// 1. Valid credentials file should be supplied.</span>
+        <span class="s2">// 2. Ability to retrieve access tokens from STS token exchange API.</span>
+        <span class="s2">// 3. Ability to exchange for service account impersonated credentials (if</span>
+        <span class="s2">//    enabled).</span>
+        <span class="s2">// 4. Ability to get project info using the access token from step 2 or 3.</span>
+        <span class="s2">// Without surfacing the error, it is harder for developers to determine</span>
+        <span class="s2">// which step went wrong.</span>
+        <span class="s3">return </span><span class="s1">await creds.getProjectId();</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Gets the Compute Engine project ID if it can be inferred. 
+     */</span>
+    <span class="s1">async getGCEProjectId() {</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const r = await gcpMetadata.project(</span><span class="s0">'project-id'</span><span class="s1">);</span>
+            <span class="s3">return </span><span class="s1">r;</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s2">// Ignore any errors</span>
+            <span class="s3">return null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">getCredentials(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getCredentialsAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getCredentialsAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getCredentialsAsync() {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">if </span><span class="s1">(client </span><span class="s3">instanceof </span><span class="s1">impersonated_1.Impersonated) {</span>
+            <span class="s3">return </span><span class="s1">{ client_email: client.getTargetPrincipal() };</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(client </span><span class="s3">instanceof </span><span class="s1">baseexternalclient_1.BaseExternalAccountClient) {</span>
+            <span class="s1">const serviceAccountEmail = client.getServiceAccountEmail();</span>
+            <span class="s3">if </span><span class="s1">(serviceAccountEmail) {</span>
+                <span class="s3">return </span><span class="s1">{</span>
+                    <span class="s1">client_email: serviceAccountEmail,</span>
+                    <span class="s1">universe_domain: client.universeDomain,</span>
+                <span class="s1">};</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.jsonContent) {</span>
+            <span class="s3">return </span><span class="s1">{</span>
+                <span class="s1">client_email: </span><span class="s3">this</span><span class="s1">.jsonContent.client_email,</span>
+                <span class="s1">private_key: </span><span class="s3">this</span><span class="s1">.jsonContent.private_key,</span>
+                <span class="s1">universe_domain: </span><span class="s3">this</span><span class="s1">.jsonContent.universe_domain,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(await </span><span class="s3">this</span><span class="s1">._checkIsGCE()) {</span>
+            <span class="s1">const [client_email, universe_domain] = await Promise.all([</span>
+                <span class="s1">gcpMetadata.instance(</span><span class="s0">'service-accounts/default/email'</span><span class="s1">),</span>
+                <span class="s3">this</span><span class="s1">.getUniverseDomain(),</span>
+            <span class="s1">]);</span>
+            <span class="s3">return </span><span class="s1">{ client_email, universe_domain };</span>
+        <span class="s1">}</span>
+        <span class="s3">throw new </span><span class="s1">Error(exports.GoogleAuthExceptionMessages.NO_CREDENTIALS_FOUND);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Automatically obtain an {@link AuthClient `AuthClient`} based on the 
+     * provided configuration. If no options were passed, use Application 
+     * Default Credentials. 
+     */</span>
+    <span class="s1">async getClient() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.cachedCredential) {</span>
+            <span class="s3">return this</span><span class="s1">.cachedCredential;</span>
+        <span class="s1">}</span>
+        <span class="s2">// Use an existing auth client request, or cache a new one</span>
+        <span class="s3">this</span><span class="s1">.#pendingAuthClient =</span>
+            <span class="s3">this</span><span class="s1">.#pendingAuthClient || </span><span class="s3">this</span><span class="s1">.#determineClient();</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.#pendingAuthClient;</span>
+        <span class="s1">}</span>
+        <span class="s3">finally </span><span class="s1">{</span>
+            <span class="s2">// reset the pending auth client in case it is changed later</span>
+            <span class="s3">this</span><span class="s1">.#pendingAuthClient = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async #determineClient() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.jsonContent) {</span>
+            <span class="s3">return this</span><span class="s1">._cacheClientFromJSON(</span><span class="s3">this</span><span class="s1">.jsonContent, </span><span class="s3">this</span><span class="s1">.clientOptions);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.keyFilename) {</span>
+            <span class="s1">const filePath = path.resolve(</span><span class="s3">this</span><span class="s1">.keyFilename);</span>
+            <span class="s1">const stream = fs.createReadStream(filePath);</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.fromStreamAsync(stream, </span><span class="s3">this</span><span class="s1">.clientOptions);</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.apiKey) {</span>
+            <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.fromAPIKey(</span><span class="s3">this</span><span class="s1">.apiKey, </span><span class="s3">this</span><span class="s1">.clientOptions);</span>
+            <span class="s1">client.scopes = </span><span class="s3">this</span><span class="s1">.scopes;</span>
+            <span class="s1">const { credential } = await </span><span class="s3">this</span><span class="s1">.#prepareAndCacheClient(client);</span>
+            <span class="s3">return </span><span class="s1">credential;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">const { credential } = await </span><span class="s3">this</span><span class="s1">.getApplicationDefaultAsync(</span><span class="s3">this</span><span class="s1">.clientOptions);</span>
+            <span class="s3">return </span><span class="s1">credential;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Creates a client which will fetch an ID token for authorization. 
+     * @param targetAudience the audience for the fetched ID token. 
+     * @returns IdTokenClient for making HTTP calls authenticated with ID tokens. 
+     */</span>
+    <span class="s1">async getIdTokenClient(targetAudience) {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">if </span><span class="s1">(!(</span><span class="s0">'fetchIdToken' </span><span class="s3">in </span><span class="s1">client)) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Cannot fetch ID token in this environment, use GCE or set the GOOGLE_APPLICATION_CREDENTIALS environment variable to a service account credentials JSON file.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">return new </span><span class="s1">idtokenclient_1.IdTokenClient({ targetAudience, idTokenProvider: client });</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Automatically obtain application default credentials, and return 
+     * an access token for making requests. 
+     */</span>
+    <span class="s1">async getAccessToken() {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">return </span><span class="s1">(await client.getAccessToken()).token;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Obtain the HTTP headers that will provide authorization for a given 
+     * request. 
+     */</span>
+    <span class="s1">async getRequestHeaders(url) {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">return </span><span class="s1">client.getRequestHeaders(url);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Obtain credentials for a request, then attach the appropriate headers to 
+     * the request options. 
+     * @param opts Axios or Request options on which to attach the headers 
+     */</span>
+    <span class="s1">async authorizeRequest(opts = {}) {</span>
+        <span class="s1">const url = opts.url;</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s1">const headers = await client.getRequestHeaders(url);</span>
+        <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers, headers);</span>
+        <span class="s3">return </span><span class="s1">opts;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * A {@link fetch `fetch`} compliant API for {@link GoogleAuth}. 
+     * 
+     * @see {@link GoogleAuth.request} for the classic method. 
+     * 
+     * @remarks 
+     * 
+     * This is useful as a drop-in replacement for `fetch` API usage. 
+     * 
+     * @example 
+     * 
+     * ```ts 
+     * const auth = new GoogleAuth(); 
+     * const fetchWithAuth: typeof fetch = (...args) =&gt; auth.fetch(...args); 
+     * await fetchWithAuth('https://example.com'); 
+     * ``` 
+     * 
+     * @param args `fetch` API or {@link Gaxios.fetch `Gaxios#fetch`} parameters 
+     * @returns the {@link GaxiosResponse} with Gaxios-added properties 
+     */</span>
+    <span class="s1">async fetch(...args) {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">return </span><span class="s1">client.fetch(...args);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Automatically obtain application default credentials, and make an 
+     * HTTP request using the given options. 
+     * 
+     * @see {@link GoogleAuth.fetch} for the modern method. 
+     * 
+     * @param opts Axios request options for the HTTP request. 
+     */</span>
+    <span class="s1">async request(opts) {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s3">return </span><span class="s1">client.request(opts);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Determine the compute environment in which the code is running. 
+     */</span>
+    <span class="s1">getEnv() {</span>
+        <span class="s3">return </span><span class="s1">(</span><span class="s4">0</span><span class="s1">, envDetect_1.getEnv)();</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Sign the given data with the current private key, or go out 
+     * to the IAM API to sign it. 
+     * @param data The data to be signed. 
+     * @param endpoint A custom endpoint to use. 
+     * 
+     * @example 
+     * ``` 
+     * sign('data', 'https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/'); 
+     * ``` 
+     */</span>
+    <span class="s1">async sign(data, endpoint) {</span>
+        <span class="s1">const client = await </span><span class="s3">this</span><span class="s1">.getClient();</span>
+        <span class="s1">const universe = await </span><span class="s3">this</span><span class="s1">.getUniverseDomain();</span>
+        <span class="s1">endpoint =</span>
+            <span class="s1">endpoint ||</span>
+                <span class="s1">`https:</span><span class="s2">//iamcredentials.${universe}/v1/projects/-/serviceAccounts/`;</span>
+        <span class="s3">if </span><span class="s1">(client </span><span class="s3">instanceof </span><span class="s1">impersonated_1.Impersonated) {</span>
+            <span class="s1">const signed = await client.sign(data);</span>
+            <span class="s3">return </span><span class="s1">signed.signedBlob;</span>
+        <span class="s1">}</span>
+        <span class="s1">const crypto = (</span><span class="s4">0</span><span class="s1">, crypto_1.createCrypto)();</span>
+        <span class="s3">if </span><span class="s1">(client </span><span class="s3">instanceof </span><span class="s1">jwtclient_1.JWT &amp;&amp; client.key) {</span>
+            <span class="s1">const sign = await crypto.sign(client.key, data);</span>
+            <span class="s3">return </span><span class="s1">sign;</span>
+        <span class="s1">}</span>
+        <span class="s1">const creds = await </span><span class="s3">this</span><span class="s1">.getCredentials();</span>
+        <span class="s3">if </span><span class="s1">(!creds.client_email) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Cannot sign data without `client_email`.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">return this</span><span class="s1">.signBlob(crypto, creds.client_email, data, endpoint);</span>
+    <span class="s1">}</span>
+    <span class="s1">async signBlob(crypto, emailOrUniqueId, data, endpoint) {</span>
+        <span class="s1">const url = </span><span class="s3">new </span><span class="s1">URL(endpoint + `${emailOrUniqueId}:signBlob`);</span>
+        <span class="s1">const res = await </span><span class="s3">this</span><span class="s1">.request({</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+            <span class="s1">url: url.href,</span>
+            <span class="s1">data: {</span>
+                <span class="s1">payload: crypto.encodeBase64StringUtf8(data),</span>
+            <span class="s1">},</span>
+            <span class="s1">retry: </span><span class="s3">true</span><span class="s1">,</span>
+            <span class="s1">retryConfig: {</span>
+                <span class="s1">httpMethodsToRetry: [</span><span class="s0">'POST'</span><span class="s1">],</span>
+            <span class="s1">},</span>
+        <span class="s1">});</span>
+        <span class="s3">return </span><span class="s1">res.data.signedBlob;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.GoogleAuth = GoogleAuth;</span>
+<span class="s2">//# sourceMappingURL=googleauth.js.map</span></pre>
+</body>
+</html>

@@ -1,0 +1,577 @@
+<html>
+<head>
+<title>gaxios.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+gaxios.js</font>
+</center></td></tr></table>
+<pre><span class="s0">// Copyright 2018 Google LLC</span>
+<span class="s0">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s0">// you may not use this file except in compliance with the License.</span>
+<span class="s0">// You may obtain a copy of the License at</span>
+<span class="s0">//</span>
+<span class="s0">//    http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s0">//</span>
+<span class="s0">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s0">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s0">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s0">// See the License for the specific language governing permissions and</span>
+<span class="s0">// limitations under the License.</span>
+<span class="s2">var </span><span class="s1">_a;</span>
+<span class="s1">import extend from </span><span class="s3">'extend'</span><span class="s1">;</span>
+<span class="s1">import { Agent as HTTPSAgent } from </span><span class="s3">'https'</span><span class="s1">;</span>
+<span class="s1">import { GaxiosError, defaultErrorRedactor, } from </span><span class="s3">'./common.js'</span><span class="s1">;</span>
+<span class="s1">import { getRetryConfig } from </span><span class="s3">'./retry.js'</span><span class="s1">;</span>
+<span class="s1">import { Readable } from </span><span class="s3">'stream'</span><span class="s1">;</span>
+<span class="s1">import { GaxiosInterceptorManager } from </span><span class="s3">'./interceptor.js'</span><span class="s1">;</span>
+<span class="s1">const randomUUID = async () =&gt; globalThis.crypto?.randomUUID() || (await import(</span><span class="s3">'crypto'</span><span class="s1">)).randomUUID();</span>
+<span class="s1">const HTTP_STATUS_NO_CONTENT = </span><span class="s4">204</span><span class="s1">;</span>
+<span class="s1">export class Gaxios {</span>
+    <span class="s1">agentCache = </span><span class="s2">new </span><span class="s1">Map();</span>
+    <span class="s0">/** 
+     * Default HTTP options that will be used for every HTTP request. 
+     */</span>
+    <span class="s1">defaults;</span>
+    <span class="s0">/** 
+     * Interceptors 
+     */</span>
+    <span class="s1">interceptors;</span>
+    <span class="s0">/** 
+     * The Gaxios class is responsible for making HTTP requests. 
+     * @param defaults The default set of options to be used for this instance. 
+     */</span>
+    <span class="s1">constructor(defaults) {</span>
+        <span class="s2">this</span><span class="s1">.defaults = defaults || {};</span>
+        <span class="s2">this</span><span class="s1">.interceptors = {</span>
+            <span class="s1">request: </span><span class="s2">new </span><span class="s1">GaxiosInterceptorManager(),</span>
+            <span class="s1">response: </span><span class="s2">new </span><span class="s1">GaxiosInterceptorManager(),</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * A {@link fetch `fetch`} compliant API for {@link Gaxios}. 
+     * 
+     * @remarks 
+     * 
+     * This is useful as a drop-in replacement for `fetch` API usage. 
+     * 
+     * @example 
+     * 
+     * ```ts 
+     * const gaxios = new Gaxios(); 
+     * const myFetch: typeof fetch = (...args) =&gt; gaxios.fetch(...args); 
+     * await myFetch('https://example.com'); 
+     * ``` 
+     * 
+     * @param args `fetch` API or `Gaxios#request` parameters 
+     * @returns the {@link Response} with Gaxios-added properties 
+     */</span>
+    <span class="s1">fetch(...args) {</span>
+        <span class="s0">// Up to 2 parameters in either overload</span>
+        <span class="s1">const input = args[</span><span class="s4">0</span><span class="s1">];</span>
+        <span class="s1">const init = args[</span><span class="s4">1</span><span class="s1">];</span>
+        <span class="s1">let url = undefined;</span>
+        <span class="s1">const headers = </span><span class="s2">new </span><span class="s1">Headers();</span>
+        <span class="s0">// prepare URL</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">input === </span><span class="s3">'string'</span><span class="s1">) {</span>
+            <span class="s1">url = </span><span class="s2">new </span><span class="s1">URL(input);</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(input </span><span class="s2">instanceof </span><span class="s1">URL) {</span>
+            <span class="s1">url = input;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(input &amp;&amp; input.url) {</span>
+            <span class="s1">url = </span><span class="s2">new </span><span class="s1">URL(input.url);</span>
+        <span class="s1">}</span>
+        <span class="s0">// prepare headers</span>
+        <span class="s2">if </span><span class="s1">(input &amp;&amp; </span><span class="s2">typeof </span><span class="s1">input === </span><span class="s3">'object' </span><span class="s1">&amp;&amp; </span><span class="s3">'headers' </span><span class="s2">in </span><span class="s1">input) {</span>
+            <span class="s1">_a.mergeHeaders(headers, input.headers);</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(init) {</span>
+            <span class="s1">_a.mergeHeaders(headers, </span><span class="s2">new </span><span class="s1">Headers(init.headers));</span>
+        <span class="s1">}</span>
+        <span class="s0">// prepare request</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">input === </span><span class="s3">'object' </span><span class="s1">&amp;&amp; !(input </span><span class="s2">instanceof </span><span class="s1">URL)) {</span>
+            <span class="s0">// input must have been a non-URL object</span>
+            <span class="s2">return this</span><span class="s1">.request({ ...init, ...input, headers, url });</span>
+        <span class="s1">}</span>
+        <span class="s2">else </span><span class="s1">{</span>
+            <span class="s0">// input must have been a string or URL</span>
+            <span class="s2">return this</span><span class="s1">.request({ ...init, headers, url });</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Perform an HTTP request with the given options. 
+     * @param opts Set of HTTP options that will be used for this HTTP request. 
+     */</span>
+    <span class="s1">async request(opts = {}) {</span>
+        <span class="s1">let prepared = await </span><span class="s2">this</span><span class="s1">.#prepareRequest(opts);</span>
+        <span class="s1">prepared = await </span><span class="s2">this</span><span class="s1">.#applyRequestInterceptors(prepared);</span>
+        <span class="s2">return this</span><span class="s1">.#applyResponseInterceptors(</span><span class="s2">this</span><span class="s1">._request(prepared));</span>
+    <span class="s1">}</span>
+    <span class="s1">async _defaultAdapter(config) {</span>
+        <span class="s1">const fetchImpl = config.fetchImplementation ||</span>
+            <span class="s2">this</span><span class="s1">.defaults.fetchImplementation ||</span>
+            <span class="s1">(await _a.#getFetch());</span>
+        <span class="s0">// node-fetch v3 warns when `data` is present</span>
+        <span class="s0">// https://github.com/node-fetch/node-fetch/issues/1000</span>
+        <span class="s1">const preparedOpts = { ...config };</span>
+        <span class="s2">delete </span><span class="s1">preparedOpts.data;</span>
+        <span class="s1">const res = (await fetchImpl(config.url, preparedOpts));</span>
+        <span class="s1">const data = await </span><span class="s2">this</span><span class="s1">.getResponseData(config, res);</span>
+        <span class="s2">if </span><span class="s1">(!Object.getOwnPropertyDescriptor(res, </span><span class="s3">'data'</span><span class="s1">)?.configurable) {</span>
+            <span class="s0">// Work-around for `node-fetch` v3 as accessing `data` would otherwise throw</span>
+            <span class="s1">Object.defineProperties(res, {</span>
+                <span class="s1">data: {</span>
+                    <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+                    <span class="s1">writable: </span><span class="s2">true</span><span class="s1">,</span>
+                    <span class="s1">enumerable: </span><span class="s2">true</span><span class="s1">,</span>
+                    <span class="s1">value: data,</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s0">// Keep object as an instance of `Response`</span>
+        <span class="s2">return </span><span class="s1">Object.assign(res, { config, data });</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Internal, retryable version of the `request` method. 
+     * @param opts Set of HTTP options that will be used for this HTTP request. 
+     */</span>
+    <span class="s1">async _request(opts) {</span>
+        <span class="s2">try </span><span class="s1">{</span>
+            <span class="s1">let translatedResponse;</span>
+            <span class="s2">if </span><span class="s1">(opts.adapter) {</span>
+                <span class="s1">translatedResponse = await opts.adapter(opts, </span><span class="s2">this</span><span class="s1">._defaultAdapter.bind(</span><span class="s2">this</span><span class="s1">));</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">translatedResponse = await </span><span class="s2">this</span><span class="s1">._defaultAdapter(opts);</span>
+            <span class="s1">}</span>
+            <span class="s2">if </span><span class="s1">(!opts.validateStatus(translatedResponse.status)) {</span>
+                <span class="s2">if </span><span class="s1">(opts.responseType === </span><span class="s3">'stream'</span><span class="s1">) {</span>
+                    <span class="s1">const response = [];</span>
+                    <span class="s2">for </span><span class="s1">await (const chunk of translatedResponse.data) {</span>
+                        <span class="s1">response.push(chunk);</span>
+                    <span class="s1">}</span>
+                    <span class="s1">translatedResponse.data = response.toString();</span>
+                <span class="s1">}</span>
+                <span class="s1">const errorInfo = GaxiosError.extractAPIErrorFromResponse(translatedResponse, `Request failed </span><span class="s2">with </span><span class="s1">status code ${translatedResponse.status}`);</span>
+                <span class="s2">throw new </span><span class="s1">GaxiosError(errorInfo?.message, opts, translatedResponse, errorInfo);</span>
+            <span class="s1">}</span>
+            <span class="s2">return </span><span class="s1">translatedResponse;</span>
+        <span class="s1">}</span>
+        <span class="s2">catch </span><span class="s1">(e) {</span>
+            <span class="s1">let err;</span>
+            <span class="s2">if </span><span class="s1">(e </span><span class="s2">instanceof </span><span class="s1">GaxiosError) {</span>
+                <span class="s1">err = e;</span>
+            <span class="s1">}</span>
+            <span class="s2">else if </span><span class="s1">(e </span><span class="s2">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">err = </span><span class="s2">new </span><span class="s1">GaxiosError(e.message, opts, undefined, e);</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">err = </span><span class="s2">new </span><span class="s1">GaxiosError(</span><span class="s3">'Unexpected Gaxios Error'</span><span class="s1">, opts, undefined, e);</span>
+            <span class="s1">}</span>
+            <span class="s1">const { shouldRetry, config } = await getRetryConfig(err);</span>
+            <span class="s2">if </span><span class="s1">(shouldRetry &amp;&amp; config) {</span>
+                <span class="s1">err.config.retryConfig.currentRetryAttempt =</span>
+                    <span class="s1">config.retryConfig.currentRetryAttempt;</span>
+                <span class="s0">// The error's config could be redacted - therefore we only want to</span>
+                <span class="s0">// copy the retry state over to the existing config</span>
+                <span class="s1">opts.retryConfig = err.config?.retryConfig;</span>
+                <span class="s0">// re-prepare timeout for the next request</span>
+                <span class="s2">this</span><span class="s1">.#appendTimeoutToSignal(opts);</span>
+                <span class="s2">return this</span><span class="s1">._request(opts);</span>
+            <span class="s1">}</span>
+            <span class="s2">if </span><span class="s1">(opts.errorRedactor) {</span>
+                <span class="s1">opts.errorRedactor(err);</span>
+            <span class="s1">}</span>
+            <span class="s2">throw </span><span class="s1">err;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getResponseData(opts, res) {</span>
+        <span class="s2">if </span><span class="s1">(res.status === HTTP_STATUS_NO_CONTENT) {</span>
+            <span class="s2">return </span><span class="s3">''</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(opts.maxContentLength &amp;&amp;</span>
+            <span class="s1">res.headers.has(</span><span class="s3">'content-length'</span><span class="s1">) &amp;&amp;</span>
+            <span class="s1">opts.maxContentLength &lt;</span>
+                <span class="s1">Number.parseInt(res.headers?.get(</span><span class="s3">'content-length'</span><span class="s1">) || </span><span class="s3">''</span><span class="s1">)) {</span>
+            <span class="s2">throw new </span><span class="s1">GaxiosError(</span><span class="s3">&quot;Response's `Content-Length` is over the limit.&quot;</span><span class="s1">, opts, Object.assign(res, { config: opts }));</span>
+        <span class="s1">}</span>
+        <span class="s2">switch </span><span class="s1">(opts.responseType) {</span>
+            <span class="s2">case </span><span class="s3">'stream'</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">res.body;</span>
+            <span class="s2">case </span><span class="s3">'json'</span><span class="s1">: {</span>
+                <span class="s1">const data = await res.text();</span>
+                <span class="s2">try </span><span class="s1">{</span>
+                    <span class="s2">return </span><span class="s1">JSON.parse(data);</span>
+                <span class="s1">}</span>
+                <span class="s2">catch </span><span class="s1">{</span>
+                    <span class="s2">return </span><span class="s1">data;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s2">case </span><span class="s3">'arraybuffer'</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">res.arrayBuffer();</span>
+            <span class="s2">case </span><span class="s3">'blob'</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">res.blob();</span>
+            <span class="s2">case </span><span class="s3">'text'</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">res.text();</span>
+            <span class="s2">default</span><span class="s1">:</span>
+                <span class="s2">return this</span><span class="s1">.getResponseDataFromContentType(res);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">#urlMayUseProxy(url, noProxy = []) {</span>
+        <span class="s1">const candidate = </span><span class="s2">new </span><span class="s1">URL(url);</span>
+        <span class="s1">const noProxyList = [...noProxy];</span>
+        <span class="s1">const noProxyEnvList = (process.env.NO_PROXY ?? process.env.no_proxy)?.split(</span><span class="s3">','</span><span class="s1">) || [];</span>
+        <span class="s2">for </span><span class="s1">(const rule of noProxyEnvList) {</span>
+            <span class="s1">noProxyList.push(rule.trim());</span>
+        <span class="s1">}</span>
+        <span class="s2">for </span><span class="s1">(const rule of noProxyList) {</span>
+            <span class="s0">// Match regex</span>
+            <span class="s2">if </span><span class="s1">(rule </span><span class="s2">instanceof </span><span class="s1">RegExp) {</span>
+                <span class="s2">if </span><span class="s1">(rule.test(candidate.toString())) {</span>
+                    <span class="s2">return false</span><span class="s1">;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s0">// Match URL</span>
+            <span class="s2">else if </span><span class="s1">(rule </span><span class="s2">instanceof </span><span class="s1">URL) {</span>
+                <span class="s2">if </span><span class="s1">(rule.origin === candidate.origin) {</span>
+                    <span class="s2">return false</span><span class="s1">;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s0">// Match string regex</span>
+            <span class="s2">else if </span><span class="s1">(rule.startsWith(</span><span class="s3">'*.'</span><span class="s1">) || rule.startsWith(</span><span class="s3">'.'</span><span class="s1">)) {</span>
+                <span class="s1">const cleanedRule = rule.replace(/^\*\./, </span><span class="s3">'.'</span><span class="s1">);</span>
+                <span class="s2">if </span><span class="s1">(candidate.hostname.endsWith(cleanedRule)) {</span>
+                    <span class="s2">return false</span><span class="s1">;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s0">// Basic string match</span>
+            <span class="s2">else if </span><span class="s1">(rule === candidate.origin ||</span>
+                <span class="s1">rule === candidate.hostname ||</span>
+                <span class="s1">rule === candidate.href) {</span>
+                <span class="s2">return false</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">return true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Applies the request interceptors. The request interceptors are applied after the 
+     * call to prepareRequest is completed. 
+     * 
+     * @param {GaxiosOptionsPrepared} options The current set of options. 
+     * 
+     * @returns {Promise&lt;GaxiosOptionsPrepared&gt;} Promise that resolves to the set of options or response after interceptors are applied. 
+     */</span>
+    <span class="s1">async #applyRequestInterceptors(options) {</span>
+        <span class="s1">let promiseChain = Promise.resolve(options);</span>
+        <span class="s2">for </span><span class="s1">(const interceptor of </span><span class="s2">this</span><span class="s1">.interceptors.request.values()) {</span>
+            <span class="s2">if </span><span class="s1">(interceptor) {</span>
+                <span class="s1">promiseChain = promiseChain.then(interceptor.resolved, interceptor.rejected);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">promiseChain;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Applies the response interceptors. The response interceptors are applied after the 
+     * call to request is made. 
+     * 
+     * @param {GaxiosOptionsPrepared} options The current set of options. 
+     * 
+     * @returns {Promise&lt;GaxiosOptionsPrepared&gt;} Promise that resolves to the set of options or response after interceptors are applied. 
+     */</span>
+    <span class="s1">async #applyResponseInterceptors(response) {</span>
+        <span class="s1">let promiseChain = Promise.resolve(response);</span>
+        <span class="s2">for </span><span class="s1">(const interceptor of </span><span class="s2">this</span><span class="s1">.interceptors.response.values()) {</span>
+            <span class="s2">if </span><span class="s1">(interceptor) {</span>
+                <span class="s1">promiseChain = promiseChain.then(interceptor.resolved, interceptor.rejected);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">promiseChain;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Validates the options, merges them with defaults, and prepare request. 
+     * 
+     * @param options The original options passed from the client. 
+     * @returns Prepared options, ready to make a request 
+     */</span>
+    <span class="s1">async #prepareRequest(options) {</span>
+        <span class="s0">// Prepare Headers - copy in order to not mutate the original objects</span>
+        <span class="s1">const preparedHeaders = </span><span class="s2">new </span><span class="s1">Headers(</span><span class="s2">this</span><span class="s1">.defaults.headers);</span>
+        <span class="s1">_a.mergeHeaders(preparedHeaders, options.headers);</span>
+        <span class="s0">// Merge options</span>
+        <span class="s1">const opts = extend(</span><span class="s2">true</span><span class="s1">, {}, </span><span class="s2">this</span><span class="s1">.defaults, options);</span>
+        <span class="s2">if </span><span class="s1">(!opts.url) {</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span><span class="s3">'URL is required.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(opts.baseURL) {</span>
+            <span class="s1">opts.url = </span><span class="s2">new </span><span class="s1">URL(opts.url, opts.baseURL);</span>
+        <span class="s1">}</span>
+        <span class="s0">// don't modify the properties of a default or provided URL</span>
+        <span class="s1">opts.url = </span><span class="s2">new </span><span class="s1">URL(opts.url);</span>
+        <span class="s2">if </span><span class="s1">(opts.params) {</span>
+            <span class="s2">if </span><span class="s1">(opts.paramsSerializer) {</span>
+                <span class="s1">let additionalQueryParams = opts.paramsSerializer(opts.params);</span>
+                <span class="s2">if </span><span class="s1">(additionalQueryParams.startsWith(</span><span class="s3">'?'</span><span class="s1">)) {</span>
+                    <span class="s1">additionalQueryParams = additionalQueryParams.slice(</span><span class="s4">1</span><span class="s1">);</span>
+                <span class="s1">}</span>
+                <span class="s1">const prefix = opts.url.toString().includes(</span><span class="s3">'?'</span><span class="s1">) ? </span><span class="s3">'&amp;' </span><span class="s1">: </span><span class="s3">'?'</span><span class="s1">;</span>
+                <span class="s1">opts.url = opts.url + prefix + additionalQueryParams;</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">const url = opts.url </span><span class="s2">instanceof </span><span class="s1">URL ? opts.url : </span><span class="s2">new </span><span class="s1">URL(opts.url);</span>
+                <span class="s2">for </span><span class="s1">(const [key, value] of </span><span class="s2">new </span><span class="s1">URLSearchParams(opts.params)) {</span>
+                    <span class="s1">url.searchParams.append(key, value);</span>
+                <span class="s1">}</span>
+                <span class="s1">opts.url = url;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">options.maxContentLength === </span><span class="s3">'number'</span><span class="s1">) {</span>
+            <span class="s1">opts.size = options.maxContentLength;</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">options.maxRedirects === </span><span class="s3">'number'</span><span class="s1">) {</span>
+            <span class="s1">opts.follow = options.maxRedirects;</span>
+        <span class="s1">}</span>
+        <span class="s1">const shouldDirectlyPassData = </span><span class="s2">typeof </span><span class="s1">opts.data === </span><span class="s3">'string' </span><span class="s1">||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">ArrayBuffer ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">Blob ||</span>
+            <span class="s0">// Node 18 does not have a global `File` object</span>
+            <span class="s1">(globalThis.File &amp;&amp; opts.data </span><span class="s2">instanceof </span><span class="s1">File) ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">FormData ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">Readable ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">ReadableStream ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">String ||</span>
+            <span class="s1">opts.data </span><span class="s2">instanceof </span><span class="s1">URLSearchParams ||</span>
+            <span class="s1">ArrayBuffer.isView(opts.data) || </span><span class="s0">// `Buffer` (Node.js), `DataView`, `TypedArray`</span>
+            <span class="s0">/** 
+             * @deprecated `node-fetch` or another third-party's request types 
+             */</span>
+            <span class="s1">[</span><span class="s3">'Blob'</span><span class="s1">, </span><span class="s3">'File'</span><span class="s1">, </span><span class="s3">'FormData'</span><span class="s1">].includes(opts.data?.constructor?.name || </span><span class="s3">''</span><span class="s1">);</span>
+        <span class="s2">if </span><span class="s1">(opts.multipart?.length) {</span>
+            <span class="s1">const boundary = await randomUUID();</span>
+            <span class="s1">preparedHeaders.set(</span><span class="s3">'content-type'</span><span class="s1">, `multipart/related; boundary=${boundary}`);</span>
+            <span class="s1">opts.body = Readable.from(</span><span class="s2">this</span><span class="s1">.getMultipartRequest(opts.multipart, boundary));</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(shouldDirectlyPassData) {</span>
+            <span class="s1">opts.body = opts.data;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.data === </span><span class="s3">'object'</span><span class="s1">) {</span>
+            <span class="s2">if </span><span class="s1">(preparedHeaders.get(</span><span class="s3">'Content-Type'</span><span class="s1">) ===</span>
+                <span class="s3">'application/x-www-form-urlencoded'</span><span class="s1">) {</span>
+                <span class="s0">// If www-form-urlencoded content type has been set, but data is</span>
+                <span class="s0">// provided as an object, serialize the content</span>
+                <span class="s1">opts.body = opts.paramsSerializer</span>
+                    <span class="s1">? opts.paramsSerializer(opts.data)</span>
+                    <span class="s1">: </span><span class="s2">new </span><span class="s1">URLSearchParams(opts.data);</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s2">if </span><span class="s1">(!preparedHeaders.has(</span><span class="s3">'content-type'</span><span class="s1">)) {</span>
+                    <span class="s1">preparedHeaders.set(</span><span class="s3">'content-type'</span><span class="s1">, </span><span class="s3">'application/json'</span><span class="s1">);</span>
+                <span class="s1">}</span>
+                <span class="s1">opts.body = JSON.stringify(opts.data);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(opts.data) {</span>
+            <span class="s1">opts.body = opts.data;</span>
+        <span class="s1">}</span>
+        <span class="s1">opts.validateStatus = opts.validateStatus || </span><span class="s2">this</span><span class="s1">.validateStatus;</span>
+        <span class="s1">opts.responseType = opts.responseType || </span><span class="s3">'unknown'</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(!preparedHeaders.has(</span><span class="s3">'accept'</span><span class="s1">) &amp;&amp; opts.responseType === </span><span class="s3">'json'</span><span class="s1">) {</span>
+            <span class="s1">preparedHeaders.set(</span><span class="s3">'accept'</span><span class="s1">, </span><span class="s3">'application/json'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const proxy = opts.proxy ||</span>
+            <span class="s1">process?.env?.HTTPS_PROXY ||</span>
+            <span class="s1">process?.env?.https_proxy ||</span>
+            <span class="s1">process?.env?.HTTP_PROXY ||</span>
+            <span class="s1">process?.env?.http_proxy;</span>
+        <span class="s2">if </span><span class="s1">(opts.agent) {</span>
+            <span class="s0">// don't do any of the following options - use the user-provided agent.</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(proxy &amp;&amp; </span><span class="s2">this</span><span class="s1">.#urlMayUseProxy(opts.url, opts.noProxy)) {</span>
+            <span class="s1">const HttpsProxyAgent = await _a.#getProxyAgent();</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.agentCache.has(proxy)) {</span>
+                <span class="s1">opts.agent = </span><span class="s2">this</span><span class="s1">.agentCache.get(proxy);</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">opts.agent = </span><span class="s2">new </span><span class="s1">HttpsProxyAgent(proxy, {</span>
+                    <span class="s1">cert: opts.cert,</span>
+                    <span class="s1">key: opts.key,</span>
+                <span class="s1">});</span>
+                <span class="s2">this</span><span class="s1">.agentCache.set(proxy, opts.agent);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(opts.cert &amp;&amp; opts.key) {</span>
+            <span class="s0">// Configure client for mTLS</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.agentCache.has(opts.key)) {</span>
+                <span class="s1">opts.agent = </span><span class="s2">this</span><span class="s1">.agentCache.get(opts.key);</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">opts.agent = </span><span class="s2">new </span><span class="s1">HTTPSAgent({</span>
+                    <span class="s1">cert: opts.cert,</span>
+                    <span class="s1">key: opts.key,</span>
+                <span class="s1">});</span>
+                <span class="s2">this</span><span class="s1">.agentCache.set(opts.key, opts.agent);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.errorRedactor !== </span><span class="s3">'function' </span><span class="s1">&amp;&amp;</span>
+            <span class="s1">opts.errorRedactor !== </span><span class="s2">false</span><span class="s1">) {</span>
+            <span class="s1">opts.errorRedactor = defaultErrorRedactor;</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(opts.body &amp;&amp; !(</span><span class="s3">'duplex' </span><span class="s2">in </span><span class="s1">opts)) {</span>
+            <span class="s0">/** 
+             * required for Node.js and the type isn't available today 
+             * @link https://github.com/nodejs/node/issues/46221 
+             * @link https://github.com/microsoft/TypeScript-DOM-lib-generator/issues/1483 
+             */</span>
+            <span class="s1">opts.duplex = </span><span class="s3">'half'</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s2">this</span><span class="s1">.#appendTimeoutToSignal(opts);</span>
+        <span class="s2">return </span><span class="s1">Object.assign(opts, {</span>
+            <span class="s1">headers: preparedHeaders,</span>
+            <span class="s1">url: opts.url </span><span class="s2">instanceof </span><span class="s1">URL ? opts.url : </span><span class="s2">new </span><span class="s1">URL(opts.url),</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s1">#appendTimeoutToSignal(opts) {</span>
+        <span class="s2">if </span><span class="s1">(opts.timeout) {</span>
+            <span class="s1">const timeoutSignal = AbortSignal.timeout(opts.timeout);</span>
+            <span class="s2">if </span><span class="s1">(opts.signal &amp;&amp; !opts.signal.aborted) {</span>
+                <span class="s1">opts.signal = AbortSignal.any([opts.signal, timeoutSignal]);</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">opts.signal = timeoutSignal;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * By default, throw for any non-2xx status code 
+     * @param status status code from the HTTP response 
+     */</span>
+    <span class="s1">validateStatus(status) {</span>
+        <span class="s2">return </span><span class="s1">status &gt;= </span><span class="s4">200 </span><span class="s1">&amp;&amp; status &lt; </span><span class="s4">300</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Attempts to parse a response by looking at the Content-Type header. 
+     * @param {Response} response the HTTP response. 
+     * @returns a promise that resolves to the response data. 
+     */</span>
+    <span class="s1">async getResponseDataFromContentType(response) {</span>
+        <span class="s1">let contentType = response.headers.get(</span><span class="s3">'Content-Type'</span><span class="s1">);</span>
+        <span class="s2">if </span><span class="s1">(contentType === </span><span class="s2">null</span><span class="s1">) {</span>
+            <span class="s0">// Maintain existing functionality by calling text()</span>
+            <span class="s2">return </span><span class="s1">response.text();</span>
+        <span class="s1">}</span>
+        <span class="s1">contentType = contentType.toLowerCase();</span>
+        <span class="s2">if </span><span class="s1">(contentType.includes(</span><span class="s3">'application/json'</span><span class="s1">)) {</span>
+            <span class="s1">let data = await response.text();</span>
+            <span class="s2">try </span><span class="s1">{</span>
+                <span class="s1">data = JSON.parse(data);</span>
+            <span class="s1">}</span>
+            <span class="s2">catch </span><span class="s1">{</span>
+                <span class="s0">// continue</span>
+            <span class="s1">}</span>
+            <span class="s2">return </span><span class="s1">data;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(contentType.match(/^text\</span><span class="s0">//)) {</span>
+            <span class="s2">return </span><span class="s1">response.text();</span>
+        <span class="s1">}</span>
+        <span class="s2">else </span><span class="s1">{</span>
+            <span class="s0">// If the content type is something not easily handled, just return the raw data (blob)</span>
+            <span class="s2">return </span><span class="s1">response.blob();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Creates an async generator that yields the pieces of a multipart/related request body. 
+     * This implementation follows the spec: https://www.ietf.org/rfc/rfc2387.txt. However, recursive 
+     * multipart/related requests are not currently supported. 
+     * 
+     * @param {GaxiosMultipartOptions[]} multipartOptions the pieces to turn into a multipart/related body. 
+     * @param {string} boundary the boundary string to be placed between each part. 
+     */</span>
+    <span class="s1">async *getMultipartRequest(multipartOptions, boundary) {</span>
+        <span class="s1">const finale = `--${boundary}--`;</span>
+        <span class="s2">for </span><span class="s1">(const currentPart of multipartOptions) {</span>
+            <span class="s1">const partContentType = currentPart.headers.get(</span><span class="s3">'Content-Type'</span><span class="s1">) || </span><span class="s3">'application/octet-stream'</span><span class="s1">;</span>
+            <span class="s1">const preamble = `--${boundary}\r\nContent-Type: ${partContentType}\r\n\r\n`;</span>
+            <span class="s1">yield preamble;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">currentPart.content === </span><span class="s3">'string'</span><span class="s1">) {</span>
+                <span class="s1">yield currentPart.content;</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">yield* currentPart.content;</span>
+            <span class="s1">}</span>
+            <span class="s1">yield </span><span class="s3">'</span><span class="s2">\r\n</span><span class="s3">'</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s1">yield finale;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * A cache for the lazily-loaded proxy agent. 
+     * 
+     * Should use {@link Gaxios[#getProxyAgent]} to retrieve. 
+     */</span>
+    <span class="s0">// using `import` to dynamically import the types here</span>
+    <span class="s1">static #proxyAgent;</span>
+    <span class="s0">/** 
+     * A cache for the lazily-loaded fetch library. 
+     * 
+     * Should use {@link Gaxios[#getFetch]} to retrieve. 
+     */</span>
+    <span class="s0">//</span>
+    <span class="s1">static #fetch;</span>
+    <span class="s0">/** 
+     * Imports, caches, and returns a proxy agent - if not already imported 
+     * 
+     * @returns A proxy agent 
+     */</span>
+    <span class="s1">static async #getProxyAgent() {</span>
+        <span class="s2">this</span><span class="s1">.#proxyAgent ||= (await import(</span><span class="s3">'https-proxy-agent'</span><span class="s1">)).HttpsProxyAgent;</span>
+        <span class="s2">return this</span><span class="s1">.#proxyAgent;</span>
+    <span class="s1">}</span>
+    <span class="s1">static async #getFetch() {</span>
+        <span class="s1">const hasWindow = </span><span class="s2">typeof </span><span class="s1">window !== </span><span class="s3">'undefined' </span><span class="s1">&amp;&amp; !!window;</span>
+        <span class="s2">this</span><span class="s1">.#fetch ||= hasWindow</span>
+            <span class="s1">? window.fetch</span>
+            <span class="s1">: (await import(</span><span class="s3">'node-fetch'</span><span class="s1">)).</span><span class="s2">default</span><span class="s1">;</span>
+        <span class="s2">return this</span><span class="s1">.#fetch;</span>
+    <span class="s1">}</span>
+    <span class="s0">/** 
+     * Merges headers. 
+     * If the base headers do not exist a new `Headers` object will be returned. 
+     * 
+     * @remarks 
+     * 
+     * Using this utility can be helpful when the headers are not known to exist: 
+     * - if they exist as `Headers`, that instance will be used 
+     *   - it improves performance and allows users to use their existing references to their `Headers` 
+     * - if they exist in another form (`HeadersInit`), they will be used to create a new `Headers` object 
+     * - if the base headers do not exist a new `Headers` object will be created 
+     * 
+     * @param base headers to append/overwrite to 
+     * @param append headers to append/overwrite with 
+     * @returns the base headers instance with merged `Headers` 
+     */</span>
+    <span class="s1">static mergeHeaders(base, ...append) {</span>
+        <span class="s1">base = base </span><span class="s2">instanceof </span><span class="s1">Headers ? base : </span><span class="s2">new </span><span class="s1">Headers(base);</span>
+        <span class="s2">for </span><span class="s1">(const headers of append) {</span>
+            <span class="s1">const add = headers </span><span class="s2">instanceof </span><span class="s1">Headers ? headers : </span><span class="s2">new </span><span class="s1">Headers(headers);</span>
+            <span class="s1">add.forEach((value, key) =&gt; {</span>
+                <span class="s0">// set-cookie is the only header that would repeat.</span>
+                <span class="s0">// A bit of background: https://developer.mozilla.org/en-US/docs/Web/API/Headers/getSetCookie</span>
+                <span class="s1">key === </span><span class="s3">'set-cookie' </span><span class="s1">? base.append(key, value) : base.set(key, value);</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">base;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">_a = Gaxios;</span>
+<span class="s0">//# sourceMappingURL=gaxios.js.map</span></pre>
+</body>
+</html>

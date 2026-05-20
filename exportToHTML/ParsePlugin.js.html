@@ -1,0 +1,98 @@
+<html>
+<head>
+<title>ParsePlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ParsePlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+
+<span class="s1">module.exports = class ParsePlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {Partial&lt;ResolveRequest&gt;} requestOptions request options 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, requestOptions, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.requestOptions = requestOptions;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;ParsePlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s1">const parsed = resolver.parse(</span><span class="s0">/** @type {string} */ </span><span class="s1">(request.request));</span>
+				<span class="s0">/** @type {ResolveRequest} */</span>
+				<span class="s1">const obj = { ...request, ...parsed, ...</span><span class="s3">this</span><span class="s1">.requestOptions };</span>
+				<span class="s3">if </span><span class="s1">(request.query &amp;&amp; !parsed.query) {</span>
+					<span class="s1">obj.query = request.query;</span>
+				<span class="s1">}</span>
+				<span class="s3">if </span><span class="s1">(request.fragment &amp;&amp; !parsed.fragment) {</span>
+					<span class="s1">obj.fragment = request.fragment;</span>
+				<span class="s1">}</span>
+				<span class="s3">if </span><span class="s1">(parsed &amp;&amp; resolveContext.log) {</span>
+					<span class="s3">if </span><span class="s1">(parsed.module) resolveContext.log(</span><span class="s2">&quot;Parsed request is a module&quot;</span><span class="s1">);</span>
+					<span class="s3">if </span><span class="s1">(parsed.directory) {</span>
+						<span class="s1">resolveContext.log(</span><span class="s2">&quot;Parsed request is a directory&quot;</span><span class="s1">);</span>
+					<span class="s1">}</span>
+				<span class="s1">}</span>
+				<span class="s0">// There is an edge-case where a request with # can be a path or a fragment -&gt; try both</span>
+				<span class="s3">if </span><span class="s1">(obj.request &amp;&amp; !obj.query &amp;&amp; obj.fragment) {</span>
+					<span class="s1">const directory = obj.fragment.endsWith(</span><span class="s2">&quot;/&quot;</span><span class="s1">);</span>
+					<span class="s0">/** @type {ResolveRequest} */</span>
+					<span class="s1">const alternative = {</span>
+						<span class="s1">...obj,</span>
+						<span class="s1">directory,</span>
+						<span class="s1">request:</span>
+							<span class="s1">obj.request +</span>
+							<span class="s1">(obj.directory ? </span><span class="s2">&quot;/&quot; </span><span class="s1">: </span><span class="s2">&quot;&quot;</span><span class="s1">) +</span>
+							<span class="s1">(directory ? obj.fragment.slice(</span><span class="s4">0</span><span class="s1">, -</span><span class="s4">1</span><span class="s1">) : obj.fragment),</span>
+						<span class="s1">fragment: </span><span class="s2">&quot;&quot;</span><span class="s1">,</span>
+					<span class="s1">};</span>
+					<span class="s1">resolver.doResolve(</span>
+						<span class="s1">target,</span>
+						<span class="s1">alternative,</span>
+						<span class="s3">null</span><span class="s1">,</span>
+						<span class="s1">resolveContext,</span>
+						<span class="s1">(err, result) =&gt; {</span>
+							<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+							<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+							<span class="s1">resolver.doResolve(target, obj, </span><span class="s3">null</span><span class="s1">, resolveContext, callback);</span>
+						<span class="s1">},</span>
+					<span class="s1">);</span>
+					<span class="s3">return</span><span class="s1">;</span>
+				<span class="s1">}</span>
+				<span class="s1">resolver.doResolve(target, obj, </span><span class="s3">null</span><span class="s1">, resolveContext, callback);</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

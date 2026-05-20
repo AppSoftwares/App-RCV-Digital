@@ -1,0 +1,418 @@
+<html>
+<head>
+<title>body.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+body.js</font>
+</center></td></tr></table>
+<pre>
+<span class="s1">/** 
+ * Body.js 
+ * 
+ * Body interface provides common methods for Request and Response 
+ */</span>
+
+<span class="s0">import Stream, {PassThrough} from </span><span class="s2">'node:stream'</span><span class="s0">;</span>
+<span class="s0">import {types, deprecate, promisify} from </span><span class="s2">'node:util'</span><span class="s0">;</span>
+<span class="s0">import {Buffer} from </span><span class="s2">'node:buffer'</span><span class="s0">;</span>
+
+<span class="s0">import Blob from </span><span class="s2">'fetch-blob'</span><span class="s0">;</span>
+<span class="s0">import {FormData, formDataToBlob} from </span><span class="s2">'formdata-polyfill/esm.min.js'</span><span class="s0">;</span>
+
+<span class="s0">import {FetchError} from </span><span class="s2">'./errors/fetch-error.js'</span><span class="s0">;</span>
+<span class="s0">import {FetchBaseError} from </span><span class="s2">'./errors/base.js'</span><span class="s0">;</span>
+<span class="s0">import {isBlob, isURLSearchParameters} from </span><span class="s2">'./utils/is.js'</span><span class="s0">;</span>
+
+<span class="s0">const pipeline = promisify(Stream.pipeline);</span>
+<span class="s0">const INTERNALS = Symbol(</span><span class="s2">'Body internals'</span><span class="s0">);</span>
+
+<span class="s1">/** 
+ * Body mixin 
+ * 
+ * Ref: https://fetch.spec.whatwg.org/#body 
+ * 
+ * @param   Stream  body  Readable stream 
+ * @param   Object  opts  Response options 
+ * @return  Void 
+ */</span>
+<span class="s0">export </span><span class="s3">default </span><span class="s0">class Body {</span>
+	<span class="s0">constructor(body, {</span>
+		<span class="s0">size = </span><span class="s4">0</span>
+	<span class="s0">} = {}) {</span>
+		<span class="s0">let boundary = </span><span class="s3">null</span><span class="s0">;</span>
+
+		<span class="s3">if </span><span class="s0">(body === </span><span class="s3">null</span><span class="s0">) {</span>
+			<span class="s1">// Body is undefined or null</span>
+			<span class="s0">body = </span><span class="s3">null</span><span class="s0">;</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(isURLSearchParameters(body)) {</span>
+			<span class="s1">// Body is a URLSearchParams</span>
+			<span class="s0">body = Buffer.from(body.toString());</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(isBlob(body)) {</span>
+			<span class="s1">// Body is blob</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(Buffer.isBuffer(body)) {</span>
+			<span class="s1">// Body is Buffer</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(types.isAnyArrayBuffer(body)) {</span>
+			<span class="s1">// Body is ArrayBuffer</span>
+			<span class="s0">body = Buffer.from(body);</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(ArrayBuffer.isView(body)) {</span>
+			<span class="s1">// Body is ArrayBufferView</span>
+			<span class="s0">body = Buffer.from(body.buffer, body.byteOffset, body.byteLength);</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(body </span><span class="s3">instanceof </span><span class="s0">Stream) {</span>
+			<span class="s1">// Body is stream</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(body </span><span class="s3">instanceof </span><span class="s0">FormData) {</span>
+			<span class="s1">// Body is FormData</span>
+			<span class="s0">body = formDataToBlob(body);</span>
+			<span class="s0">boundary = body.type.split(</span><span class="s2">'='</span><span class="s0">)[</span><span class="s4">1</span><span class="s0">];</span>
+		<span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+			<span class="s1">// None of the above</span>
+			<span class="s1">// coerce to string then buffer</span>
+			<span class="s0">body = Buffer.from(String(body));</span>
+		<span class="s0">}</span>
+
+		<span class="s0">let stream = body;</span>
+
+		<span class="s3">if </span><span class="s0">(Buffer.isBuffer(body)) {</span>
+			<span class="s0">stream = Stream.Readable.from(body);</span>
+		<span class="s0">} </span><span class="s3">else if </span><span class="s0">(isBlob(body)) {</span>
+			<span class="s0">stream = Stream.Readable.from(body.stream());</span>
+		<span class="s0">}</span>
+
+		<span class="s3">this</span><span class="s0">[INTERNALS] = {</span>
+			<span class="s0">body,</span>
+			<span class="s0">stream,</span>
+			<span class="s0">boundary,</span>
+			<span class="s0">disturbed: </span><span class="s3">false</span><span class="s0">,</span>
+			<span class="s0">error: </span><span class="s3">null</span>
+		<span class="s0">};</span>
+		<span class="s3">this</span><span class="s0">.size = size;</span>
+
+		<span class="s3">if </span><span class="s0">(body </span><span class="s3">instanceof </span><span class="s0">Stream) {</span>
+			<span class="s0">body.on(</span><span class="s2">'error'</span><span class="s0">, error_ =&gt; {</span>
+				<span class="s0">const error = error_ </span><span class="s3">instanceof </span><span class="s0">FetchBaseError ?</span>
+					<span class="s0">error_ :</span>
+					<span class="s3">new </span><span class="s0">FetchError(`Invalid response body </span><span class="s3">while </span><span class="s0">trying to fetch ${</span><span class="s3">this</span><span class="s0">.url}: ${error_.message}`, </span><span class="s2">'system'</span><span class="s0">, error_);</span>
+				<span class="s3">this</span><span class="s0">[INTERNALS].error = error;</span>
+			<span class="s0">});</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+
+	<span class="s0">get body() {</span>
+		<span class="s3">return this</span><span class="s0">[INTERNALS].stream;</span>
+	<span class="s0">}</span>
+
+	<span class="s0">get bodyUsed() {</span>
+		<span class="s3">return this</span><span class="s0">[INTERNALS].disturbed;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/** 
+     * Decode response as ArrayBuffer 
+     * 
+     * @return  Promise 
+     */</span>
+	<span class="s0">async arrayBuffer() {</span>
+		<span class="s0">const {buffer, byteOffset, byteLength} = await consumeBody(</span><span class="s3">this</span><span class="s0">);</span>
+		<span class="s3">return </span><span class="s0">buffer.slice(byteOffset, byteOffset + byteLength);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">async formData() {</span>
+		<span class="s0">const ct = </span><span class="s3">this</span><span class="s0">.headers.get(</span><span class="s2">'content-type'</span><span class="s0">);</span>
+
+		<span class="s3">if </span><span class="s0">(ct.startsWith(</span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s0">)) {</span>
+			<span class="s0">const formData = </span><span class="s3">new </span><span class="s0">FormData();</span>
+			<span class="s0">const parameters = </span><span class="s3">new </span><span class="s0">URLSearchParams(await </span><span class="s3">this</span><span class="s0">.text());</span>
+
+			<span class="s3">for </span><span class="s0">(const [name, value] of parameters) {</span>
+				<span class="s0">formData.append(name, value);</span>
+			<span class="s0">}</span>
+
+			<span class="s3">return </span><span class="s0">formData;</span>
+		<span class="s0">}</span>
+
+		<span class="s0">const {toFormData} = await import(</span><span class="s2">'./utils/multipart-parser.js'</span><span class="s0">);</span>
+		<span class="s3">return </span><span class="s0">toFormData(</span><span class="s3">this</span><span class="s0">.body, ct);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/** 
+     * Return raw response as Blob 
+     * 
+     * @return Promise 
+     */</span>
+	<span class="s0">async blob() {</span>
+		<span class="s0">const ct = (</span><span class="s3">this</span><span class="s0">.headers &amp;&amp; </span><span class="s3">this</span><span class="s0">.headers.get(</span><span class="s2">'content-type'</span><span class="s0">)) || (</span><span class="s3">this</span><span class="s0">[INTERNALS].body &amp;&amp; </span><span class="s3">this</span><span class="s0">[INTERNALS].body.type) || </span><span class="s2">''</span><span class="s0">;</span>
+		<span class="s0">const buf = await </span><span class="s3">this</span><span class="s0">.arrayBuffer();</span>
+
+		<span class="s3">return new </span><span class="s0">Blob([buf], {</span>
+			<span class="s0">type: ct</span>
+		<span class="s0">});</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/** 
+     * Decode response as json 
+     * 
+     * @return  Promise 
+     */</span>
+	<span class="s0">async json() {</span>
+		<span class="s0">const text = await </span><span class="s3">this</span><span class="s0">.text();</span>
+		<span class="s3">return </span><span class="s0">JSON.parse(text);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/** 
+     * Decode response as text 
+     * 
+     * @return  Promise 
+     */</span>
+	<span class="s0">async text() {</span>
+		<span class="s0">const buffer = await consumeBody(</span><span class="s3">this</span><span class="s0">);</span>
+		<span class="s3">return new </span><span class="s0">TextDecoder().decode(buffer);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/** 
+     * Decode response as buffer (non-spec api) 
+     * 
+     * @return  Promise 
+     */</span>
+	<span class="s0">buffer() {</span>
+		<span class="s3">return </span><span class="s0">consumeBody(</span><span class="s3">this</span><span class="s0">);</span>
+	<span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">Body.prototype.buffer = deprecate(Body.prototype.buffer, </span><span class="s2">'Please use </span><span class="s3">\'</span><span class="s2">response.arrayBuffer()</span><span class="s3">\' </span><span class="s2">instead of </span><span class="s3">\'</span><span class="s2">response.buffer()</span><span class="s3">\'</span><span class="s2">'</span><span class="s0">, </span><span class="s2">'node-fetch#buffer'</span><span class="s0">);</span>
+
+<span class="s1">// In browsers, all properties are enumerable.</span>
+<span class="s0">Object.defineProperties(Body.prototype, {</span>
+	<span class="s0">body: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">bodyUsed: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">arrayBuffer: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">blob: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">json: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">text: {enumerable: </span><span class="s3">true</span><span class="s0">},</span>
+	<span class="s0">data: {get: deprecate(() =&gt; {},</span>
+		<span class="s2">'data doesn</span><span class="s3">\'</span><span class="s2">t exist, use json(), text(), arrayBuffer(), or body instead'</span><span class="s0">,</span>
+		<span class="s2">'https://github.com/node-fetch/node-fetch/issues/1000 (response)'</span><span class="s0">)}</span>
+<span class="s0">});</span>
+
+<span class="s1">/** 
+ * Consume and convert an entire Body to a Buffer. 
+ * 
+ * Ref: https://fetch.spec.whatwg.org/#concept-body-consume-body 
+ * 
+ * @return Promise 
+ */</span>
+<span class="s0">async </span><span class="s3">function </span><span class="s0">consumeBody(data) {</span>
+	<span class="s3">if </span><span class="s0">(data[INTERNALS].disturbed) {</span>
+		<span class="s3">throw new </span><span class="s0">TypeError(`body used already </span><span class="s3">for</span><span class="s0">: ${data.url}`);</span>
+	<span class="s0">}</span>
+
+	<span class="s0">data[INTERNALS].disturbed = </span><span class="s3">true</span><span class="s0">;</span>
+
+	<span class="s3">if </span><span class="s0">(data[INTERNALS].error) {</span>
+		<span class="s3">throw </span><span class="s0">data[INTERNALS].error;</span>
+	<span class="s0">}</span>
+
+	<span class="s0">const {body} = data;</span>
+
+	<span class="s1">// Body is null</span>
+	<span class="s3">if </span><span class="s0">(body === </span><span class="s3">null</span><span class="s0">) {</span>
+		<span class="s3">return </span><span class="s0">Buffer.alloc(</span><span class="s4">0</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">/* c8 ignore next 3 */</span>
+	<span class="s3">if </span><span class="s0">(!(body </span><span class="s3">instanceof </span><span class="s0">Stream)) {</span>
+		<span class="s3">return </span><span class="s0">Buffer.alloc(</span><span class="s4">0</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is stream</span>
+	<span class="s1">// get ready to actually consume the body</span>
+	<span class="s0">const accum = [];</span>
+	<span class="s0">let accumBytes = </span><span class="s4">0</span><span class="s0">;</span>
+
+	<span class="s3">try </span><span class="s0">{</span>
+		<span class="s3">for </span><span class="s0">await (const chunk of body) {</span>
+			<span class="s3">if </span><span class="s0">(data.size &gt; </span><span class="s4">0 </span><span class="s0">&amp;&amp; accumBytes + chunk.length &gt; data.size) {</span>
+				<span class="s0">const error = </span><span class="s3">new </span><span class="s0">FetchError(`content size at ${data.url} over limit: ${data.size}`, </span><span class="s2">'max-size'</span><span class="s0">);</span>
+				<span class="s0">body.destroy(error);</span>
+				<span class="s3">throw </span><span class="s0">error;</span>
+			<span class="s0">}</span>
+
+			<span class="s0">accumBytes += chunk.length;</span>
+			<span class="s0">accum.push(chunk);</span>
+		<span class="s0">}</span>
+	<span class="s0">} </span><span class="s3">catch </span><span class="s0">(error) {</span>
+		<span class="s0">const error_ = error </span><span class="s3">instanceof </span><span class="s0">FetchBaseError ? error : </span><span class="s3">new </span><span class="s0">FetchError(`Invalid response body </span><span class="s3">while </span><span class="s0">trying to fetch ${data.url}: ${error.message}`, </span><span class="s2">'system'</span><span class="s0">, error);</span>
+		<span class="s3">throw </span><span class="s0">error_;</span>
+	<span class="s0">}</span>
+
+	<span class="s3">if </span><span class="s0">(body.readableEnded === </span><span class="s3">true </span><span class="s0">|| body._readableState.ended === </span><span class="s3">true</span><span class="s0">) {</span>
+		<span class="s3">try </span><span class="s0">{</span>
+			<span class="s3">if </span><span class="s0">(accum.every(c =&gt; </span><span class="s3">typeof </span><span class="s0">c === </span><span class="s2">'string'</span><span class="s0">)) {</span>
+				<span class="s3">return </span><span class="s0">Buffer.from(accum.join(</span><span class="s2">''</span><span class="s0">));</span>
+			<span class="s0">}</span>
+
+			<span class="s3">return </span><span class="s0">Buffer.concat(accum, accumBytes);</span>
+		<span class="s0">} </span><span class="s3">catch </span><span class="s0">(error) {</span>
+			<span class="s3">throw new </span><span class="s0">FetchError(`Could not create Buffer from response body </span><span class="s3">for </span><span class="s0">${data.url}: ${error.message}`, </span><span class="s2">'system'</span><span class="s0">, error);</span>
+		<span class="s0">}</span>
+	<span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+		<span class="s3">throw new </span><span class="s0">FetchError(`Premature close of server response </span><span class="s3">while </span><span class="s0">trying to fetch ${data.url}`);</span>
+	<span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s1">/** 
+ * Clone body given Res/Req instance 
+ * 
+ * @param   Mixed   instance       Response or Request instance 
+ * @param   String  highWaterMark  highWaterMark for both PassThrough body streams 
+ * @return  Mixed 
+ */</span>
+<span class="s0">export const clone = (instance, highWaterMark) =&gt; {</span>
+	<span class="s0">let p1;</span>
+	<span class="s0">let p2;</span>
+	<span class="s0">let {body} = instance[INTERNALS];</span>
+
+	<span class="s1">// Don't allow cloning a used body</span>
+	<span class="s3">if </span><span class="s0">(instance.bodyUsed) {</span>
+		<span class="s3">throw new </span><span class="s0">Error(</span><span class="s2">'cannot clone body after it is used'</span><span class="s0">);</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Check that body is a stream and not form-data object</span>
+	<span class="s1">// note: we can't clone the form-data object without having it as a dependency</span>
+	<span class="s3">if </span><span class="s0">((body </span><span class="s3">instanceof </span><span class="s0">Stream) &amp;&amp; (</span><span class="s3">typeof </span><span class="s0">body.getBoundary !== </span><span class="s2">'function'</span><span class="s0">)) {</span>
+		<span class="s1">// Tee instance body</span>
+		<span class="s0">p1 = </span><span class="s3">new </span><span class="s0">PassThrough({highWaterMark});</span>
+		<span class="s0">p2 = </span><span class="s3">new </span><span class="s0">PassThrough({highWaterMark});</span>
+		<span class="s0">body.pipe(p1);</span>
+		<span class="s0">body.pipe(p2);</span>
+		<span class="s1">// Set instance body to teed body and return the other teed body</span>
+		<span class="s0">instance[INTERNALS].stream = p1;</span>
+		<span class="s0">body = p2;</span>
+	<span class="s0">}</span>
+
+	<span class="s3">return </span><span class="s0">body;</span>
+<span class="s0">};</span>
+
+<span class="s0">const getNonSpecFormDataBoundary = deprecate(</span>
+	<span class="s0">body =&gt; body.getBoundary(),</span>
+	<span class="s2">'form-data doesn</span><span class="s3">\'</span><span class="s2">t follow the spec and requires special treatment. Use alternative package'</span><span class="s0">,</span>
+	<span class="s2">'https://github.com/node-fetch/node-fetch/issues/1167'</span>
+<span class="s0">);</span>
+
+<span class="s1">/** 
+ * Performs the operation &quot;extract a `Content-Type` value from |object|&quot; as 
+ * specified in the specification: 
+ * https://fetch.spec.whatwg.org/#concept-bodyinit-extract 
+ * 
+ * This function assumes that instance.body is present. 
+ * 
+ * @param {any} body Any options.body input 
+ * @returns {string | null} 
+ */</span>
+<span class="s0">export const extractContentType = (body, request) =&gt; {</span>
+	<span class="s1">// Body is null or undefined</span>
+	<span class="s3">if </span><span class="s0">(body === </span><span class="s3">null</span><span class="s0">) {</span>
+		<span class="s3">return null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is string</span>
+	<span class="s3">if </span><span class="s0">(</span><span class="s3">typeof </span><span class="s0">body === </span><span class="s2">'string'</span><span class="s0">) {</span>
+		<span class="s3">return </span><span class="s2">'text/plain;charset=UTF-8'</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is a URLSearchParams</span>
+	<span class="s3">if </span><span class="s0">(isURLSearchParameters(body)) {</span>
+		<span class="s3">return </span><span class="s2">'application/x-www-form-urlencoded;charset=UTF-8'</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is blob</span>
+	<span class="s3">if </span><span class="s0">(isBlob(body)) {</span>
+		<span class="s3">return </span><span class="s0">body.type || </span><span class="s3">null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is a Buffer (Buffer, ArrayBuffer or ArrayBufferView)</span>
+	<span class="s3">if </span><span class="s0">(Buffer.isBuffer(body) || types.isAnyArrayBuffer(body) || ArrayBuffer.isView(body)) {</span>
+		<span class="s3">return null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s3">if </span><span class="s0">(body </span><span class="s3">instanceof </span><span class="s0">FormData) {</span>
+		<span class="s3">return </span><span class="s0">`multipart/form-data; boundary=${request[INTERNALS].boundary}`;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Detect form data input from form-data module</span>
+	<span class="s3">if </span><span class="s0">(body &amp;&amp; </span><span class="s3">typeof </span><span class="s0">body.getBoundary === </span><span class="s2">'function'</span><span class="s0">) {</span>
+		<span class="s3">return </span><span class="s0">`multipart/form-data;boundary=${getNonSpecFormDataBoundary(body)}`;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is stream - can't really do much about this</span>
+	<span class="s3">if </span><span class="s0">(body </span><span class="s3">instanceof </span><span class="s0">Stream) {</span>
+		<span class="s3">return null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body constructor defaults other things to string</span>
+	<span class="s3">return </span><span class="s2">'text/plain;charset=UTF-8'</span><span class="s0">;</span>
+<span class="s0">};</span>
+
+<span class="s1">/** 
+ * The Fetch Standard treats this as if &quot;total bytes&quot; is a property on the body. 
+ * For us, we have to explicitly get it with a function. 
+ * 
+ * ref: https://fetch.spec.whatwg.org/#concept-body-total-bytes 
+ * 
+ * @param {any} obj.body Body object from the Body instance. 
+ * @returns {number | null} 
+ */</span>
+<span class="s0">export const getTotalBytes = request =&gt; {</span>
+	<span class="s0">const {body} = request[INTERNALS];</span>
+
+	<span class="s1">// Body is null or undefined</span>
+	<span class="s3">if </span><span class="s0">(body === </span><span class="s3">null</span><span class="s0">) {</span>
+		<span class="s3">return </span><span class="s4">0</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is Blob</span>
+	<span class="s3">if </span><span class="s0">(isBlob(body)) {</span>
+		<span class="s3">return </span><span class="s0">body.size;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is Buffer</span>
+	<span class="s3">if </span><span class="s0">(Buffer.isBuffer(body)) {</span>
+		<span class="s3">return </span><span class="s0">body.length;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Detect form data input from form-data module</span>
+	<span class="s3">if </span><span class="s0">(body &amp;&amp; </span><span class="s3">typeof </span><span class="s0">body.getLengthSync === </span><span class="s2">'function'</span><span class="s0">) {</span>
+		<span class="s3">return </span><span class="s0">body.hasKnownLength &amp;&amp; body.hasKnownLength() ? body.getLengthSync() : </span><span class="s3">null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+
+	<span class="s1">// Body is stream</span>
+	<span class="s3">return null</span><span class="s0">;</span>
+<span class="s0">};</span>
+
+<span class="s1">/** 
+ * Write a Body to a Node.js WritableStream (e.g. http.Request) object. 
+ * 
+ * @param {Stream.Writable} dest The stream to write to. 
+ * @param obj.body Body object from the Body instance. 
+ * @returns {Promise&lt;void&gt;} 
+ */</span>
+<span class="s0">export const writeToStream = async (dest, {body}) =&gt; {</span>
+	<span class="s3">if </span><span class="s0">(body === </span><span class="s3">null</span><span class="s0">) {</span>
+		<span class="s1">// Body is null</span>
+		<span class="s0">dest.end();</span>
+	<span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+		<span class="s1">// Body is stream</span>
+		<span class="s0">await pipeline(body, dest);</span>
+	<span class="s0">}</span>
+<span class="s0">};</span>
+</pre>
+</body>
+</html>

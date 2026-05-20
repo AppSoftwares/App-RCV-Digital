@@ -1,0 +1,154 @@
+<html>
+<head>
+<title>PnpPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PnpPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Maël Nison @arcanis 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** 
+ * @typedef {object} PnpApiImpl 
+ * @property {(packageName: string, issuer: string, options: { considerBuiltins: boolean }) =&gt; string | null} resolveToUnqualified resolve to unqualified 
+ */</span>
+
+<span class="s1">module.exports = class PnpPlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {PnpApiImpl} pnpApi pnpApi 
+     * @param {string | ResolveStepHook} target target 
+     * @param {string | ResolveStepHook} alternateTarget alternateTarget 
+     */</span>
+	<span class="s1">constructor(source, pnpApi, target, alternateTarget) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.pnpApi = pnpApi;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+		<span class="s3">this</span><span class="s1">.alternateTarget = alternateTarget;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s0">/** @type {ResolveStepHook} */</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">const alternateTarget = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.alternateTarget);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;PnpPlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s1">const req = request.request;</span>
+				<span class="s3">if </span><span class="s1">(!req) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+				<span class="s0">// The trailing slash indicates to PnP that this value is a folder rather than a file</span>
+				<span class="s1">const issuer = `${request.path}/`;</span>
+
+				<span class="s1">const packageMatch = /^(@[^/]+\/)?[^/]+/.exec(req);</span>
+				<span class="s3">if </span><span class="s1">(!packageMatch) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+				<span class="s1">const [packageName] = packageMatch;</span>
+				<span class="s1">const innerRequest = `.${req.slice(packageName.length)}`;</span>
+
+				<span class="s0">/** @type {string | undefined | null} */</span>
+				<span class="s1">let resolution;</span>
+				<span class="s0">/** @type {string | undefined | null} */</span>
+				<span class="s1">let apiResolution;</span>
+				<span class="s3">try </span><span class="s1">{</span>
+					<span class="s1">resolution = </span><span class="s3">this</span><span class="s1">.pnpApi.resolveToUnqualified(packageName, issuer, {</span>
+						<span class="s1">considerBuiltins: </span><span class="s3">false</span><span class="s1">,</span>
+					<span class="s1">});</span>
+
+					<span class="s3">if </span><span class="s1">(resolution === </span><span class="s3">null</span><span class="s1">) {</span>
+						<span class="s0">// This is either not a PnP managed issuer or it's a Node builtin</span>
+						<span class="s0">// Try to continue resolving with our alternatives</span>
+						<span class="s1">resolver.doResolve(</span>
+							<span class="s1">alternateTarget,</span>
+							<span class="s1">request,</span>
+							<span class="s2">&quot;issuer is not managed by a pnpapi&quot;</span><span class="s1">,</span>
+							<span class="s1">resolveContext,</span>
+							<span class="s1">(err, result) =&gt; {</span>
+								<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+								<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+								<span class="s0">// Skip alternatives</span>
+								<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+							<span class="s1">},</span>
+						<span class="s1">);</span>
+						<span class="s3">return</span><span class="s1">;</span>
+					<span class="s1">}</span>
+
+					<span class="s3">if </span><span class="s1">(resolveContext.fileDependencies) {</span>
+						<span class="s1">apiResolution = </span><span class="s3">this</span><span class="s1">.pnpApi.resolveToUnqualified(</span><span class="s2">&quot;pnpapi&quot;</span><span class="s1">, issuer, {</span>
+							<span class="s1">considerBuiltins: </span><span class="s3">false</span><span class="s1">,</span>
+						<span class="s1">});</span>
+					<span class="s1">}</span>
+				<span class="s1">} </span><span class="s3">catch </span><span class="s1">(</span><span class="s0">/** @type {unknown} */ </span><span class="s1">error) {</span>
+					<span class="s3">if </span><span class="s1">(</span>
+						<span class="s0">/** @type {Error &amp; { code: string }} */</span>
+						<span class="s1">(error).code === </span><span class="s2">&quot;MODULE_NOT_FOUND&quot; </span><span class="s1">&amp;&amp;</span>
+						<span class="s0">/** @type {Error &amp; { pnpCode: string }} */</span>
+						<span class="s1">(error).pnpCode === </span><span class="s2">&quot;UNDECLARED_DEPENDENCY&quot;</span>
+					<span class="s1">) {</span>
+						<span class="s0">// This is not a PnP managed dependency.</span>
+						<span class="s0">// Try to continue resolving with our alternatives</span>
+						<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+							<span class="s1">resolveContext.log(</span><span class="s2">&quot;request is not managed by the pnpapi&quot;</span><span class="s1">);</span>
+							<span class="s3">for </span><span class="s1">(const line of </span><span class="s0">/** @type {Error} */ </span><span class="s1">(error).message</span>
+								<span class="s1">.split(</span><span class="s2">&quot;</span><span class="s3">\n</span><span class="s2">&quot;</span><span class="s1">)</span>
+								<span class="s1">.filter(Boolean)) {</span>
+								<span class="s1">resolveContext.log(`  ${line}`);</span>
+							<span class="s1">}</span>
+						<span class="s1">}</span>
+						<span class="s3">return </span><span class="s1">callback();</span>
+					<span class="s1">}</span>
+					<span class="s3">return </span><span class="s1">callback(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(error));</span>
+				<span class="s1">}</span>
+
+				<span class="s3">if </span><span class="s1">(resolution === packageName) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+				<span class="s3">if </span><span class="s1">(apiResolution &amp;&amp; resolveContext.fileDependencies) {</span>
+					<span class="s1">resolveContext.fileDependencies.add(apiResolution);</span>
+				<span class="s1">}</span>
+				<span class="s0">/** @type {ResolveRequest} */</span>
+				<span class="s1">const obj = {</span>
+					<span class="s1">...request,</span>
+					<span class="s1">path: resolution,</span>
+					<span class="s1">request: innerRequest,</span>
+					<span class="s1">ignoreSymlinks: </span><span class="s3">true</span><span class="s1">,</span>
+					<span class="s1">fullySpecified: request.fullySpecified &amp;&amp; innerRequest !== </span><span class="s2">&quot;.&quot;</span><span class="s1">,</span>
+				<span class="s1">};</span>
+				<span class="s1">resolver.doResolve(</span>
+					<span class="s1">target,</span>
+					<span class="s1">obj,</span>
+					<span class="s1">`resolved by pnp to ${resolution}`,</span>
+					<span class="s1">resolveContext,</span>
+					<span class="s1">(err, result) =&gt; {</span>
+						<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+						<span class="s3">if </span><span class="s1">(result) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+						<span class="s0">// Skip alternatives</span>
+						<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+					<span class="s1">},</span>
+				<span class="s1">);</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

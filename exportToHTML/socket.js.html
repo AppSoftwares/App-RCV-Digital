@@ -1,0 +1,771 @@
+<html>
+<head>
+<title>socket.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+socket.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import {</span>
+  <span class="s0">global,</span>
+  <span class="s0">phxWindow,</span>
+  <span class="s0">CHANNEL_EVENTS,</span>
+  <span class="s0">DEFAULT_TIMEOUT,</span>
+  <span class="s0">DEFAULT_VSN,</span>
+  <span class="s0">SOCKET_STATES,</span>
+  <span class="s0">TRANSPORTS,</span>
+  <span class="s0">WS_CLOSE_NORMAL,</span>
+  <span class="s0">AUTH_TOKEN_PREFIX</span>
+<span class="s0">} from </span><span class="s1">&quot;./constants&quot;</span>
+
+<span class="s0">import {</span>
+  <span class="s0">closure</span>
+<span class="s0">} from </span><span class="s1">&quot;./utils&quot;</span>
+
+<span class="s0">import Ajax from </span><span class="s1">&quot;./ajax&quot;</span>
+<span class="s0">import Channel from </span><span class="s1">&quot;./channel&quot;</span>
+<span class="s0">import LongPoll from </span><span class="s1">&quot;./longpoll&quot;</span>
+<span class="s0">import Serializer from </span><span class="s1">&quot;./serializer&quot;</span>
+<span class="s0">import Timer from </span><span class="s1">&quot;./timer&quot;</span>
+
+<span class="s2">/** 
+* @import { Encode, Decode, Message, Vsn, SocketTransport, Params, SocketOnOpen, SocketOnClose, SocketOnError, SocketOnMessage, SocketOptions, SocketStateChangeCallbacks, HeartbeatCallback } from &quot;./types&quot; 
+*/</span>
+
+<span class="s0">export </span><span class="s3">default </span><span class="s0">class Socket {</span>
+  <span class="s2">/** Initializes the Socket * 
+   * 
+   * For IE8 support use an ES5-shim (https://github.com/es-shims/es5-shim) 
+   * 
+   * @constructor 
+   * @param {string} endPoint - The string WebSocket endpoint, ie, `&quot;ws://example.com/socket&quot;`, 
+   *                                               `&quot;wss://example.com&quot;` 
+   *                                               `&quot;/socket&quot;` (inherited host &amp; protocol) 
+   * @param {SocketOptions} [opts] - Optional configuration 
+   */</span>
+  <span class="s0">constructor(endPoint, opts = {}){</span>
+    <span class="s2">/** @type{SocketStateChangeCallbacks} */</span>
+    <span class="s3">this</span><span class="s0">.stateChangeCallbacks = {open: [], close: [], error: [], message: []}</span>
+    <span class="s2">/** @type{Channel[]} */</span>
+    <span class="s3">this</span><span class="s0">.channels = []</span>
+    <span class="s2">/** @type{(() =&gt; void)[]} */</span>
+    <span class="s3">this</span><span class="s0">.sendBuffer = []</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.ref = </span><span class="s4">0</span>
+    <span class="s2">/** @type{?string} */</span>
+    <span class="s3">this</span><span class="s0">.fallbackRef = </span><span class="s3">null</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.timeout = opts.timeout || DEFAULT_TIMEOUT</span>
+    <span class="s2">/** @type{SocketTransport} */</span>
+    <span class="s3">this</span><span class="s0">.transport = opts.transport || global.WebSocket || LongPoll</span>
+    <span class="s2">/** @type{InstanceType&lt;SocketTransport&gt; | undefined | null} */</span>
+    <span class="s3">this</span><span class="s0">.conn = undefined</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.primaryPassedHealthCheck = </span><span class="s3">false</span>
+    <span class="s2">/** @type{number | undefined} */</span>
+    <span class="s3">this</span><span class="s0">.longPollFallbackMs = opts.longPollFallbackMs</span>
+    <span class="s2">/** @type{ReturnType&lt;typeof setTimeout&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.fallbackTimer = </span><span class="s3">null</span>
+    <span class="s2">/** @type{Storage} */</span>
+    <span class="s3">this</span><span class="s0">.sessionStore = opts.sessionStorage || (global &amp;&amp; global.sessionStorage)</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.establishedConnections = </span><span class="s4">0</span>
+    <span class="s2">/** @type{Encode&lt;void&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.defaultEncoder = Serializer.encode.bind(Serializer)</span>
+    <span class="s2">/** @type{Decode&lt;void&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.defaultDecoder = Serializer.decode.bind(Serializer)</span>
+    <span class="s2">// We start with closeWasClean true to avoid the visibility change</span>
+    <span class="s2">// logic from connecting if the socket was never connected in the first place.</span>
+    <span class="s2">// transportConnect sets it to false on open.</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">true</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.disconnecting = </span><span class="s3">false</span>
+    <span class="s2">/** @type{BinaryType} */</span>
+    <span class="s3">this</span><span class="s0">.binaryType = opts.binaryType || </span><span class="s1">&quot;arraybuffer&quot;</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.connectClock = </span><span class="s4">1</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.pageHidden = </span><span class="s3">false</span>
+    <span class="s2">/** @type{Encode&lt;void&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.encode = undefined</span>
+    <span class="s2">/** @type{Decode&lt;void&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.decode = undefined</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.transport !== LongPoll){</span>
+      <span class="s3">this</span><span class="s0">.encode = opts.encode || </span><span class="s3">this</span><span class="s0">.defaultEncoder</span>
+      <span class="s3">this</span><span class="s0">.decode = opts.decode || </span><span class="s3">this</span><span class="s0">.defaultDecoder</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.encode = </span><span class="s3">this</span><span class="s0">.defaultEncoder</span>
+      <span class="s3">this</span><span class="s0">.decode = </span><span class="s3">this</span><span class="s0">.defaultDecoder</span>
+    <span class="s0">}</span>
+    <span class="s2">/** @type{number | null} */</span>
+    <span class="s0">let awaitingConnectionOnPageShow = </span><span class="s3">null</span>
+    <span class="s3">if</span><span class="s0">(phxWindow &amp;&amp; phxWindow.addEventListener){</span>
+      <span class="s0">phxWindow.addEventListener(</span><span class="s1">&quot;pagehide&quot;</span><span class="s0">, _e =&gt; {</span>
+        <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn){</span>
+          <span class="s3">this</span><span class="s0">.disconnect()</span>
+          <span class="s0">awaitingConnectionOnPageShow = </span><span class="s3">this</span><span class="s0">.connectClock</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+      <span class="s0">phxWindow.addEventListener(</span><span class="s1">&quot;pageshow&quot;</span><span class="s0">, _e =&gt; {</span>
+        <span class="s3">if</span><span class="s0">(awaitingConnectionOnPageShow === </span><span class="s3">this</span><span class="s0">.connectClock){</span>
+          <span class="s0">awaitingConnectionOnPageShow = </span><span class="s3">null</span>
+          <span class="s3">this</span><span class="s0">.connect()</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+      <span class="s0">phxWindow.addEventListener(</span><span class="s1">&quot;visibilitychange&quot;</span><span class="s0">, () =&gt; {</span>
+        <span class="s3">if</span><span class="s0">(document.visibilityState === </span><span class="s1">&quot;hidden&quot;</span><span class="s0">){</span>
+          <span class="s3">this</span><span class="s0">.pageHidden = </span><span class="s3">true</span>
+        <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+          <span class="s3">this</span><span class="s0">.pageHidden = </span><span class="s3">false</span>
+          <span class="s2">// reconnect immediately</span>
+          <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.isConnected() &amp;&amp; !</span><span class="s3">this</span><span class="s0">.closeWasClean){</span>
+            <span class="s3">this</span><span class="s0">.teardown(() =&gt; </span><span class="s3">this</span><span class="s0">.connect())</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+    <span class="s0">}</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.heartbeatIntervalMs = opts.heartbeatIntervalMs || </span><span class="s4">30000</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.autoSendHeartbeat = opts.autoSendHeartbeat ?? </span><span class="s3">true</span>
+    <span class="s2">/** @type{HeartbeatCallback} */</span>
+    <span class="s3">this</span><span class="s0">.heartbeatCallback = opts.heartbeatCallback ?? (() =&gt; {})</span>
+    <span class="s2">/** @type{(tries: number) =&gt; number} */</span>
+    <span class="s3">this</span><span class="s0">.rejoinAfterMs = (tries) =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(opts.rejoinAfterMs){</span>
+        <span class="s3">return </span><span class="s0">opts.rejoinAfterMs(tries)</span>
+      <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+        <span class="s3">return </span><span class="s0">[</span><span class="s4">1000</span><span class="s0">, </span><span class="s4">2000</span><span class="s0">, </span><span class="s4">5000</span><span class="s0">][tries - </span><span class="s4">1</span><span class="s0">] || </span><span class="s4">10000</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">/** @type{(tries: number) =&gt; number} */</span>
+    <span class="s3">this</span><span class="s0">.reconnectAfterMs = (tries) =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(opts.reconnectAfterMs){</span>
+        <span class="s3">return </span><span class="s0">opts.reconnectAfterMs(tries)</span>
+      <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+        <span class="s3">return </span><span class="s0">[</span><span class="s4">10</span><span class="s0">, </span><span class="s4">50</span><span class="s0">, </span><span class="s4">100</span><span class="s0">, </span><span class="s4">150</span><span class="s0">, </span><span class="s4">200</span><span class="s0">, </span><span class="s4">250</span><span class="s0">, </span><span class="s4">500</span><span class="s0">, </span><span class="s4">1000</span><span class="s0">, </span><span class="s4">2000</span><span class="s0">][tries - </span><span class="s4">1</span><span class="s0">] || </span><span class="s4">5000</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">/** @type{((kind: string, msg: string, data: any) =&gt; void) | null} */</span>
+    <span class="s3">this</span><span class="s0">.logger = opts.logger || </span><span class="s3">null</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.logger &amp;&amp; opts.debug){</span>
+      <span class="s3">this</span><span class="s0">.logger = (kind, msg, data) =&gt; { console.log(`${kind}: ${msg}`, data) }</span>
+    <span class="s0">}</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.longpollerTimeout = opts.longpollerTimeout || </span><span class="s4">20000</span>
+    <span class="s2">/** @type{() =&gt; Params} */</span>
+    <span class="s3">this</span><span class="s0">.params = closure(opts.params || {})</span>
+    <span class="s2">/** @type{string} */</span>
+    <span class="s3">this</span><span class="s0">.endPoint = `${endPoint}/${TRANSPORTS.websocket}`</span>
+    <span class="s2">/** @type{Vsn} */</span>
+    <span class="s3">this</span><span class="s0">.vsn = opts.vsn || DEFAULT_VSN</span>
+    <span class="s2">/** @type{ReturnType&lt;typeof setTimeout&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.heartbeatTimeoutTimer = </span><span class="s3">null</span>
+    <span class="s2">/** @type{ReturnType&lt;typeof setTimeout&gt;} */</span>
+    <span class="s3">this</span><span class="s0">.heartbeatTimer = </span><span class="s3">null</span>
+    <span class="s2">/** @type{number | null} */</span>
+    <span class="s3">this</span><span class="s0">.heartbeatSentAt = </span><span class="s3">null</span>
+    <span class="s2">/** @type{?string} */</span>
+    <span class="s3">this</span><span class="s0">.pendingHeartbeatRef = </span><span class="s3">null</span>
+    <span class="s2">/** @type{Timer} */</span>
+    <span class="s3">this</span><span class="s0">.reconnectTimer = </span><span class="s3">new </span><span class="s0">Timer( () =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.pageHidden){</span>
+        <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;Not reconnecting as page is hidden!&quot;</span><span class="s0">)</span>
+        <span class="s3">this</span><span class="s0">.teardown()</span>
+        <span class="s3">return</span>
+      <span class="s0">}</span>
+
+      <span class="s3">this</span><span class="s0">.teardown(async () =&gt; {</span>
+        <span class="s3">if</span><span class="s0">(opts.beforeReconnect) await opts.beforeReconnect()</span>
+        <span class="s3">this</span><span class="s0">.connect()</span>
+      <span class="s0">})</span>
+    <span class="s0">}, </span><span class="s3">this</span><span class="s0">.reconnectAfterMs)</span>
+    <span class="s2">/** @type{string | undefined} */</span>
+    <span class="s3">this</span><span class="s0">.authToken = opts.authToken</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Returns the LongPoll transport reference 
+   */</span>
+  <span class="s0">getLongPollTransport(){ </span><span class="s3">return </span><span class="s0">LongPoll }</span>
+
+  <span class="s2">/** 
+   * Disconnects and replaces the active transport 
+   * 
+   * @param {SocketTransport} newTransport - The new transport class to instantiate 
+   * 
+   */</span>
+  <span class="s0">replaceTransport(newTransport){</span>
+    <span class="s3">this</span><span class="s0">.connectClock++</span>
+    <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">true</span>
+    <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+    <span class="s3">this</span><span class="s0">.reconnectTimer.reset()</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn){</span>
+      <span class="s3">this</span><span class="s0">.conn.close()</span>
+      <span class="s3">this</span><span class="s0">.conn = </span><span class="s3">null</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.transport = newTransport</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Returns the socket protocol 
+   * 
+   * @returns {&quot;wss&quot; | &quot;ws&quot;} 
+   */</span>
+  <span class="s0">protocol(){ </span><span class="s3">return </span><span class="s0">location.protocol.match(/^https/) ? </span><span class="s1">&quot;wss&quot; </span><span class="s0">: </span><span class="s1">&quot;ws&quot; </span><span class="s0">}</span>
+
+  <span class="s2">/** 
+   * The fully qualified socket url 
+   * 
+   * @returns {string} 
+   */</span>
+  <span class="s0">endPointURL(){</span>
+    <span class="s0">let uri = Ajax.appendParams(</span>
+      <span class="s0">Ajax.appendParams(</span><span class="s3">this</span><span class="s0">.endPoint, </span><span class="s3">this</span><span class="s0">.params()), {vsn: </span><span class="s3">this</span><span class="s0">.vsn})</span>
+    <span class="s3">if</span><span class="s0">(uri.charAt(</span><span class="s4">0</span><span class="s0">) !== </span><span class="s1">&quot;/&quot;</span><span class="s0">){ </span><span class="s3">return </span><span class="s0">uri }</span>
+    <span class="s3">if</span><span class="s0">(uri.charAt(</span><span class="s4">1</span><span class="s0">) === </span><span class="s1">&quot;/&quot;</span><span class="s0">){ </span><span class="s3">return </span><span class="s0">`${</span><span class="s3">this</span><span class="s0">.protocol()}:${uri}` }</span>
+
+    <span class="s3">return </span><span class="s0">`${</span><span class="s3">this</span><span class="s0">.protocol()}:</span><span class="s2">//${location.host}${uri}`</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Disconnects the socket 
+   * 
+   * See https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent#Status_codes for valid status codes. 
+   * 
+   * @param {() =&gt; void} [callback] - Optional callback which is called after socket is disconnected. 
+   * @param {number} [code] - A status code for disconnection (Optional). 
+   * @param {string} [reason] - A textual description of the reason to disconnect. (Optional) 
+   */</span>
+  <span class="s0">disconnect(callback, code, reason){</span>
+    <span class="s3">this</span><span class="s0">.connectClock++</span>
+    <span class="s3">this</span><span class="s0">.disconnecting = </span><span class="s3">true</span>
+    <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">true</span>
+    <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+    <span class="s3">this</span><span class="s0">.reconnectTimer.reset()</span>
+    <span class="s3">this</span><span class="s0">.teardown(() =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.disconnecting = </span><span class="s3">false</span>
+      <span class="s0">callback &amp;&amp; callback()</span>
+    <span class="s0">}, code, reason)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @param {Params} [params] - [DEPRECATED] The params to send when connecting, for example `{user_id: userToken}` 
+   * 
+   * Passing params to connect is deprecated; pass them in the Socket constructor instead: 
+   * `new Socket(&quot;/socket&quot;, {params: {user_id: userToken}})`. 
+   */</span>
+  <span class="s0">connect(params){</span>
+    <span class="s3">if</span><span class="s0">(params){</span>
+      <span class="s0">console &amp;&amp; console.log(</span><span class="s1">&quot;passing params to connect is deprecated. Instead pass :params to the Socket constructor&quot;</span><span class="s0">)</span>
+      <span class="s3">this</span><span class="s0">.params = closure(params)</span>
+    <span class="s0">}</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn &amp;&amp; !</span><span class="s3">this</span><span class="s0">.disconnecting){ </span><span class="s3">return </span><span class="s0">}</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.longPollFallbackMs &amp;&amp; </span><span class="s3">this</span><span class="s0">.transport !== LongPoll){</span>
+      <span class="s3">this</span><span class="s0">.connectWithFallback(LongPoll, </span><span class="s3">this</span><span class="s0">.longPollFallbackMs)</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.transportConnect()</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Logs the message. Override `this.logger` for specialized logging. noops by default 
+   * @param {string} kind 
+   * @param {string} msg 
+   * @param {Object} data 
+   */</span>
+  <span class="s0">log(kind, msg, data){ </span><span class="s3">this</span><span class="s0">.logger &amp;&amp; </span><span class="s3">this</span><span class="s0">.logger(kind, msg, data) }</span>
+
+  <span class="s2">/** 
+   * Returns true if a logger has been set on this socket. 
+   */</span>
+  <span class="s0">hasLogger(){ </span><span class="s3">return this</span><span class="s0">.logger !== </span><span class="s3">null </span><span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Registers callbacks for connection open events 
+   * 
+   * @example socket.onOpen(function(){ console.info(&quot;the socket was opened&quot;) }) 
+   * 
+   * @param {SocketOnOpen} callback 
+   */</span>
+  <span class="s0">onOpen(callback){</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s3">this</span><span class="s0">.stateChangeCallbacks.open.push([ref, callback])</span>
+    <span class="s3">return </span><span class="s0">ref</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Registers callbacks for connection close events 
+   * @param {SocketOnClose} callback 
+   * @returns {string} 
+   */</span>
+  <span class="s0">onClose(callback){</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s3">this</span><span class="s0">.stateChangeCallbacks.close.push([ref, callback])</span>
+    <span class="s3">return </span><span class="s0">ref</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Registers callbacks for connection error events 
+   * 
+   * @example socket.onError(function(error){ alert(&quot;An error occurred&quot;) }) 
+   * 
+   * @param {SocketOnError} callback 
+   * @returns {string} 
+   */</span>
+  <span class="s0">onError(callback){</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s3">this</span><span class="s0">.stateChangeCallbacks.error.push([ref, callback])</span>
+    <span class="s3">return </span><span class="s0">ref</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Registers callbacks for connection message events 
+   * @param {SocketOnMessage} callback 
+   * @returns {string} 
+   */</span>
+  <span class="s0">onMessage(callback){</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s3">this</span><span class="s0">.stateChangeCallbacks.message.push([ref, callback])</span>
+    <span class="s3">return </span><span class="s0">ref</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Sets a callback that receives lifecycle events for internal heartbeat messages. 
+   * Useful for instrumenting connection health (e.g. sent/ok/timeout/disconnected). 
+   * @param {HeartbeatCallback} callback 
+   */</span>
+  <span class="s0">onHeartbeat(callback){</span>
+    <span class="s3">this</span><span class="s0">.heartbeatCallback = callback</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Pings the server and invokes the callback with the RTT in milliseconds 
+   * @param {(timeDelta: number) =&gt; void} callback 
+   * 
+   * Returns true if the ping was pushed or false if unable to be pushed. 
+   */</span>
+  <span class="s0">ping(callback){</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.isConnected()){ </span><span class="s3">return false </span><span class="s0">}</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s0">let startTime = Date.now()</span>
+    <span class="s3">this</span><span class="s0">.push({topic: </span><span class="s1">&quot;phoenix&quot;</span><span class="s0">, event: </span><span class="s1">&quot;heartbeat&quot;</span><span class="s0">, payload: {}, ref: ref})</span>
+    <span class="s0">let onMsgRef = </span><span class="s3">this</span><span class="s0">.onMessage(msg =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(msg.ref === ref){</span>
+        <span class="s3">this</span><span class="s0">.off([onMsgRef])</span>
+        <span class="s0">callback(Date.now() - startTime)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+    <span class="s3">return true</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   * 
+   * @param {Function} 
+   */</span>
+  <span class="s0">transportName(transport){</span>
+    <span class="s2">// JavaScript minification, enabled by default in production in Phoenix</span>
+    <span class="s2">// projects, renames symbols to reduce code size.</span>
+    <span class="s2">// See https://esbuild.github.io/api/#keep-names.</span>
+    <span class="s2">// This helper ensures we return the correct name for the LongPoll transport</span>
+    <span class="s2">// even after minification. The other common transport is WebSocket, which</span>
+    <span class="s2">// is native to browsers and does not need special handling.</span>
+    <span class="s3">switch</span><span class="s0">(transport){</span>
+      <span class="s3">case </span><span class="s0">LongPoll: </span><span class="s3">return </span><span class="s1">&quot;LongPoll&quot;</span>
+      <span class="s3">default</span><span class="s0">: </span><span class="s3">return </span><span class="s0">transport.name</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   */</span>
+  <span class="s0">transportConnect(){</span>
+    <span class="s3">this</span><span class="s0">.connectClock++</span>
+    <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">false</span>
+    <span class="s0">let protocols = undefined</span>
+    <span class="s2">// Sec-WebSocket-Protocol based token</span>
+    <span class="s2">// (longpoll uses Authorization header instead)</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.authToken){</span>
+      <span class="s0">protocols = [</span><span class="s1">&quot;phoenix&quot;</span><span class="s0">, `${AUTH_TOKEN_PREFIX}${btoa(</span><span class="s3">this</span><span class="s0">.authToken).replace(/=/g, </span><span class="s1">&quot;&quot;</span><span class="s0">)}`]</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.conn = </span><span class="s3">new this</span><span class="s0">.transport(</span><span class="s3">this</span><span class="s0">.endPointURL(), protocols)</span>
+    <span class="s3">this</span><span class="s0">.conn.binaryType = </span><span class="s3">this</span><span class="s0">.binaryType</span>
+    <span class="s3">this</span><span class="s0">.conn.timeout = </span><span class="s3">this</span><span class="s0">.longpollerTimeout</span>
+    <span class="s3">this</span><span class="s0">.conn.onopen = () =&gt; </span><span class="s3">this</span><span class="s0">.onConnOpen()</span>
+    <span class="s3">this</span><span class="s0">.conn.onerror = error =&gt; </span><span class="s3">this</span><span class="s0">.onConnError(error)</span>
+    <span class="s3">this</span><span class="s0">.conn.onmessage = event =&gt; </span><span class="s3">this</span><span class="s0">.onConnMessage(event)</span>
+    <span class="s3">this</span><span class="s0">.conn.onclose = event =&gt; </span><span class="s3">this</span><span class="s0">.onConnClose(event)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">getSession(key){ </span><span class="s3">return this</span><span class="s0">.sessionStore &amp;&amp; </span><span class="s3">this</span><span class="s0">.sessionStore.getItem(key) }</span>
+
+  <span class="s0">storeSession(key, val){ </span><span class="s3">this</span><span class="s0">.sessionStore &amp;&amp; </span><span class="s3">this</span><span class="s0">.sessionStore.setItem(key, val) }</span>
+
+  <span class="s0">connectWithFallback(fallbackTransport, fallbackThreshold = </span><span class="s4">2500</span><span class="s0">){</span>
+    <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+    <span class="s0">let established = </span><span class="s3">false</span>
+    <span class="s0">let primaryTransport = </span><span class="s3">true</span>
+    <span class="s0">let openRef, errorRef</span>
+    <span class="s0">let fallbackTransportName = </span><span class="s3">this</span><span class="s0">.transportName(fallbackTransport)</span>
+    <span class="s0">let fallback = (reason) =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, `falling back to ${fallbackTransportName}...`, reason)</span>
+      <span class="s3">this</span><span class="s0">.off([openRef, errorRef])</span>
+      <span class="s0">primaryTransport = </span><span class="s3">false</span>
+      <span class="s3">this</span><span class="s0">.replaceTransport(fallbackTransport)</span>
+      <span class="s3">this</span><span class="s0">.transportConnect()</span>
+    <span class="s0">}</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.getSession(`phx:fallback:${fallbackTransportName}`)){ </span><span class="s3">return </span><span class="s0">fallback(</span><span class="s1">&quot;memorized&quot;</span><span class="s0">) }</span>
+
+    <span class="s3">this</span><span class="s0">.fallbackTimer = setTimeout(fallback, fallbackThreshold)</span>
+
+    <span class="s0">errorRef = </span><span class="s3">this</span><span class="s0">.onError(reason =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, </span><span class="s1">&quot;error&quot;</span><span class="s0">, reason)</span>
+      <span class="s3">if</span><span class="s0">(primaryTransport &amp;&amp; !established){</span>
+        <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+        <span class="s0">fallback(reason)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.fallbackRef){</span>
+      <span class="s3">this</span><span class="s0">.off([</span><span class="s3">this</span><span class="s0">.fallbackRef])</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.fallbackRef = </span><span class="s3">this</span><span class="s0">.onOpen(() =&gt; {</span>
+      <span class="s0">established = </span><span class="s3">true</span>
+      <span class="s3">if</span><span class="s0">(!primaryTransport){</span>
+        <span class="s0">let fallbackTransportName = </span><span class="s3">this</span><span class="s0">.transportName(fallbackTransport)</span>
+        <span class="s2">// only memorize LP if we never connected to primary</span>
+        <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.primaryPassedHealthCheck){ </span><span class="s3">this</span><span class="s0">.storeSession(`phx:fallback:${fallbackTransportName}`, </span><span class="s1">&quot;true&quot;</span><span class="s0">) }</span>
+        <span class="s3">return this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, `established ${fallbackTransportName} fallback`)</span>
+      <span class="s0">}</span>
+      <span class="s2">// if we've established primary, give the fallback a new period to attempt ping</span>
+      <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+      <span class="s3">this</span><span class="s0">.fallbackTimer = setTimeout(fallback, fallbackThreshold)</span>
+      <span class="s3">this</span><span class="s0">.ping(rtt =&gt; {</span>
+        <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, </span><span class="s1">&quot;connected to primary after&quot;</span><span class="s0">, rtt)</span>
+        <span class="s3">this</span><span class="s0">.primaryPassedHealthCheck = </span><span class="s3">true</span>
+        <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.fallbackTimer)</span>
+      <span class="s0">})</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.transportConnect()</span>
+  <span class="s0">}</span>
+
+  <span class="s0">clearHeartbeats(){</span>
+    <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.heartbeatTimer)</span>
+    <span class="s0">clearTimeout(</span><span class="s3">this</span><span class="s0">.heartbeatTimeoutTimer)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">onConnOpen(){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()) </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, `connected to ${</span><span class="s3">this</span><span class="s0">.endPointURL()}`)</span>
+    <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">false</span>
+    <span class="s3">this</span><span class="s0">.disconnecting = </span><span class="s3">false</span>
+    <span class="s3">this</span><span class="s0">.establishedConnections++</span>
+    <span class="s3">this</span><span class="s0">.flushSendBuffer()</span>
+    <span class="s3">this</span><span class="s0">.reconnectTimer.reset()</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.autoSendHeartbeat){</span>
+      <span class="s3">this</span><span class="s0">.resetHeartbeat()</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.triggerStateCallbacks(</span><span class="s1">&quot;open&quot;</span><span class="s0">)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   */</span>
+
+  <span class="s0">heartbeatTimeout(){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.pendingHeartbeatRef){</span>
+      <span class="s3">this</span><span class="s0">.pendingHeartbeatRef = </span><span class="s3">null</span>
+      <span class="s3">this</span><span class="s0">.heartbeatSentAt = </span><span class="s3">null</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()){ </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, </span><span class="s1">&quot;heartbeat timeout. Attempting to re-establish connection&quot;</span><span class="s0">) }</span>
+      <span class="s3">try </span><span class="s0">{</span>
+        <span class="s3">this</span><span class="s0">.heartbeatCallback(</span><span class="s1">&quot;timeout&quot;</span><span class="s0">)</span>
+      <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+        <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, </span><span class="s1">&quot;error in heartbeat callback&quot;</span><span class="s0">, e)</span>
+      <span class="s0">}</span>
+      <span class="s3">this</span><span class="s0">.triggerChanError(</span><span class="s3">new </span><span class="s0">Error(</span><span class="s1">&quot;heartbeat timeout&quot;</span><span class="s0">))</span>
+      <span class="s3">this</span><span class="s0">.closeWasClean = </span><span class="s3">false</span>
+      <span class="s3">this</span><span class="s0">.teardown(() =&gt; </span><span class="s3">this</span><span class="s0">.reconnectTimer.scheduleTimeout(), WS_CLOSE_NORMAL, </span><span class="s1">&quot;heartbeat timeout&quot;</span><span class="s0">)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">resetHeartbeat(){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn &amp;&amp; </span><span class="s3">this</span><span class="s0">.conn.skipHeartbeat){ </span><span class="s3">return </span><span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.pendingHeartbeatRef = </span><span class="s3">null</span>
+    <span class="s3">this</span><span class="s0">.clearHeartbeats()</span>
+    <span class="s3">this</span><span class="s0">.heartbeatTimer = setTimeout(() =&gt; </span><span class="s3">this</span><span class="s0">.sendHeartbeat(), </span><span class="s3">this</span><span class="s0">.heartbeatIntervalMs)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">teardown(callback, code, reason){</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.conn){</span>
+      <span class="s3">return </span><span class="s0">callback &amp;&amp; callback()</span>
+    <span class="s0">}</span>
+
+    <span class="s2">// If someone calls connect before we finish tearing down,</span>
+    <span class="s2">// we create a new connection, but we still want to finish tearing down the old one.</span>
+    <span class="s0">const connToClose = </span><span class="s3">this</span><span class="s0">.conn</span>
+
+    <span class="s3">this</span><span class="s0">.waitForBufferDone(connToClose, () =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(code){ connToClose.close(code, reason || </span><span class="s1">&quot;&quot;</span><span class="s0">) } </span><span class="s3">else </span><span class="s0">{ connToClose.close() }</span>
+
+      <span class="s3">this</span><span class="s0">.waitForSocketClosed(connToClose, () =&gt; {</span>
+        <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn === connToClose){</span>
+          <span class="s3">this</span><span class="s0">.conn.onopen = </span><span class="s3">function </span><span class="s0">(){ } </span><span class="s2">// noop</span>
+          <span class="s3">this</span><span class="s0">.conn.onerror = </span><span class="s3">function </span><span class="s0">(){ } </span><span class="s2">// noop</span>
+          <span class="s3">this</span><span class="s0">.conn.onmessage = </span><span class="s3">function </span><span class="s0">(){ } </span><span class="s2">// noop</span>
+          <span class="s3">this</span><span class="s0">.conn.onclose = </span><span class="s3">function </span><span class="s0">(){ } </span><span class="s2">// noop</span>
+          <span class="s3">this</span><span class="s0">.conn = </span><span class="s3">null</span>
+        <span class="s0">}</span>
+
+        <span class="s0">callback &amp;&amp; callback()</span>
+      <span class="s0">})</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s0">waitForBufferDone(conn, callback, tries = </span><span class="s4">1</span><span class="s0">){</span>
+    <span class="s3">if</span><span class="s0">(tries === </span><span class="s4">5 </span><span class="s0">|| !conn.bufferedAmount){</span>
+      <span class="s0">callback()</span>
+      <span class="s3">return</span>
+    <span class="s0">}</span>
+
+    <span class="s0">setTimeout(() =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.waitForBufferDone(conn, callback, tries + </span><span class="s4">1</span><span class="s0">)</span>
+    <span class="s0">}, </span><span class="s4">150 </span><span class="s0">* tries)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">waitForSocketClosed(conn, callback, tries = </span><span class="s4">1</span><span class="s0">){</span>
+    <span class="s3">if</span><span class="s0">(tries === </span><span class="s4">5 </span><span class="s0">|| conn.readyState === SOCKET_STATES.closed){</span>
+      <span class="s0">callback()</span>
+      <span class="s3">return</span>
+    <span class="s0">}</span>
+
+    <span class="s0">setTimeout(() =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.waitForSocketClosed(conn, callback, tries + </span><span class="s4">1</span><span class="s0">)</span>
+    <span class="s0">}, </span><span class="s4">150 </span><span class="s0">* tries)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+  * @param {CloseEvent} event 
+  */</span>
+  <span class="s0">onConnClose(event){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn) </span><span class="s3">this</span><span class="s0">.conn.onclose = () =&gt; {} </span><span class="s2">// noop to prevent recursive calls in teardown</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()) </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, </span><span class="s1">&quot;close&quot;</span><span class="s0">, event)</span>
+    <span class="s3">this</span><span class="s0">.triggerChanError(event)</span>
+    <span class="s3">this</span><span class="s0">.clearHeartbeats()</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.closeWasClean){</span>
+      <span class="s3">this</span><span class="s0">.reconnectTimer.scheduleTimeout()</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.triggerStateCallbacks(</span><span class="s1">&quot;close&quot;</span><span class="s0">, event)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   * @param {Event} error 
+   */</span>
+  <span class="s0">onConnError(error){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()) </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, </span><span class="s1">&quot;error&quot;</span><span class="s0">, error)</span>
+    <span class="s0">let transportBefore = </span><span class="s3">this</span><span class="s0">.transport</span>
+    <span class="s0">let establishedBefore = </span><span class="s3">this</span><span class="s0">.establishedConnections</span>
+    <span class="s3">this</span><span class="s0">.triggerStateCallbacks(</span><span class="s1">&quot;error&quot;</span><span class="s0">, error, transportBefore, establishedBefore)</span>
+    <span class="s3">if</span><span class="s0">(transportBefore === </span><span class="s3">this</span><span class="s0">.transport || establishedBefore &gt; </span><span class="s4">0</span><span class="s0">){</span>
+      <span class="s3">this</span><span class="s0">.triggerChanError(error)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   * @param {unknown} [reason] underlying close/error event forwarded to channel error listeners 
+   */</span>
+  <span class="s0">triggerChanError(reason){</span>
+    <span class="s3">this</span><span class="s0">.channels.forEach(channel =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(!(channel.isErrored() || channel.isLeaving() || channel.isClosed())){</span>
+        <span class="s0">channel.trigger(CHANNEL_EVENTS.error, reason)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @returns {string} 
+   */</span>
+  <span class="s0">connectionState(){</span>
+    <span class="s3">switch</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.conn &amp;&amp; </span><span class="s3">this</span><span class="s0">.conn.readyState){</span>
+      <span class="s3">case </span><span class="s0">SOCKET_STATES.connecting: </span><span class="s3">return </span><span class="s1">&quot;connecting&quot;</span>
+      <span class="s3">case </span><span class="s0">SOCKET_STATES.open: </span><span class="s3">return </span><span class="s1">&quot;open&quot;</span>
+      <span class="s3">case </span><span class="s0">SOCKET_STATES.closing: </span><span class="s3">return </span><span class="s1">&quot;closing&quot;</span>
+      <span class="s3">default</span><span class="s0">: </span><span class="s3">return </span><span class="s1">&quot;closed&quot;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @returns {boolean} 
+   */</span>
+  <span class="s0">isConnected(){ </span><span class="s3">return this</span><span class="s0">.connectionState() === </span><span class="s1">&quot;open&quot; </span><span class="s0">}</span>
+
+  <span class="s2">/** 
+   * 
+   * @param {Channel} channel 
+   */</span>
+  <span class="s0">remove(channel){</span>
+    <span class="s3">this</span><span class="s0">.off(channel.stateChangeRefs)</span>
+    <span class="s3">this</span><span class="s0">.channels = </span><span class="s3">this</span><span class="s0">.channels.filter(c =&gt; c !== channel)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Removes `onOpen`, `onClose`, `onError,` and `onMessage` registrations. 
+   * 
+   * @param {string[]} refs - list of refs returned by calls to 
+   *                 `onOpen`, `onClose`, `onError,` and `onMessage` 
+   */</span>
+  <span class="s0">off(refs){</span>
+    <span class="s3">for</span><span class="s0">(let key </span><span class="s3">in this</span><span class="s0">.stateChangeCallbacks){</span>
+      <span class="s3">this</span><span class="s0">.stateChangeCallbacks[key] = </span><span class="s3">this</span><span class="s0">.stateChangeCallbacks[key].filter(([ref]) =&gt; {</span>
+        <span class="s3">return </span><span class="s0">refs.indexOf(ref) === -</span><span class="s4">1</span>
+      <span class="s0">})</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Initiates a new channel for the given topic 
+   * 
+   * @param {string} topic 
+   * @param {Params | (() =&gt; Params)} [chanParams]- Parameters for the channel 
+   * @returns {Channel} 
+   */</span>
+  <span class="s0">channel(topic, chanParams = {}){</span>
+    <span class="s0">let chan = </span><span class="s3">new </span><span class="s0">Channel(topic, chanParams, </span><span class="s3">this</span><span class="s0">)</span>
+    <span class="s3">this</span><span class="s0">.channels.push(chan)</span>
+    <span class="s3">return </span><span class="s0">chan</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @param {Message&lt;Record&lt;string, any&gt;&gt;} data 
+   */</span>
+  <span class="s0">push(data){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()){</span>
+      <span class="s0">let {topic, event, payload, ref, join_ref} = data</span>
+      <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;push&quot;</span><span class="s0">, `${topic} ${event} (${join_ref}, ${ref})`, payload)</span>
+    <span class="s0">}</span>
+
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.isConnected()){</span>
+      <span class="s3">this</span><span class="s0">.encode(data, result =&gt; </span><span class="s3">this</span><span class="s0">.conn.send(result))</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.sendBuffer.push(() =&gt; </span><span class="s3">this</span><span class="s0">.encode(data, result =&gt; </span><span class="s3">this</span><span class="s0">.conn.send(result)))</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Return the next message ref, accounting for overflows 
+   * @returns {string} 
+   */</span>
+  <span class="s0">makeRef(){</span>
+    <span class="s0">let newRef = </span><span class="s3">this</span><span class="s0">.ref + </span><span class="s4">1</span>
+    <span class="s3">if</span><span class="s0">(newRef === </span><span class="s3">this</span><span class="s0">.ref){ </span><span class="s3">this</span><span class="s0">.ref = </span><span class="s4">0 </span><span class="s0">} </span><span class="s3">else </span><span class="s0">{ </span><span class="s3">this</span><span class="s0">.ref = newRef }</span>
+
+    <span class="s3">return this</span><span class="s0">.ref.toString()</span>
+  <span class="s0">}</span>
+
+  <span class="s0">sendHeartbeat(){</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.isConnected()){</span>
+      <span class="s3">try </span><span class="s0">{</span>
+        <span class="s3">this</span><span class="s0">.heartbeatCallback(</span><span class="s1">&quot;disconnected&quot;</span><span class="s0">)</span>
+      <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+        <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, </span><span class="s1">&quot;error in heartbeat callback&quot;</span><span class="s0">, e)</span>
+      <span class="s0">}</span>
+      <span class="s3">return</span>
+    <span class="s0">}</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.pendingHeartbeatRef){</span>
+      <span class="s3">this</span><span class="s0">.heartbeatTimeout()</span>
+      <span class="s3">return</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.pendingHeartbeatRef = </span><span class="s3">this</span><span class="s0">.makeRef()</span>
+    <span class="s3">this</span><span class="s0">.heartbeatSentAt = Date.now()</span>
+    <span class="s3">this</span><span class="s0">.push({topic: </span><span class="s1">&quot;phoenix&quot;</span><span class="s0">, event: </span><span class="s1">&quot;heartbeat&quot;</span><span class="s0">, payload: {}, ref: </span><span class="s3">this</span><span class="s0">.pendingHeartbeatRef})</span>
+    <span class="s3">try </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.heartbeatCallback(</span><span class="s1">&quot;sent&quot;</span><span class="s0">)</span>
+    <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+      <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, </span><span class="s1">&quot;error in heartbeat callback&quot;</span><span class="s0">, e)</span>
+    <span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.heartbeatTimeoutTimer = setTimeout(() =&gt; </span><span class="s3">this</span><span class="s0">.heartbeatTimeout(), </span><span class="s3">this</span><span class="s0">.heartbeatIntervalMs)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">flushSendBuffer(){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.isConnected() &amp;&amp; </span><span class="s3">this</span><span class="s0">.sendBuffer.length &gt; </span><span class="s4">0</span><span class="s0">){</span>
+      <span class="s3">this</span><span class="s0">.sendBuffer.forEach(callback =&gt; callback())</span>
+      <span class="s3">this</span><span class="s0">.sendBuffer = []</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+  * @param {MessageEvent&lt;any&gt;} rawMessage 
+  */</span>
+  <span class="s0">onConnMessage(rawMessage){</span>
+    <span class="s3">this</span><span class="s0">.decode(rawMessage.data, msg =&gt; {</span>
+      <span class="s0">let {topic, event, payload, ref, join_ref} = msg</span>
+      <span class="s3">if</span><span class="s0">(ref &amp;&amp; ref === </span><span class="s3">this</span><span class="s0">.pendingHeartbeatRef){</span>
+        <span class="s0">const latency = </span><span class="s3">this</span><span class="s0">.heartbeatSentAt ? Date.now() - </span><span class="s3">this</span><span class="s0">.heartbeatSentAt : undefined</span>
+        <span class="s3">this</span><span class="s0">.clearHeartbeats()</span>
+        <span class="s3">try </span><span class="s0">{</span>
+          <span class="s3">this</span><span class="s0">.heartbeatCallback(payload.status === </span><span class="s1">&quot;ok&quot; </span><span class="s0">? </span><span class="s1">&quot;ok&quot; </span><span class="s0">: </span><span class="s1">&quot;error&quot;</span><span class="s0">, latency)</span>
+        <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+          <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, </span><span class="s1">&quot;error in heartbeat callback&quot;</span><span class="s0">, e)</span>
+        <span class="s0">}</span>
+        <span class="s3">this</span><span class="s0">.pendingHeartbeatRef = </span><span class="s3">null</span>
+        <span class="s3">this</span><span class="s0">.heartbeatSentAt = </span><span class="s3">null</span>
+        <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.autoSendHeartbeat){</span>
+          <span class="s3">this</span><span class="s0">.heartbeatTimer = setTimeout(() =&gt; </span><span class="s3">this</span><span class="s0">.sendHeartbeat(), </span><span class="s3">this</span><span class="s0">.heartbeatIntervalMs)</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()) </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;receive&quot;</span><span class="s0">, `${payload.status || </span><span class="s1">&quot;&quot;</span><span class="s0">} ${topic} ${event} ${ref &amp;&amp; </span><span class="s1">&quot;(&quot; </span><span class="s0">+ ref + </span><span class="s1">&quot;)&quot; </span><span class="s0">|| </span><span class="s1">&quot;&quot;</span><span class="s0">}`.trim(), payload)</span>
+
+      <span class="s3">for</span><span class="s0">(let i = </span><span class="s4">0</span><span class="s0">; i &lt; </span><span class="s3">this</span><span class="s0">.channels.length; i++){</span>
+        <span class="s0">const channel = </span><span class="s3">this</span><span class="s0">.channels[i]</span>
+        <span class="s3">if</span><span class="s0">(!channel.isMember(topic, event, payload, join_ref)){ </span><span class="s3">continue </span><span class="s0">}</span>
+        <span class="s0">channel.trigger(event, payload, ref, join_ref)</span>
+      <span class="s0">}</span>
+
+      <span class="s3">this</span><span class="s0">.triggerStateCallbacks(</span><span class="s1">&quot;message&quot;</span><span class="s0">, msg)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   * @template {keyof SocketStateChangeCallbacks} K 
+   * @param {K} event 
+   * @param {...Parameters&lt;SocketStateChangeCallbacks[K][number][1]&gt;} args 
+   * @returns {void} 
+   */</span>
+  <span class="s0">triggerStateCallbacks(event, ...args){</span>
+    <span class="s3">try </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.stateChangeCallbacks[event].forEach(([_, callback]) =&gt; {</span>
+        <span class="s3">try </span><span class="s0">{</span>
+          <span class="s0">callback(...args)</span>
+        <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+          <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, `error </span><span class="s3">in </span><span class="s0">${event} callback`, e)</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+    <span class="s0">} </span><span class="s3">catch </span><span class="s0">(e){</span>
+      <span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;error&quot;</span><span class="s0">, `error triggering ${event} callbacks`, e)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">leaveOpenTopic(topic){</span>
+    <span class="s0">let dupChannel = </span><span class="s3">this</span><span class="s0">.channels.find(c =&gt; c.topic === topic &amp;&amp; (c.isJoined() || c.isJoining()))</span>
+    <span class="s3">if</span><span class="s0">(dupChannel){</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.hasLogger()) </span><span class="s3">this</span><span class="s0">.log(</span><span class="s1">&quot;transport&quot;</span><span class="s0">, `leaving duplicate topic </span><span class="s1">&quot;${topic}&quot;</span><span class="s0">`)</span>
+      <span class="s0">dupChannel.leave()</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

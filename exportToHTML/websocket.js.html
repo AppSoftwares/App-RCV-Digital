@@ -1,0 +1,1415 @@
+<html>
+<head>
+<title>websocket.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+.s5 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+websocket.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* eslint no-unused-vars: [&quot;error&quot;, { &quot;varsIgnorePattern&quot;: &quot;^Duplex|Readable$&quot;, &quot;caughtErrors&quot;: &quot;none&quot; }] */</span>
+
+<span class="s2">'use strict'</span><span class="s1">;</span>
+
+<span class="s1">const EventEmitter = require(</span><span class="s2">'events'</span><span class="s1">);</span>
+<span class="s1">const https = require(</span><span class="s2">'https'</span><span class="s1">);</span>
+<span class="s1">const http = require(</span><span class="s2">'http'</span><span class="s1">);</span>
+<span class="s1">const net = require(</span><span class="s2">'net'</span><span class="s1">);</span>
+<span class="s1">const tls = require(</span><span class="s2">'tls'</span><span class="s1">);</span>
+<span class="s1">const { randomBytes, createHash } = require(</span><span class="s2">'crypto'</span><span class="s1">);</span>
+<span class="s1">const { Duplex, Readable } = require(</span><span class="s2">'stream'</span><span class="s1">);</span>
+<span class="s1">const { URL } = require(</span><span class="s2">'url'</span><span class="s1">);</span>
+
+<span class="s1">const PerMessageDeflate = require(</span><span class="s2">'./permessage-deflate'</span><span class="s1">);</span>
+<span class="s1">const Receiver = require(</span><span class="s2">'./receiver'</span><span class="s1">);</span>
+<span class="s1">const Sender = require(</span><span class="s2">'./sender'</span><span class="s1">);</span>
+<span class="s1">const { isBlob } = require(</span><span class="s2">'./validation'</span><span class="s1">);</span>
+
+<span class="s1">const {</span>
+  <span class="s1">BINARY_TYPES,</span>
+  <span class="s1">CLOSE_TIMEOUT,</span>
+  <span class="s1">EMPTY_BUFFER,</span>
+  <span class="s1">GUID,</span>
+  <span class="s1">kForOnEventAttribute,</span>
+  <span class="s1">kListener,</span>
+  <span class="s1">kStatusCode,</span>
+  <span class="s1">kWebSocket,</span>
+  <span class="s1">NOOP</span>
+<span class="s1">} = require(</span><span class="s2">'./constants'</span><span class="s1">);</span>
+<span class="s1">const {</span>
+  <span class="s1">EventTarget: { addEventListener, removeEventListener }</span>
+<span class="s1">} = require(</span><span class="s2">'./event-target'</span><span class="s1">);</span>
+<span class="s1">const { format, parse } = require(</span><span class="s2">'./extension'</span><span class="s1">);</span>
+<span class="s1">const { toBuffer } = require(</span><span class="s2">'./buffer-util'</span><span class="s1">);</span>
+
+<span class="s1">const kAborted = Symbol(</span><span class="s2">'kAborted'</span><span class="s1">);</span>
+<span class="s1">const protocolVersions = [</span><span class="s3">8</span><span class="s1">, </span><span class="s3">13</span><span class="s1">];</span>
+<span class="s1">const readyStates = [</span><span class="s2">'CONNECTING'</span><span class="s1">, </span><span class="s2">'OPEN'</span><span class="s1">, </span><span class="s2">'CLOSING'</span><span class="s1">, </span><span class="s2">'CLOSED'</span><span class="s1">];</span>
+<span class="s1">const subprotocolRegex = /^[!#$%&amp;</span><span class="s2">'*+</span><span class="s4">\-</span><span class="s2">.0-9A-Z^_`|a-z~]+$/;</span>
+
+<span class="s0">/** 
+ * Class representing a WebSocket. 
+ * 
+ * @extends EventEmitter 
+ */</span>
+<span class="s1">class WebSocket extends EventEmitter {</span>
+  <span class="s0">/** 
+   * Create a new `WebSocket`. 
+   * 
+   * @param {(String|URL)} address The URL to which to connect 
+   * @param {(String|String[])} [protocols] The subprotocols 
+   * @param {Object} [options] Connection options 
+   */</span>
+  <span class="s1">constructor(address, protocols, options) {</span>
+    <span class="s1">super();</span>
+
+    <span class="s5">this</span><span class="s1">._binaryType = BINARY_TYPES[</span><span class="s3">0</span><span class="s1">];</span>
+    <span class="s5">this</span><span class="s1">._closeCode = </span><span class="s3">1006</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._closeFrameReceived = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._closeFrameSent = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._closeMessage = EMPTY_BUFFER;</span>
+    <span class="s5">this</span><span class="s1">._closeTimer = </span><span class="s5">null</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._errorEmitted = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._extensions = {};</span>
+    <span class="s5">this</span><span class="s1">._paused = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._protocol = </span><span class="s2">''</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._readyState = WebSocket.CONNECTING;</span>
+    <span class="s5">this</span><span class="s1">._receiver = </span><span class="s5">null</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._sender = </span><span class="s5">null</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._socket = </span><span class="s5">null</span><span class="s1">;</span>
+
+    <span class="s5">if </span><span class="s1">(address !== </span><span class="s5">null</span><span class="s1">) {</span>
+      <span class="s5">this</span><span class="s1">._bufferedAmount = </span><span class="s3">0</span><span class="s1">;</span>
+      <span class="s5">this</span><span class="s1">._isServer = </span><span class="s5">false</span><span class="s1">;</span>
+      <span class="s5">this</span><span class="s1">._redirects = </span><span class="s3">0</span><span class="s1">;</span>
+
+      <span class="s5">if </span><span class="s1">(protocols === undefined) {</span>
+        <span class="s1">protocols = [];</span>
+      <span class="s1">} </span><span class="s5">else if </span><span class="s1">(!Array.isArray(protocols)) {</span>
+        <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">protocols === </span><span class="s2">'object' </span><span class="s1">&amp;&amp; protocols !== </span><span class="s5">null</span><span class="s1">) {</span>
+          <span class="s1">options = protocols;</span>
+          <span class="s1">protocols = [];</span>
+        <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+          <span class="s1">protocols = [protocols];</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s1">initAsClient(</span><span class="s5">this</span><span class="s1">, address, protocols, options);</span>
+    <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+      <span class="s5">this</span><span class="s1">._autoPong = options.autoPong;</span>
+      <span class="s5">this</span><span class="s1">._closeTimeout = options.closeTimeout;</span>
+      <span class="s5">this</span><span class="s1">._isServer = </span><span class="s5">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * For historical reasons, the custom &quot;nodebuffer&quot; type is used by the default 
+   * instead of &quot;blob&quot;. 
+   * 
+   * @type {String} 
+   */</span>
+  <span class="s1">get binaryType() {</span>
+    <span class="s5">return this</span><span class="s1">._binaryType;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">set binaryType(type) {</span>
+    <span class="s5">if </span><span class="s1">(!BINARY_TYPES.includes(type)) </span><span class="s5">return</span><span class="s1">;</span>
+
+    <span class="s5">this</span><span class="s1">._binaryType = type;</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// Allow to change `binaryType` on the fly.</span>
+    <span class="s0">//</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">._receiver) </span><span class="s5">this</span><span class="s1">._receiver._binaryType = type;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Number} 
+   */</span>
+  <span class="s1">get bufferedAmount() {</span>
+    <span class="s5">if </span><span class="s1">(!</span><span class="s5">this</span><span class="s1">._socket) </span><span class="s5">return this</span><span class="s1">._bufferedAmount;</span>
+
+    <span class="s5">return this</span><span class="s1">._socket._writableState.length + </span><span class="s5">this</span><span class="s1">._sender._bufferedBytes;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {String} 
+   */</span>
+  <span class="s1">get extensions() {</span>
+    <span class="s5">return </span><span class="s1">Object.keys(</span><span class="s5">this</span><span class="s1">._extensions).join();</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Boolean} 
+   */</span>
+  <span class="s1">get isPaused() {</span>
+    <span class="s5">return this</span><span class="s1">._paused;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Function} 
+   */</span>
+  <span class="s0">/* istanbul ignore next */</span>
+  <span class="s1">get onclose() {</span>
+    <span class="s5">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Function} 
+   */</span>
+  <span class="s0">/* istanbul ignore next */</span>
+  <span class="s1">get onerror() {</span>
+    <span class="s5">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Function} 
+   */</span>
+  <span class="s0">/* istanbul ignore next */</span>
+  <span class="s1">get onopen() {</span>
+    <span class="s5">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Function} 
+   */</span>
+  <span class="s0">/* istanbul ignore next */</span>
+  <span class="s1">get onmessage() {</span>
+    <span class="s5">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {String} 
+   */</span>
+  <span class="s1">get protocol() {</span>
+    <span class="s5">return this</span><span class="s1">._protocol;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {Number} 
+   */</span>
+  <span class="s1">get readyState() {</span>
+    <span class="s5">return this</span><span class="s1">._readyState;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @type {String} 
+   */</span>
+  <span class="s1">get url() {</span>
+    <span class="s5">return this</span><span class="s1">._url;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Set up the socket and the internal resources. 
+   * 
+   * @param {Duplex} socket The network socket between the server and client 
+   * @param {Buffer} head The first packet of the upgraded stream 
+   * @param {Object} options Options object 
+   * @param {Boolean} [options.allowSynchronousEvents=false] Specifies whether 
+   *     any of the `'message'`, `'ping'`, and `'pong'` events can be emitted 
+   *     multiple times in the same tick 
+   * @param {Function} [options.generateMask] The function used to generate the 
+   *     masking key 
+   * @param {Number} [options.maxPayload=0] The maximum allowed message size 
+   * @param {Boolean} [options.skipUTF8Validation=false] Specifies whether or 
+   *     not to skip UTF-8 validation for text and close messages 
+   * @private 
+   */</span>
+  <span class="s1">setSocket(socket, head, options) {</span>
+    <span class="s1">const receiver = </span><span class="s5">new </span><span class="s1">Receiver({</span>
+      <span class="s1">allowSynchronousEvents: options.allowSynchronousEvents,</span>
+      <span class="s1">binaryType: </span><span class="s5">this</span><span class="s1">.binaryType,</span>
+      <span class="s1">extensions: </span><span class="s5">this</span><span class="s1">._extensions,</span>
+      <span class="s1">isServer: </span><span class="s5">this</span><span class="s1">._isServer,</span>
+      <span class="s1">maxPayload: options.maxPayload,</span>
+      <span class="s1">skipUTF8Validation: options.skipUTF8Validation</span>
+    <span class="s1">});</span>
+
+    <span class="s1">const sender = </span><span class="s5">new </span><span class="s1">Sender(socket, </span><span class="s5">this</span><span class="s1">._extensions, options.generateMask);</span>
+
+    <span class="s5">this</span><span class="s1">._receiver = receiver;</span>
+    <span class="s5">this</span><span class="s1">._sender = sender;</span>
+    <span class="s5">this</span><span class="s1">._socket = socket;</span>
+
+    <span class="s1">receiver[kWebSocket] = </span><span class="s5">this</span><span class="s1">;</span>
+    <span class="s1">sender[kWebSocket] = </span><span class="s5">this</span><span class="s1">;</span>
+    <span class="s1">socket[kWebSocket] = </span><span class="s5">this</span><span class="s1">;</span>
+
+    <span class="s1">receiver.on(</span><span class="s2">'conclude'</span><span class="s1">, receiverOnConclude);</span>
+    <span class="s1">receiver.on(</span><span class="s2">'drain'</span><span class="s1">, receiverOnDrain);</span>
+    <span class="s1">receiver.on(</span><span class="s2">'error'</span><span class="s1">, receiverOnError);</span>
+    <span class="s1">receiver.on(</span><span class="s2">'message'</span><span class="s1">, receiverOnMessage);</span>
+    <span class="s1">receiver.on(</span><span class="s2">'ping'</span><span class="s1">, receiverOnPing);</span>
+    <span class="s1">receiver.on(</span><span class="s2">'pong'</span><span class="s1">, receiverOnPong);</span>
+
+    <span class="s1">sender.onerror = senderOnError;</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// These methods may not be available if `socket` is just a `Duplex`.</span>
+    <span class="s0">//</span>
+    <span class="s5">if </span><span class="s1">(socket.setTimeout) socket.setTimeout(</span><span class="s3">0</span><span class="s1">);</span>
+    <span class="s5">if </span><span class="s1">(socket.setNoDelay) socket.setNoDelay();</span>
+
+    <span class="s5">if </span><span class="s1">(head.length &gt; </span><span class="s3">0</span><span class="s1">) socket.unshift(head);</span>
+
+    <span class="s1">socket.on(</span><span class="s2">'close'</span><span class="s1">, socketOnClose);</span>
+    <span class="s1">socket.on(</span><span class="s2">'data'</span><span class="s1">, socketOnData);</span>
+    <span class="s1">socket.on(</span><span class="s2">'end'</span><span class="s1">, socketOnEnd);</span>
+    <span class="s1">socket.on(</span><span class="s2">'error'</span><span class="s1">, socketOnError);</span>
+
+    <span class="s5">this</span><span class="s1">._readyState = WebSocket.OPEN;</span>
+    <span class="s5">this</span><span class="s1">.emit(</span><span class="s2">'open'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Emit the `'close'` event. 
+   * 
+   * @private 
+   */</span>
+  <span class="s1">emitClose() {</span>
+    <span class="s5">if </span><span class="s1">(!</span><span class="s5">this</span><span class="s1">._socket) {</span>
+      <span class="s5">this</span><span class="s1">._readyState = WebSocket.CLOSED;</span>
+      <span class="s5">this</span><span class="s1">.emit(</span><span class="s2">'close'</span><span class="s1">, </span><span class="s5">this</span><span class="s1">._closeCode, </span><span class="s5">this</span><span class="s1">._closeMessage);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">._extensions[PerMessageDeflate.extensionName]) {</span>
+      <span class="s5">this</span><span class="s1">._extensions[PerMessageDeflate.extensionName].cleanup();</span>
+    <span class="s1">}</span>
+
+    <span class="s5">this</span><span class="s1">._receiver.removeAllListeners();</span>
+    <span class="s5">this</span><span class="s1">._readyState = WebSocket.CLOSED;</span>
+    <span class="s5">this</span><span class="s1">.emit(</span><span class="s2">'close'</span><span class="s1">, </span><span class="s5">this</span><span class="s1">._closeCode, </span><span class="s5">this</span><span class="s1">._closeMessage);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Start a closing handshake. 
+   * 
+   *          +----------+   +-----------+   +----------+ 
+   *     - - -|ws.close()|--&gt;|close frame|--&gt;|ws.close()|- - - 
+   *    |     +----------+   +-----------+   +----------+     | 
+   *          +----------+   +-----------+         | 
+   * CLOSING  |ws.close()|&lt;--|close frame|&lt;--+-----+       CLOSING 
+   *          +----------+   +-----------+   | 
+   *    |           |                        |   +---+        | 
+   *                +------------------------+--&gt;|fin| - - - - 
+   *    |         +---+                      |   +---+ 
+   *     - - - - -|fin|&lt;---------------------+ 
+   *              +---+ 
+   * 
+   * @param {Number} [code] Status code explaining why the connection is closing 
+   * @param {(String|Buffer)} [data] The reason why the connection is 
+   *     closing 
+   * @public 
+   */</span>
+  <span class="s1">close(code, data) {</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CLOSED) </span><span class="s5">return</span><span class="s1">;</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING) {</span>
+      <span class="s1">const msg = </span><span class="s2">'WebSocket was closed before the connection was established'</span><span class="s1">;</span>
+      <span class="s1">abortHandshake(</span><span class="s5">this</span><span class="s1">, </span><span class="s5">this</span><span class="s1">._req, msg);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CLOSING) {</span>
+      <span class="s5">if </span><span class="s1">(</span>
+        <span class="s5">this</span><span class="s1">._closeFrameSent &amp;&amp;</span>
+        <span class="s1">(</span><span class="s5">this</span><span class="s1">._closeFrameReceived || </span><span class="s5">this</span><span class="s1">._receiver._writableState.errorEmitted)</span>
+      <span class="s1">) {</span>
+        <span class="s5">this</span><span class="s1">._socket.end();</span>
+      <span class="s1">}</span>
+
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">this</span><span class="s1">._readyState = WebSocket.CLOSING;</span>
+    <span class="s5">this</span><span class="s1">._sender.close(code, data, !</span><span class="s5">this</span><span class="s1">._isServer, (err) =&gt; {</span>
+      <span class="s0">//</span>
+      <span class="s0">// This error is handled by the `'error'` listener on the socket. We only</span>
+      <span class="s0">// want to know if the close frame has been sent here.</span>
+      <span class="s0">//</span>
+      <span class="s5">if </span><span class="s1">(err) </span><span class="s5">return</span><span class="s1">;</span>
+
+      <span class="s5">this</span><span class="s1">._closeFrameSent = </span><span class="s5">true</span><span class="s1">;</span>
+
+      <span class="s5">if </span><span class="s1">(</span>
+        <span class="s5">this</span><span class="s1">._closeFrameReceived ||</span>
+        <span class="s5">this</span><span class="s1">._receiver._writableState.errorEmitted</span>
+      <span class="s1">) {</span>
+        <span class="s5">this</span><span class="s1">._socket.end();</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+
+    <span class="s1">setCloseTimer(</span><span class="s5">this</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Pause the socket. 
+   * 
+   * @public 
+   */</span>
+  <span class="s1">pause() {</span>
+    <span class="s5">if </span><span class="s1">(</span>
+      <span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING ||</span>
+      <span class="s5">this</span><span class="s1">.readyState === WebSocket.CLOSED</span>
+    <span class="s1">) {</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">this</span><span class="s1">._paused = </span><span class="s5">true</span><span class="s1">;</span>
+    <span class="s5">this</span><span class="s1">._socket.pause();</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Send a ping. 
+   * 
+   * @param {*} [data] The data to send 
+   * @param {Boolean} [mask] Indicates whether or not to mask `data` 
+   * @param {Function} [cb] Callback which is executed when the ping is sent 
+   * @public 
+   */</span>
+  <span class="s1">ping(data, mask, cb) {</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING) {</span>
+      <span class="s5">throw new </span><span class="s1">Error(</span><span class="s2">'WebSocket is not open: readyState 0 (CONNECTING)'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">data === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = data;</span>
+      <span class="s1">data = mask = undefined;</span>
+    <span class="s1">} </span><span class="s5">else if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">mask === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = mask;</span>
+      <span class="s1">mask = undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">data === </span><span class="s2">'number'</span><span class="s1">) data = data.toString();</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState !== WebSocket.OPEN) {</span>
+      <span class="s1">sendAfterClose(</span><span class="s5">this</span><span class="s1">, data, cb);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(mask === undefined) mask = !</span><span class="s5">this</span><span class="s1">._isServer;</span>
+    <span class="s5">this</span><span class="s1">._sender.ping(data || EMPTY_BUFFER, mask, cb);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Send a pong. 
+   * 
+   * @param {*} [data] The data to send 
+   * @param {Boolean} [mask] Indicates whether or not to mask `data` 
+   * @param {Function} [cb] Callback which is executed when the pong is sent 
+   * @public 
+   */</span>
+  <span class="s1">pong(data, mask, cb) {</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING) {</span>
+      <span class="s5">throw new </span><span class="s1">Error(</span><span class="s2">'WebSocket is not open: readyState 0 (CONNECTING)'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">data === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = data;</span>
+      <span class="s1">data = mask = undefined;</span>
+    <span class="s1">} </span><span class="s5">else if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">mask === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = mask;</span>
+      <span class="s1">mask = undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">data === </span><span class="s2">'number'</span><span class="s1">) data = data.toString();</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState !== WebSocket.OPEN) {</span>
+      <span class="s1">sendAfterClose(</span><span class="s5">this</span><span class="s1">, data, cb);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(mask === undefined) mask = !</span><span class="s5">this</span><span class="s1">._isServer;</span>
+    <span class="s5">this</span><span class="s1">._sender.pong(data || EMPTY_BUFFER, mask, cb);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Resume the socket. 
+   * 
+   * @public 
+   */</span>
+  <span class="s1">resume() {</span>
+    <span class="s5">if </span><span class="s1">(</span>
+      <span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING ||</span>
+      <span class="s5">this</span><span class="s1">.readyState === WebSocket.CLOSED</span>
+    <span class="s1">) {</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">this</span><span class="s1">._paused = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s5">if </span><span class="s1">(!</span><span class="s5">this</span><span class="s1">._receiver._writableState.needDrain) </span><span class="s5">this</span><span class="s1">._socket.resume();</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Send a data message. 
+   * 
+   * @param {*} data The message to send 
+   * @param {Object} [options] Options object 
+   * @param {Boolean} [options.binary] Specifies whether `data` is binary or 
+   *     text 
+   * @param {Boolean} [options.compress] Specifies whether or not to compress 
+   *     `data` 
+   * @param {Boolean} [options.fin=true] Specifies whether the fragment is the 
+   *     last one 
+   * @param {Boolean} [options.mask] Specifies whether or not to mask `data` 
+   * @param {Function} [cb] Callback which is executed when data is written out 
+   * @public 
+   */</span>
+  <span class="s1">send(data, options, cb) {</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING) {</span>
+      <span class="s5">throw new </span><span class="s1">Error(</span><span class="s2">'WebSocket is not open: readyState 0 (CONNECTING)'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">cb = options;</span>
+      <span class="s1">options = {};</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">data === </span><span class="s2">'number'</span><span class="s1">) data = data.toString();</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState !== WebSocket.OPEN) {</span>
+      <span class="s1">sendAfterClose(</span><span class="s5">this</span><span class="s1">, data, cb);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">const opts = {</span>
+      <span class="s1">binary: </span><span class="s5">typeof </span><span class="s1">data !== </span><span class="s2">'string'</span><span class="s1">,</span>
+      <span class="s1">mask: !</span><span class="s5">this</span><span class="s1">._isServer,</span>
+      <span class="s1">compress: </span><span class="s5">true</span><span class="s1">,</span>
+      <span class="s1">fin: </span><span class="s5">true</span><span class="s1">,</span>
+      <span class="s1">...options</span>
+    <span class="s1">};</span>
+
+    <span class="s5">if </span><span class="s1">(!</span><span class="s5">this</span><span class="s1">._extensions[PerMessageDeflate.extensionName]) {</span>
+      <span class="s1">opts.compress = </span><span class="s5">false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">this</span><span class="s1">._sender.send(data || EMPTY_BUFFER, opts, cb);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Forcibly close the connection. 
+   * 
+   * @public 
+   */</span>
+  <span class="s1">terminate() {</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CLOSED) </span><span class="s5">return</span><span class="s1">;</span>
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">.readyState === WebSocket.CONNECTING) {</span>
+      <span class="s1">const msg = </span><span class="s2">'WebSocket was closed before the connection was established'</span><span class="s1">;</span>
+      <span class="s1">abortHandshake(</span><span class="s5">this</span><span class="s1">, </span><span class="s5">this</span><span class="s1">._req, msg);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(</span><span class="s5">this</span><span class="s1">._socket) {</span>
+      <span class="s5">this</span><span class="s1">._readyState = WebSocket.CLOSING;</span>
+      <span class="s5">this</span><span class="s1">._socket.destroy();</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @constant {Number} CONNECTING 
+ * @memberof WebSocket 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket, </span><span class="s2">'CONNECTING'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CONNECTING'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} CONNECTING 
+ * @memberof WebSocket.prototype 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket.prototype, </span><span class="s2">'CONNECTING'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CONNECTING'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} OPEN 
+ * @memberof WebSocket 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket, </span><span class="s2">'OPEN'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'OPEN'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} OPEN 
+ * @memberof WebSocket.prototype 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket.prototype, </span><span class="s2">'OPEN'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'OPEN'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} CLOSING 
+ * @memberof WebSocket 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket, </span><span class="s2">'CLOSING'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CLOSING'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} CLOSING 
+ * @memberof WebSocket.prototype 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket.prototype, </span><span class="s2">'CLOSING'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CLOSING'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} CLOSED 
+ * @memberof WebSocket 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket, </span><span class="s2">'CLOSED'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CLOSED'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * @constant {Number} CLOSED 
+ * @memberof WebSocket.prototype 
+ */</span>
+<span class="s1">Object.defineProperty(WebSocket.prototype, </span><span class="s2">'CLOSED'</span><span class="s1">, {</span>
+  <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+  <span class="s1">value: readyStates.indexOf(</span><span class="s2">'CLOSED'</span><span class="s1">)</span>
+<span class="s1">});</span>
+
+<span class="s1">[</span>
+  <span class="s2">'binaryType'</span><span class="s1">,</span>
+  <span class="s2">'bufferedAmount'</span><span class="s1">,</span>
+  <span class="s2">'extensions'</span><span class="s1">,</span>
+  <span class="s2">'isPaused'</span><span class="s1">,</span>
+  <span class="s2">'protocol'</span><span class="s1">,</span>
+  <span class="s2">'readyState'</span><span class="s1">,</span>
+  <span class="s2">'url'</span>
+<span class="s1">].forEach((property) =&gt; {</span>
+  <span class="s1">Object.defineProperty(WebSocket.prototype, property, { enumerable: </span><span class="s5">true </span><span class="s1">});</span>
+<span class="s1">});</span>
+
+<span class="s0">//</span>
+<span class="s0">// Add the `onopen`, `onerror`, `onclose`, and `onmessage` attributes.</span>
+<span class="s0">// See https://html.spec.whatwg.org/multipage/comms.html#the-websocket-interface</span>
+<span class="s0">//</span>
+<span class="s1">[</span><span class="s2">'open'</span><span class="s1">, </span><span class="s2">'error'</span><span class="s1">, </span><span class="s2">'close'</span><span class="s1">, </span><span class="s2">'message'</span><span class="s1">].forEach((method) =&gt; {</span>
+  <span class="s1">Object.defineProperty(WebSocket.prototype, `on${method}`, {</span>
+    <span class="s1">enumerable: </span><span class="s5">true</span><span class="s1">,</span>
+    <span class="s1">get() {</span>
+      <span class="s5">for </span><span class="s1">(const listener of </span><span class="s5">this</span><span class="s1">.listeners(method)) {</span>
+        <span class="s5">if </span><span class="s1">(listener[kForOnEventAttribute]) </span><span class="s5">return </span><span class="s1">listener[kListener];</span>
+      <span class="s1">}</span>
+
+      <span class="s5">return null</span><span class="s1">;</span>
+    <span class="s1">},</span>
+    <span class="s1">set(handler) {</span>
+      <span class="s5">for </span><span class="s1">(const listener of </span><span class="s5">this</span><span class="s1">.listeners(method)) {</span>
+        <span class="s5">if </span><span class="s1">(listener[kForOnEventAttribute]) {</span>
+          <span class="s5">this</span><span class="s1">.removeListener(method, listener);</span>
+          <span class="s5">break</span><span class="s1">;</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s5">if </span><span class="s1">(</span><span class="s5">typeof </span><span class="s1">handler !== </span><span class="s2">'function'</span><span class="s1">) </span><span class="s5">return</span><span class="s1">;</span>
+
+      <span class="s5">this</span><span class="s1">.addEventListener(method, handler, {</span>
+        <span class="s1">[kForOnEventAttribute]: </span><span class="s5">true</span>
+      <span class="s1">});</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+<span class="s1">});</span>
+
+<span class="s1">WebSocket.prototype.addEventListener = addEventListener;</span>
+<span class="s1">WebSocket.prototype.removeEventListener = removeEventListener;</span>
+
+<span class="s1">module.exports = WebSocket;</span>
+
+<span class="s0">/** 
+ * Initialize a WebSocket client. 
+ * 
+ * @param {WebSocket} websocket The client to initialize 
+ * @param {(String|URL)} address The URL to which to connect 
+ * @param {Array} protocols The subprotocols 
+ * @param {Object} [options] Connection options 
+ * @param {Boolean} [options.allowSynchronousEvents=true] Specifies whether any 
+ *     of the `'message'`, `'ping'`, and `'pong'` events can be emitted multiple 
+ *     times in the same tick 
+ * @param {Boolean} [options.autoPong=true] Specifies whether or not to 
+ *     automatically send a pong in response to a ping 
+ * @param {Number} [options.closeTimeout=30000] Duration in milliseconds to wait 
+ *     for the closing handshake to finish after `websocket.close()` is called 
+ * @param {Function} [options.finishRequest] A function which can be used to 
+ *     customize the headers of each http request before it is sent 
+ * @param {Boolean} [options.followRedirects=false] Whether or not to follow 
+ *     redirects 
+ * @param {Function} [options.generateMask] The function used to generate the 
+ *     masking key 
+ * @param {Number} [options.handshakeTimeout] Timeout in milliseconds for the 
+ *     handshake request 
+ * @param {Number} [options.maxPayload=104857600] The maximum allowed message 
+ *     size 
+ * @param {Number} [options.maxRedirects=10] The maximum number of redirects 
+ *     allowed 
+ * @param {String} [options.origin] Value of the `Origin` or 
+ *     `Sec-WebSocket-Origin` header 
+ * @param {(Boolean|Object)} [options.perMessageDeflate=true] Enable/disable 
+ *     permessage-deflate 
+ * @param {Number} [options.protocolVersion=13] Value of the 
+ *     `Sec-WebSocket-Version` header 
+ * @param {Boolean} [options.skipUTF8Validation=false] Specifies whether or 
+ *     not to skip UTF-8 validation for text and close messages 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">initAsClient(websocket, address, protocols, options) {</span>
+  <span class="s1">const opts = {</span>
+    <span class="s1">allowSynchronousEvents: </span><span class="s5">true</span><span class="s1">,</span>
+    <span class="s1">autoPong: </span><span class="s5">true</span><span class="s1">,</span>
+    <span class="s1">closeTimeout: CLOSE_TIMEOUT,</span>
+    <span class="s1">protocolVersion: protocolVersions[</span><span class="s3">1</span><span class="s1">],</span>
+    <span class="s1">maxPayload: </span><span class="s3">100 </span><span class="s1">* </span><span class="s3">1024 </span><span class="s1">* </span><span class="s3">1024</span><span class="s1">,</span>
+    <span class="s1">skipUTF8Validation: </span><span class="s5">false</span><span class="s1">,</span>
+    <span class="s1">perMessageDeflate: </span><span class="s5">true</span><span class="s1">,</span>
+    <span class="s1">followRedirects: </span><span class="s5">false</span><span class="s1">,</span>
+    <span class="s1">maxRedirects: </span><span class="s3">10</span><span class="s1">,</span>
+    <span class="s1">...options,</span>
+    <span class="s1">socketPath: undefined,</span>
+    <span class="s1">hostname: undefined,</span>
+    <span class="s1">protocol: undefined,</span>
+    <span class="s1">timeout: undefined,</span>
+    <span class="s1">method: </span><span class="s2">'GET'</span><span class="s1">,</span>
+    <span class="s1">host: undefined,</span>
+    <span class="s1">path: undefined,</span>
+    <span class="s1">port: undefined</span>
+  <span class="s1">};</span>
+
+  <span class="s1">websocket._autoPong = opts.autoPong;</span>
+  <span class="s1">websocket._closeTimeout = opts.closeTimeout;</span>
+
+  <span class="s5">if </span><span class="s1">(!protocolVersions.includes(opts.protocolVersion)) {</span>
+    <span class="s5">throw new </span><span class="s1">RangeError(</span>
+      <span class="s1">`Unsupported protocol version: ${opts.protocolVersion} ` +</span>
+        <span class="s1">`(supported versions: ${protocolVersions.join(</span><span class="s2">', '</span><span class="s1">)})`</span>
+    <span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">let parsedUrl;</span>
+
+  <span class="s5">if </span><span class="s1">(address </span><span class="s5">instanceof </span><span class="s1">URL) {</span>
+    <span class="s1">parsedUrl = address;</span>
+  <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+    <span class="s5">try </span><span class="s1">{</span>
+      <span class="s1">parsedUrl = </span><span class="s5">new </span><span class="s1">URL(address);</span>
+    <span class="s1">} </span><span class="s5">catch </span><span class="s1">{</span>
+      <span class="s5">throw new </span><span class="s1">SyntaxError(`Invalid URL: ${address}`);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(parsedUrl.protocol === </span><span class="s2">'http:'</span><span class="s1">) {</span>
+    <span class="s1">parsedUrl.protocol = </span><span class="s2">'ws:'</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s5">else if </span><span class="s1">(parsedUrl.protocol === </span><span class="s2">'https:'</span><span class="s1">) {</span>
+    <span class="s1">parsedUrl.protocol = </span><span class="s2">'wss:'</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">websocket._url = parsedUrl.href;</span>
+
+  <span class="s1">const isSecure = parsedUrl.protocol === </span><span class="s2">'wss:'</span><span class="s1">;</span>
+  <span class="s1">const isIpcUrl = parsedUrl.protocol === </span><span class="s2">'ws+unix:'</span><span class="s1">;</span>
+  <span class="s1">let invalidUrlMessage;</span>
+
+  <span class="s5">if </span><span class="s1">(parsedUrl.protocol !== </span><span class="s2">'ws:' </span><span class="s1">&amp;&amp; !isSecure &amp;&amp; !isIpcUrl) {</span>
+    <span class="s1">invalidUrlMessage =</span>
+      <span class="s2">'The URL</span><span class="s5">\'</span><span class="s2">s protocol must be one of &quot;ws:&quot;, &quot;wss:&quot;, ' </span><span class="s1">+</span>
+      <span class="s2">'&quot;http:&quot;, &quot;https:&quot;, or &quot;ws+unix:&quot;'</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s5">else if </span><span class="s1">(isIpcUrl &amp;&amp; !parsedUrl.pathname) {</span>
+    <span class="s1">invalidUrlMessage = </span><span class="s2">&quot;The URL's pathname is empty&quot;</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s5">else if </span><span class="s1">(parsedUrl.hash) {</span>
+    <span class="s1">invalidUrlMessage = </span><span class="s2">'The URL contains a fragment identifier'</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(invalidUrlMessage) {</span>
+    <span class="s1">const err = </span><span class="s5">new </span><span class="s1">SyntaxError(invalidUrlMessage);</span>
+
+    <span class="s5">if </span><span class="s1">(websocket._redirects === </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s5">throw </span><span class="s1">err;</span>
+    <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+      <span class="s1">emitErrorAndClose(websocket, err);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const defaultPort = isSecure ? </span><span class="s3">443 </span><span class="s1">: </span><span class="s3">80</span><span class="s1">;</span>
+  <span class="s1">const key = randomBytes(</span><span class="s3">16</span><span class="s1">).toString(</span><span class="s2">'base64'</span><span class="s1">);</span>
+  <span class="s1">const request = isSecure ? https.request : http.request;</span>
+  <span class="s1">const protocolSet = </span><span class="s5">new </span><span class="s1">Set();</span>
+  <span class="s1">let perMessageDeflate;</span>
+
+  <span class="s1">opts.createConnection =</span>
+    <span class="s1">opts.createConnection || (isSecure ? tlsConnect : netConnect);</span>
+  <span class="s1">opts.defaultPort = opts.defaultPort || defaultPort;</span>
+  <span class="s1">opts.port = parsedUrl.port || defaultPort;</span>
+  <span class="s1">opts.host = parsedUrl.hostname.startsWith(</span><span class="s2">'['</span><span class="s1">)</span>
+    <span class="s1">? parsedUrl.hostname.slice(</span><span class="s3">1</span><span class="s1">, -</span><span class="s3">1</span><span class="s1">)</span>
+    <span class="s1">: parsedUrl.hostname;</span>
+  <span class="s1">opts.headers = {</span>
+    <span class="s1">...opts.headers,</span>
+    <span class="s2">'Sec-WebSocket-Version'</span><span class="s1">: opts.protocolVersion,</span>
+    <span class="s2">'Sec-WebSocket-Key'</span><span class="s1">: key,</span>
+    <span class="s1">Connection: </span><span class="s2">'Upgrade'</span><span class="s1">,</span>
+    <span class="s1">Upgrade: </span><span class="s2">'websocket'</span>
+  <span class="s1">};</span>
+  <span class="s1">opts.path = parsedUrl.pathname + parsedUrl.search;</span>
+  <span class="s1">opts.timeout = opts.handshakeTimeout;</span>
+
+  <span class="s5">if </span><span class="s1">(opts.perMessageDeflate) {</span>
+    <span class="s1">perMessageDeflate = </span><span class="s5">new </span><span class="s1">PerMessageDeflate({</span>
+      <span class="s1">...opts.perMessageDeflate,</span>
+      <span class="s1">isServer: </span><span class="s5">false</span><span class="s1">,</span>
+      <span class="s1">maxPayload: opts.maxPayload</span>
+    <span class="s1">});</span>
+    <span class="s1">opts.headers[</span><span class="s2">'Sec-WebSocket-Extensions'</span><span class="s1">] = format({</span>
+      <span class="s1">[PerMessageDeflate.extensionName]: perMessageDeflate.offer()</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s5">if </span><span class="s1">(protocols.length) {</span>
+    <span class="s5">for </span><span class="s1">(const protocol of protocols) {</span>
+      <span class="s5">if </span><span class="s1">(</span>
+        <span class="s5">typeof </span><span class="s1">protocol !== </span><span class="s2">'string' </span><span class="s1">||</span>
+        <span class="s1">!subprotocolRegex.test(protocol) ||</span>
+        <span class="s1">protocolSet.has(protocol)</span>
+      <span class="s1">) {</span>
+        <span class="s5">throw new </span><span class="s1">SyntaxError(</span>
+          <span class="s2">'An invalid or duplicated subprotocol was specified'</span>
+        <span class="s1">);</span>
+      <span class="s1">}</span>
+
+      <span class="s1">protocolSet.add(protocol);</span>
+    <span class="s1">}</span>
+
+    <span class="s1">opts.headers[</span><span class="s2">'Sec-WebSocket-Protocol'</span><span class="s1">] = protocols.join(</span><span class="s2">','</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s5">if </span><span class="s1">(opts.origin) {</span>
+    <span class="s5">if </span><span class="s1">(opts.protocolVersion &lt; </span><span class="s3">13</span><span class="s1">) {</span>
+      <span class="s1">opts.headers[</span><span class="s2">'Sec-WebSocket-Origin'</span><span class="s1">] = opts.origin;</span>
+    <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+      <span class="s1">opts.headers.Origin = opts.origin;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s5">if </span><span class="s1">(parsedUrl.username || parsedUrl.password) {</span>
+    <span class="s1">opts.auth = `${parsedUrl.username}:${parsedUrl.password}`;</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(isIpcUrl) {</span>
+    <span class="s1">const parts = opts.path.split(</span><span class="s2">':'</span><span class="s1">);</span>
+
+    <span class="s1">opts.socketPath = parts[</span><span class="s3">0</span><span class="s1">];</span>
+    <span class="s1">opts.path = parts[</span><span class="s3">1</span><span class="s1">];</span>
+  <span class="s1">}</span>
+
+  <span class="s1">let req;</span>
+
+  <span class="s5">if </span><span class="s1">(opts.followRedirects) {</span>
+    <span class="s5">if </span><span class="s1">(websocket._redirects === </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">websocket._originalIpc = isIpcUrl;</span>
+      <span class="s1">websocket._originalSecure = isSecure;</span>
+      <span class="s1">websocket._originalHostOrSocketPath = isIpcUrl</span>
+        <span class="s1">? opts.socketPath</span>
+        <span class="s1">: parsedUrl.host;</span>
+
+      <span class="s1">const headers = options &amp;&amp; options.headers;</span>
+
+      <span class="s0">//</span>
+      <span class="s0">// Shallow copy the user provided options so that headers can be changed</span>
+      <span class="s0">// without mutating the original object.</span>
+      <span class="s0">//</span>
+      <span class="s1">options = { ...options, headers: {} };</span>
+
+      <span class="s5">if </span><span class="s1">(headers) {</span>
+        <span class="s5">for </span><span class="s1">(const [key, value] of Object.entries(headers)) {</span>
+          <span class="s1">options.headers[key.toLowerCase()] = value;</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s5">else if </span><span class="s1">(websocket.listenerCount(</span><span class="s2">'redirect'</span><span class="s1">) === </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">const isSameHost = isIpcUrl</span>
+        <span class="s1">? websocket._originalIpc</span>
+          <span class="s1">? opts.socketPath === websocket._originalHostOrSocketPath</span>
+          <span class="s1">: </span><span class="s5">false</span>
+        <span class="s1">: websocket._originalIpc</span>
+          <span class="s1">? </span><span class="s5">false</span>
+          <span class="s1">: parsedUrl.host === websocket._originalHostOrSocketPath;</span>
+
+      <span class="s5">if </span><span class="s1">(!isSameHost || (websocket._originalSecure &amp;&amp; !isSecure)) {</span>
+        <span class="s0">//</span>
+        <span class="s0">// Match curl 7.77.0 behavior and drop the following headers. These</span>
+        <span class="s0">// headers are also dropped when following a redirect to a subdomain.</span>
+        <span class="s0">//</span>
+        <span class="s5">delete </span><span class="s1">opts.headers.authorization;</span>
+        <span class="s5">delete </span><span class="s1">opts.headers.cookie;</span>
+
+        <span class="s5">if </span><span class="s1">(!isSameHost) </span><span class="s5">delete </span><span class="s1">opts.headers.host;</span>
+
+        <span class="s1">opts.auth = undefined;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// Match curl 7.77.0 behavior and make the first `Authorization` header win.</span>
+    <span class="s0">// If the `Authorization` header is set, then there is nothing to do as it</span>
+    <span class="s0">// will take precedence.</span>
+    <span class="s0">//</span>
+    <span class="s5">if </span><span class="s1">(opts.auth &amp;&amp; !options.headers.authorization) {</span>
+      <span class="s1">options.headers.authorization =</span>
+        <span class="s2">'Basic ' </span><span class="s1">+ Buffer.from(opts.auth).toString(</span><span class="s2">'base64'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s1">req = websocket._req = request(opts);</span>
+
+    <span class="s5">if </span><span class="s1">(websocket._redirects) {</span>
+      <span class="s0">//</span>
+      <span class="s0">// Unlike what is done for the `'upgrade'` event, no early exit is</span>
+      <span class="s0">// triggered here if the user calls `websocket.close()` or</span>
+      <span class="s0">// `websocket.terminate()` from a listener of the `'redirect'` event. This</span>
+      <span class="s0">// is because the user can also call `request.destroy()` with an error</span>
+      <span class="s0">// before calling `websocket.close()` or `websocket.terminate()` and this</span>
+      <span class="s0">// would result in an error being emitted on the `request` object with no</span>
+      <span class="s0">// `'error'` event listeners attached.</span>
+      <span class="s0">//</span>
+      <span class="s1">websocket.emit(</span><span class="s2">'redirect'</span><span class="s1">, websocket.url, req);</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+    <span class="s1">req = websocket._req = request(opts);</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(opts.timeout) {</span>
+    <span class="s1">req.on(</span><span class="s2">'timeout'</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">abortHandshake(websocket, req, </span><span class="s2">'Opening handshake has timed out'</span><span class="s1">);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+
+  <span class="s1">req.on(</span><span class="s2">'error'</span><span class="s1">, (err) =&gt; {</span>
+    <span class="s5">if </span><span class="s1">(req === </span><span class="s5">null </span><span class="s1">|| req[kAborted]) </span><span class="s5">return</span><span class="s1">;</span>
+
+    <span class="s1">req = websocket._req = </span><span class="s5">null</span><span class="s1">;</span>
+    <span class="s1">emitErrorAndClose(websocket, err);</span>
+  <span class="s1">});</span>
+
+  <span class="s1">req.on(</span><span class="s2">'response'</span><span class="s1">, (res) =&gt; {</span>
+    <span class="s1">const location = res.headers.location;</span>
+    <span class="s1">const statusCode = res.statusCode;</span>
+
+    <span class="s5">if </span><span class="s1">(</span>
+      <span class="s1">location &amp;&amp;</span>
+      <span class="s1">opts.followRedirects &amp;&amp;</span>
+      <span class="s1">statusCode &gt;= </span><span class="s3">300 </span><span class="s1">&amp;&amp;</span>
+      <span class="s1">statusCode &lt; </span><span class="s3">400</span>
+    <span class="s1">) {</span>
+      <span class="s5">if </span><span class="s1">(++websocket._redirects &gt; opts.maxRedirects) {</span>
+        <span class="s1">abortHandshake(websocket, req, </span><span class="s2">'Maximum redirects exceeded'</span><span class="s1">);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">req.abort();</span>
+
+      <span class="s1">let addr;</span>
+
+      <span class="s5">try </span><span class="s1">{</span>
+        <span class="s1">addr = </span><span class="s5">new </span><span class="s1">URL(location, address);</span>
+      <span class="s1">} </span><span class="s5">catch </span><span class="s1">(e) {</span>
+        <span class="s1">const err = </span><span class="s5">new </span><span class="s1">SyntaxError(`Invalid URL: ${location}`);</span>
+        <span class="s1">emitErrorAndClose(websocket, err);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">initAsClient(websocket, addr, protocols, options);</span>
+    <span class="s1">} </span><span class="s5">else if </span><span class="s1">(!websocket.emit(</span><span class="s2">'unexpected-response'</span><span class="s1">, req, res)) {</span>
+      <span class="s1">abortHandshake(</span>
+        <span class="s1">websocket,</span>
+        <span class="s1">req,</span>
+        <span class="s1">`Unexpected server response: ${res.statusCode}`</span>
+      <span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+
+  <span class="s1">req.on(</span><span class="s2">'upgrade'</span><span class="s1">, (res, socket, head) =&gt; {</span>
+    <span class="s1">websocket.emit(</span><span class="s2">'upgrade'</span><span class="s1">, res);</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// The user may have closed the connection from a listener of the</span>
+    <span class="s0">// `'upgrade'` event.</span>
+    <span class="s0">//</span>
+    <span class="s5">if </span><span class="s1">(websocket.readyState !== WebSocket.CONNECTING) </span><span class="s5">return</span><span class="s1">;</span>
+
+    <span class="s1">req = websocket._req = </span><span class="s5">null</span><span class="s1">;</span>
+
+    <span class="s1">const upgrade = res.headers.upgrade;</span>
+
+    <span class="s5">if </span><span class="s1">(upgrade === undefined || upgrade.toLowerCase() !== </span><span class="s2">'websocket'</span><span class="s1">) {</span>
+      <span class="s1">abortHandshake(websocket, socket, </span><span class="s2">'Invalid Upgrade header'</span><span class="s1">);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">const digest = createHash(</span><span class="s2">'sha1'</span><span class="s1">)</span>
+      <span class="s1">.update(key + GUID)</span>
+      <span class="s1">.digest(</span><span class="s2">'base64'</span><span class="s1">);</span>
+
+    <span class="s5">if </span><span class="s1">(res.headers[</span><span class="s2">'sec-websocket-accept'</span><span class="s1">] !== digest) {</span>
+      <span class="s1">abortHandshake(websocket, socket, </span><span class="s2">'Invalid Sec-WebSocket-Accept header'</span><span class="s1">);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">const serverProt = res.headers[</span><span class="s2">'sec-websocket-protocol'</span><span class="s1">];</span>
+    <span class="s1">let protError;</span>
+
+    <span class="s5">if </span><span class="s1">(serverProt !== undefined) {</span>
+      <span class="s5">if </span><span class="s1">(!protocolSet.size) {</span>
+        <span class="s1">protError = </span><span class="s2">'Server sent a subprotocol but none was requested'</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s5">else if </span><span class="s1">(!protocolSet.has(serverProt)) {</span>
+        <span class="s1">protError = </span><span class="s2">'Server sent an invalid subprotocol'</span><span class="s1">;</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s5">else if </span><span class="s1">(protocolSet.size) {</span>
+      <span class="s1">protError = </span><span class="s2">'Server sent no subprotocol'</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(protError) {</span>
+      <span class="s1">abortHandshake(websocket, socket, protError);</span>
+      <span class="s5">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s5">if </span><span class="s1">(serverProt) websocket._protocol = serverProt;</span>
+
+    <span class="s1">const secWebSocketExtensions = res.headers[</span><span class="s2">'sec-websocket-extensions'</span><span class="s1">];</span>
+
+    <span class="s5">if </span><span class="s1">(secWebSocketExtensions !== undefined) {</span>
+      <span class="s5">if </span><span class="s1">(!perMessageDeflate) {</span>
+        <span class="s1">const message =</span>
+          <span class="s2">'Server sent a Sec-WebSocket-Extensions header but no extension ' </span><span class="s1">+</span>
+          <span class="s2">'was requested'</span><span class="s1">;</span>
+        <span class="s1">abortHandshake(websocket, socket, message);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">let extensions;</span>
+
+      <span class="s5">try </span><span class="s1">{</span>
+        <span class="s1">extensions = parse(secWebSocketExtensions);</span>
+      <span class="s1">} </span><span class="s5">catch </span><span class="s1">(err) {</span>
+        <span class="s1">const message = </span><span class="s2">'Invalid Sec-WebSocket-Extensions header'</span><span class="s1">;</span>
+        <span class="s1">abortHandshake(websocket, socket, message);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">const extensionNames = Object.keys(extensions);</span>
+
+      <span class="s5">if </span><span class="s1">(</span>
+        <span class="s1">extensionNames.length !== </span><span class="s3">1 </span><span class="s1">||</span>
+        <span class="s1">extensionNames[</span><span class="s3">0</span><span class="s1">] !== PerMessageDeflate.extensionName</span>
+      <span class="s1">) {</span>
+        <span class="s1">const message = </span><span class="s2">'Server indicated an extension that was not requested'</span><span class="s1">;</span>
+        <span class="s1">abortHandshake(websocket, socket, message);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s5">try </span><span class="s1">{</span>
+        <span class="s1">perMessageDeflate.accept(extensions[PerMessageDeflate.extensionName]);</span>
+      <span class="s1">} </span><span class="s5">catch </span><span class="s1">(err) {</span>
+        <span class="s1">const message = </span><span class="s2">'Invalid Sec-WebSocket-Extensions header'</span><span class="s1">;</span>
+        <span class="s1">abortHandshake(websocket, socket, message);</span>
+        <span class="s5">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">websocket._extensions[PerMessageDeflate.extensionName] =</span>
+        <span class="s1">perMessageDeflate;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">websocket.setSocket(socket, head, {</span>
+      <span class="s1">allowSynchronousEvents: opts.allowSynchronousEvents,</span>
+      <span class="s1">generateMask: opts.generateMask,</span>
+      <span class="s1">maxPayload: opts.maxPayload,</span>
+      <span class="s1">skipUTF8Validation: opts.skipUTF8Validation</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s5">if </span><span class="s1">(opts.finishRequest) {</span>
+    <span class="s1">opts.finishRequest(req, websocket);</span>
+  <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+    <span class="s1">req.end();</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Emit the `'error'` and `'close'` events. 
+ * 
+ * @param {WebSocket} websocket The WebSocket instance 
+ * @param {Error} The error to emit 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">emitErrorAndClose(websocket, err) {</span>
+  <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+  <span class="s0">//</span>
+  <span class="s0">// The following assignment is practically useless and is done only for</span>
+  <span class="s0">// consistency.</span>
+  <span class="s0">//</span>
+  <span class="s1">websocket._errorEmitted = </span><span class="s5">true</span><span class="s1">;</span>
+  <span class="s1">websocket.emit(</span><span class="s2">'error'</span><span class="s1">, err);</span>
+  <span class="s1">websocket.emitClose();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Create a `net.Socket` and initiate a connection. 
+ * 
+ * @param {Object} options Connection options 
+ * @return {net.Socket} The newly created socket used to start the connection 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">netConnect(options) {</span>
+  <span class="s1">options.path = options.socketPath;</span>
+  <span class="s5">return </span><span class="s1">net.connect(options);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Create a `tls.TLSSocket` and initiate a connection. 
+ * 
+ * @param {Object} options Connection options 
+ * @return {tls.TLSSocket} The newly created socket used to start the connection 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">tlsConnect(options) {</span>
+  <span class="s1">options.path = undefined;</span>
+
+  <span class="s5">if </span><span class="s1">(!options.servername &amp;&amp; options.servername !== </span><span class="s2">''</span><span class="s1">) {</span>
+    <span class="s1">options.servername = net.isIP(options.host) ? </span><span class="s2">'' </span><span class="s1">: options.host;</span>
+  <span class="s1">}</span>
+
+  <span class="s5">return </span><span class="s1">tls.connect(options);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Abort the handshake and emit an error. 
+ * 
+ * @param {WebSocket} websocket The WebSocket instance 
+ * @param {(http.ClientRequest|net.Socket|tls.Socket)} stream The request to 
+ *     abort or the socket to destroy 
+ * @param {String} message The error message 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">abortHandshake(websocket, stream, message) {</span>
+  <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+
+  <span class="s1">const err = </span><span class="s5">new </span><span class="s1">Error(message);</span>
+  <span class="s1">Error.captureStackTrace(err, abortHandshake);</span>
+
+  <span class="s5">if </span><span class="s1">(stream.setHeader) {</span>
+    <span class="s1">stream[kAborted] = </span><span class="s5">true</span><span class="s1">;</span>
+    <span class="s1">stream.abort();</span>
+
+    <span class="s5">if </span><span class="s1">(stream.socket &amp;&amp; !stream.socket.destroyed) {</span>
+      <span class="s0">//</span>
+      <span class="s0">// On Node.js &gt;= 14.3.0 `request.abort()` does not destroy the socket if</span>
+      <span class="s0">// called after the request completed. See</span>
+      <span class="s0">// https://github.com/websockets/ws/issues/1869.</span>
+      <span class="s0">//</span>
+      <span class="s1">stream.socket.destroy();</span>
+    <span class="s1">}</span>
+
+    <span class="s1">process.nextTick(emitErrorAndClose, websocket, err);</span>
+  <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+    <span class="s1">stream.destroy(err);</span>
+    <span class="s1">stream.once(</span><span class="s2">'error'</span><span class="s1">, websocket.emit.bind(websocket, </span><span class="s2">'error'</span><span class="s1">));</span>
+    <span class="s1">stream.once(</span><span class="s2">'close'</span><span class="s1">, websocket.emitClose.bind(websocket));</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Handle cases where the `ping()`, `pong()`, or `send()` methods are called 
+ * when the `readyState` attribute is `CLOSING` or `CLOSED`. 
+ * 
+ * @param {WebSocket} websocket The WebSocket instance 
+ * @param {*} [data] The data to send 
+ * @param {Function} [cb] Callback 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">sendAfterClose(websocket, data, cb) {</span>
+  <span class="s5">if </span><span class="s1">(data) {</span>
+    <span class="s1">const length = isBlob(data) ? data.size : toBuffer(data).length;</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// The `_bufferedAmount` property is used only when the peer is a client and</span>
+    <span class="s0">// the opening handshake fails. Under these circumstances, in fact, the</span>
+    <span class="s0">// `setSocket()` method is not called, so the `_socket` and `_sender`</span>
+    <span class="s0">// properties are set to `null`.</span>
+    <span class="s0">//</span>
+    <span class="s5">if </span><span class="s1">(websocket._socket) websocket._sender._bufferedBytes += length;</span>
+    <span class="s5">else </span><span class="s1">websocket._bufferedAmount += length;</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(cb) {</span>
+    <span class="s1">const err = </span><span class="s5">new </span><span class="s1">Error(</span>
+      <span class="s1">`WebSocket is not open: readyState ${websocket.readyState} ` +</span>
+        <span class="s1">`(${readyStates[websocket.readyState]})`</span>
+    <span class="s1">);</span>
+    <span class="s1">process.nextTick(cb, err);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'conclude'` event. 
+ * 
+ * @param {Number} code The status code 
+ * @param {Buffer} reason The reason for closing 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnConclude(code, reason) {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s1">websocket._closeFrameReceived = </span><span class="s5">true</span><span class="s1">;</span>
+  <span class="s1">websocket._closeMessage = reason;</span>
+  <span class="s1">websocket._closeCode = code;</span>
+
+  <span class="s5">if </span><span class="s1">(websocket._socket[kWebSocket] === undefined) </span><span class="s5">return</span><span class="s1">;</span>
+
+  <span class="s1">websocket._socket.removeListener(</span><span class="s2">'data'</span><span class="s1">, socketOnData);</span>
+  <span class="s1">process.nextTick(resume, websocket._socket);</span>
+
+  <span class="s5">if </span><span class="s1">(code === </span><span class="s3">1005</span><span class="s1">) websocket.close();</span>
+  <span class="s5">else </span><span class="s1">websocket.close(code, reason);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'drain'` event. 
+ * 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnDrain() {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">if </span><span class="s1">(!websocket.isPaused) websocket._socket.resume();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'error'` event. 
+ * 
+ * @param {(RangeError|Error)} err The emitted error 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnError(err) {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">if </span><span class="s1">(websocket._socket[kWebSocket] !== undefined) {</span>
+    <span class="s1">websocket._socket.removeListener(</span><span class="s2">'data'</span><span class="s1">, socketOnData);</span>
+
+    <span class="s0">//</span>
+    <span class="s0">// On Node.js &lt; 14.0.0 the `'error'` event is emitted synchronously. See</span>
+    <span class="s0">// https://github.com/websockets/ws/issues/1940.</span>
+    <span class="s0">//</span>
+    <span class="s1">process.nextTick(resume, websocket._socket);</span>
+
+    <span class="s1">websocket.close(err[kStatusCode]);</span>
+  <span class="s1">}</span>
+
+  <span class="s5">if </span><span class="s1">(!websocket._errorEmitted) {</span>
+    <span class="s1">websocket._errorEmitted = </span><span class="s5">true</span><span class="s1">;</span>
+    <span class="s1">websocket.emit(</span><span class="s2">'error'</span><span class="s1">, err);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'finish'` event. 
+ * 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnFinish() {</span>
+  <span class="s5">this</span><span class="s1">[kWebSocket].emitClose();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'message'` event. 
+ * 
+ * @param {Buffer|ArrayBuffer|Buffer[])} data The message 
+ * @param {Boolean} isBinary Specifies whether the message is binary or not 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnMessage(data, isBinary) {</span>
+  <span class="s5">this</span><span class="s1">[kWebSocket].emit(</span><span class="s2">'message'</span><span class="s1">, data, isBinary);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'ping'` event. 
+ * 
+ * @param {Buffer} data The data included in the ping frame 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnPing(data) {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">if </span><span class="s1">(websocket._autoPong) websocket.pong(data, !</span><span class="s5">this</span><span class="s1">._isServer, NOOP);</span>
+  <span class="s1">websocket.emit(</span><span class="s2">'ping'</span><span class="s1">, data);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the `Receiver` `'pong'` event. 
+ * 
+ * @param {Buffer} data The data included in the pong frame 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">receiverOnPong(data) {</span>
+  <span class="s5">this</span><span class="s1">[kWebSocket].emit(</span><span class="s2">'pong'</span><span class="s1">, data);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Resume a readable stream 
+ * 
+ * @param {Readable} stream The readable stream 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">resume(stream) {</span>
+  <span class="s1">stream.resume();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The `Sender` error event handler. 
+ * 
+ * @param {Error} The error 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">senderOnError(err) {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">if </span><span class="s1">(websocket.readyState === WebSocket.CLOSED) </span><span class="s5">return</span><span class="s1">;</span>
+  <span class="s5">if </span><span class="s1">(websocket.readyState === WebSocket.OPEN) {</span>
+    <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+    <span class="s1">setCloseTimer(websocket);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">//</span>
+  <span class="s0">// `socket.end()` is used instead of `socket.destroy()` to allow the other</span>
+  <span class="s0">// peer to finish sending queued data. There is no need to set a timer here</span>
+  <span class="s0">// because `CLOSING` means that it is already set or not needed.</span>
+  <span class="s0">//</span>
+  <span class="s5">this</span><span class="s1">._socket.end();</span>
+
+  <span class="s5">if </span><span class="s1">(!websocket._errorEmitted) {</span>
+    <span class="s1">websocket._errorEmitted = </span><span class="s5">true</span><span class="s1">;</span>
+    <span class="s1">websocket.emit(</span><span class="s2">'error'</span><span class="s1">, err);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Set a timer to destroy the underlying raw socket of a WebSocket. 
+ * 
+ * @param {WebSocket} websocket The WebSocket instance 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">setCloseTimer(websocket) {</span>
+  <span class="s1">websocket._closeTimer = setTimeout(</span>
+    <span class="s1">websocket._socket.destroy.bind(websocket._socket),</span>
+    <span class="s1">websocket._closeTimeout</span>
+  <span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the socket `'close'` event. 
+ * 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">socketOnClose() {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">this</span><span class="s1">.removeListener(</span><span class="s2">'close'</span><span class="s1">, socketOnClose);</span>
+  <span class="s5">this</span><span class="s1">.removeListener(</span><span class="s2">'data'</span><span class="s1">, socketOnData);</span>
+  <span class="s5">this</span><span class="s1">.removeListener(</span><span class="s2">'end'</span><span class="s1">, socketOnEnd);</span>
+
+  <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+
+  <span class="s0">//</span>
+  <span class="s0">// The close frame might not have been received or the `'end'` event emitted,</span>
+  <span class="s0">// for example, if the socket was destroyed due to an error. Ensure that the</span>
+  <span class="s0">// `receiver` stream is closed after writing any remaining buffered data to</span>
+  <span class="s0">// it. If the readable side of the socket is in flowing mode then there is no</span>
+  <span class="s0">// buffered data as everything has been already written. If instead, the</span>
+  <span class="s0">// socket is paused, any possible buffered data will be read as a single</span>
+  <span class="s0">// chunk.</span>
+  <span class="s0">//</span>
+  <span class="s5">if </span><span class="s1">(</span>
+    <span class="s1">!</span><span class="s5">this</span><span class="s1">._readableState.endEmitted &amp;&amp;</span>
+    <span class="s1">!websocket._closeFrameReceived &amp;&amp;</span>
+    <span class="s1">!websocket._receiver._writableState.errorEmitted &amp;&amp;</span>
+    <span class="s5">this</span><span class="s1">._readableState.length !== </span><span class="s3">0</span>
+  <span class="s1">) {</span>
+    <span class="s1">const chunk = </span><span class="s5">this</span><span class="s1">.read(</span><span class="s5">this</span><span class="s1">._readableState.length);</span>
+
+    <span class="s1">websocket._receiver.write(chunk);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">websocket._receiver.end();</span>
+
+  <span class="s5">this</span><span class="s1">[kWebSocket] = undefined;</span>
+
+  <span class="s1">clearTimeout(websocket._closeTimer);</span>
+
+  <span class="s5">if </span><span class="s1">(</span>
+    <span class="s1">websocket._receiver._writableState.finished ||</span>
+    <span class="s1">websocket._receiver._writableState.errorEmitted</span>
+  <span class="s1">) {</span>
+    <span class="s1">websocket.emitClose();</span>
+  <span class="s1">} </span><span class="s5">else </span><span class="s1">{</span>
+    <span class="s1">websocket._receiver.on(</span><span class="s2">'error'</span><span class="s1">, receiverOnFinish);</span>
+    <span class="s1">websocket._receiver.on(</span><span class="s2">'finish'</span><span class="s1">, receiverOnFinish);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the socket `'data'` event. 
+ * 
+ * @param {Buffer} chunk A chunk of data 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">socketOnData(chunk) {</span>
+  <span class="s5">if </span><span class="s1">(!</span><span class="s5">this</span><span class="s1">[kWebSocket]._receiver.write(chunk)) {</span>
+    <span class="s5">this</span><span class="s1">.pause();</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the socket `'end'` event. 
+ * 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">socketOnEnd() {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+  <span class="s1">websocket._receiver.end();</span>
+  <span class="s5">this</span><span class="s1">.end();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * The listener of the socket `'error'` event. 
+ * 
+ * @private 
+ */</span>
+<span class="s5">function </span><span class="s1">socketOnError() {</span>
+  <span class="s1">const websocket = </span><span class="s5">this</span><span class="s1">[kWebSocket];</span>
+
+  <span class="s5">this</span><span class="s1">.removeListener(</span><span class="s2">'error'</span><span class="s1">, socketOnError);</span>
+  <span class="s5">this</span><span class="s1">.on(</span><span class="s2">'error'</span><span class="s1">, NOOP);</span>
+
+  <span class="s5">if </span><span class="s1">(websocket) {</span>
+    <span class="s1">websocket._readyState = WebSocket.CLOSING;</span>
+    <span class="s5">this</span><span class="s1">.destroy();</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

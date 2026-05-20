@@ -1,0 +1,684 @@
+<html>
+<head>
+<title>refresh-runtime.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+refresh-runtime.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* global window */</span>
+<span class="s0">/* eslint-disable eqeqeq, prefer-const, @typescript-eslint/no-empty-function */</span>
+
+<span class="s0">/*! Copyright (c) Meta Platforms, Inc. and affiliates. **/</span>
+<span class="s0">/** 
+ * This is simplified pure-js version of https://github.com/facebook/react/blob/main/packages/react-refresh/src/ReactFreshRuntime.js 
+ * without IE11 compatibility and verbose isDev checks. 
+ * Some utils are appended at the bottom for HMR integration. 
+ */</span>
+
+<span class="s1">const REACT_FORWARD_REF_TYPE = Symbol.</span><span class="s2">for</span><span class="s1">(</span><span class="s3">'react.forward_ref'</span><span class="s1">)</span>
+<span class="s1">const REACT_MEMO_TYPE = Symbol.</span><span class="s2">for</span><span class="s1">(</span><span class="s3">'react.memo'</span><span class="s1">)</span>
+
+<span class="s0">// We never remove these associations.</span>
+<span class="s0">// It's OK to reference families, but use WeakMap/Set for types.</span>
+<span class="s1">let allFamiliesByID = </span><span class="s2">new </span><span class="s1">Map()</span>
+<span class="s1">let allFamiliesByType = </span><span class="s2">new </span><span class="s1">WeakMap()</span>
+<span class="s1">let allSignaturesByType = </span><span class="s2">new </span><span class="s1">WeakMap()</span>
+
+<span class="s0">// This WeakMap is read by React, so we only put families</span>
+<span class="s0">// that have actually been edited here. This keeps checks fast.</span>
+<span class="s1">const updatedFamiliesByType = </span><span class="s2">new </span><span class="s1">WeakMap()</span>
+
+<span class="s0">// This is cleared on every performReactRefresh() call.</span>
+<span class="s0">// It is an array of [Family, NextType] tuples.</span>
+<span class="s1">let pendingUpdates = []</span>
+
+<span class="s0">// This is injected by the renderer via DevTools global hook.</span>
+<span class="s1">const helpersByRendererID = </span><span class="s2">new </span><span class="s1">Map()</span>
+
+<span class="s1">const helpersByRoot = </span><span class="s2">new </span><span class="s1">Map()</span>
+
+<span class="s0">// We keep track of mounted roots so we can schedule updates.</span>
+<span class="s1">const mountedRoots = </span><span class="s2">new </span><span class="s1">Set()</span>
+<span class="s0">// If a root captures an error, we remember it so we can retry on edit.</span>
+<span class="s1">const failedRoots = </span><span class="s2">new </span><span class="s1">Set()</span>
+
+<span class="s0">// We also remember the last element for every root.</span>
+<span class="s0">// It needs to be weak because we do this even for roots that failed to mount.</span>
+<span class="s0">// If there is no WeakMap, we won't attempt to do retrying.</span>
+<span class="s1">let rootElements = </span><span class="s2">new </span><span class="s1">WeakMap()</span>
+<span class="s1">let isPerformingRefresh = </span><span class="s2">false</span>
+
+<span class="s2">function </span><span class="s1">computeFullKey(signature) {</span>
+  <span class="s2">if </span><span class="s1">(signature.fullKey !== </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">signature.fullKey</span>
+  <span class="s1">}</span>
+
+  <span class="s1">let fullKey = signature.ownKey</span>
+  <span class="s1">let hooks</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s1">hooks = signature.getCustomHooks()</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+    <span class="s0">// This can happen in an edge case, e.g. if expression like Foo.useSomething</span>
+    <span class="s0">// depends on Foo which is lazily initialized during rendering.</span>
+    <span class="s0">// In that case just assume we'll have to remount.</span>
+    <span class="s1">signature.forceReset = </span><span class="s2">true</span>
+    <span class="s1">signature.fullKey = fullKey</span>
+    <span class="s2">return </span><span class="s1">fullKey</span>
+  <span class="s1">}</span>
+
+  <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; hooks.length; i++) {</span>
+    <span class="s1">const hook = hooks[i]</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">hook !== </span><span class="s3">'function'</span><span class="s1">) {</span>
+      <span class="s0">// Something's wrong. Assume we need to remount.</span>
+      <span class="s1">signature.forceReset = </span><span class="s2">true</span>
+      <span class="s1">signature.fullKey = fullKey</span>
+      <span class="s2">return </span><span class="s1">fullKey</span>
+    <span class="s1">}</span>
+    <span class="s1">const nestedHookSignature = allSignaturesByType.get(hook)</span>
+    <span class="s2">if </span><span class="s1">(nestedHookSignature === undefined) {</span>
+      <span class="s0">// No signature means Hook wasn't in the source code, e.g. in a library.</span>
+      <span class="s0">// We'll skip it because we can assume it won't change during this session.</span>
+      <span class="s2">continue</span>
+    <span class="s1">}</span>
+    <span class="s1">const nestedHookKey = computeFullKey(nestedHookSignature)</span>
+    <span class="s2">if </span><span class="s1">(nestedHookSignature.forceReset) {</span>
+      <span class="s1">signature.forceReset = </span><span class="s2">true</span>
+    <span class="s1">}</span>
+    <span class="s1">fullKey += </span><span class="s3">'</span><span class="s2">\n</span><span class="s3">---</span><span class="s2">\n</span><span class="s3">' </span><span class="s1">+ nestedHookKey</span>
+  <span class="s1">}</span>
+
+  <span class="s1">signature.fullKey = fullKey</span>
+  <span class="s2">return </span><span class="s1">fullKey</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">haveEqualSignatures(prevType, nextType) {</span>
+  <span class="s1">const prevSignature = allSignaturesByType.get(prevType)</span>
+  <span class="s1">const nextSignature = allSignaturesByType.get(nextType)</span>
+
+  <span class="s2">if </span><span class="s1">(prevSignature === undefined &amp;&amp; nextSignature === undefined) {</span>
+    <span class="s2">return true</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(prevSignature === undefined || nextSignature === undefined) {</span>
+    <span class="s2">return false</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(computeFullKey(prevSignature) !== computeFullKey(nextSignature)) {</span>
+    <span class="s2">return false</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(nextSignature.forceReset) {</span>
+    <span class="s2">return false</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return true</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">isReactClass(type) {</span>
+  <span class="s2">return </span><span class="s1">type.prototype &amp;&amp; type.prototype.isReactComponent</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">canPreserveStateBetween(prevType, nextType) {</span>
+  <span class="s2">if </span><span class="s1">(isReactClass(prevType) || isReactClass(nextType)) {</span>
+    <span class="s2">return false</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(haveEqualSignatures(prevType, nextType)) {</span>
+    <span class="s2">return true</span>
+  <span class="s1">}</span>
+  <span class="s2">return false</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">resolveFamily(type) {</span>
+  <span class="s0">// Only check updated types to keep lookups fast.</span>
+  <span class="s2">return </span><span class="s1">updatedFamiliesByType.get(type)</span>
+<span class="s1">}</span>
+
+<span class="s0">// This is a safety mechanism to protect against rogue getters and Proxies.</span>
+<span class="s2">function </span><span class="s1">getProperty(object, property) {</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s2">return </span><span class="s1">object[property]</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+    <span class="s0">// Intentionally ignore.</span>
+    <span class="s2">return </span><span class="s1">undefined</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">performReactRefresh() {</span>
+  <span class="s2">if </span><span class="s1">(pendingUpdates.length === </span><span class="s4">0</span><span class="s1">) {</span>
+    <span class="s2">return null</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(isPerformingRefresh) {</span>
+    <span class="s2">return null</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isPerformingRefresh = </span><span class="s2">true</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s1">const staleFamilies = </span><span class="s2">new </span><span class="s1">Set()</span>
+    <span class="s1">const updatedFamilies = </span><span class="s2">new </span><span class="s1">Set()</span>
+
+    <span class="s1">const updates = pendingUpdates</span>
+    <span class="s1">pendingUpdates = []</span>
+    <span class="s1">updates.forEach(([family, nextType]) =&gt; {</span>
+      <span class="s0">// Now that we got a real edit, we can create associations</span>
+      <span class="s0">// that will be read by the React reconciler.</span>
+      <span class="s1">const prevType = family.current</span>
+      <span class="s1">updatedFamiliesByType.set(prevType, family)</span>
+      <span class="s1">updatedFamiliesByType.set(nextType, family)</span>
+      <span class="s1">family.current = nextType</span>
+
+      <span class="s0">// Determine whether this should be a re-render or a re-mount.</span>
+      <span class="s2">if </span><span class="s1">(canPreserveStateBetween(prevType, nextType)) {</span>
+        <span class="s1">updatedFamilies.add(family)</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">staleFamilies.add(family)</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+
+    <span class="s0">// TODO: rename these fields to something more meaningful.</span>
+    <span class="s1">const update = {</span>
+      <span class="s1">updatedFamilies, </span><span class="s0">// Families that will re-render preserving state</span>
+      <span class="s1">staleFamilies, </span><span class="s0">// Families that will be remounted</span>
+    <span class="s1">}</span>
+
+    <span class="s1">helpersByRendererID.forEach((helpers) =&gt; {</span>
+      <span class="s0">// Even if there are no roots, set the handler on first update.</span>
+      <span class="s0">// This ensures that if *new* roots are mounted, they'll use the resolve handler.</span>
+      <span class="s1">helpers.setRefreshHandler(resolveFamily)</span>
+    <span class="s1">})</span>
+
+    <span class="s1">let didError = </span><span class="s2">false</span>
+    <span class="s1">let firstError = </span><span class="s2">null</span>
+
+    <span class="s0">// We snapshot maps and sets that are mutated during commits.</span>
+    <span class="s0">// If we don't do this, there is a risk they will be mutated while</span>
+    <span class="s0">// we iterate over them. For example, trying to recover a failed root</span>
+    <span class="s0">// may cause another root to be added to the failed list -- an infinite loop.</span>
+    <span class="s1">const failedRootsSnapshot = </span><span class="s2">new </span><span class="s1">Set(failedRoots)</span>
+    <span class="s1">const mountedRootsSnapshot = </span><span class="s2">new </span><span class="s1">Set(mountedRoots)</span>
+    <span class="s1">const helpersByRootSnapshot = </span><span class="s2">new </span><span class="s1">Map(helpersByRoot)</span>
+
+    <span class="s1">failedRootsSnapshot.forEach((root) =&gt; {</span>
+      <span class="s1">const helpers = helpersByRootSnapshot.get(root)</span>
+      <span class="s2">if </span><span class="s1">(helpers === undefined) {</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span>
+          <span class="s3">'Could not find helpers for a root. This is a bug in React Refresh.'</span><span class="s1">,</span>
+        <span class="s1">)</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(!failedRoots.has(root)) {</span>
+        <span class="s0">// No longer failed.</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(rootElements === </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s2">return</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(!rootElements.has(root)) {</span>
+        <span class="s2">return</span>
+      <span class="s1">}</span>
+      <span class="s1">const element = rootElements.get(root)</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">helpers.scheduleRoot(root, element)</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s2">if </span><span class="s1">(!didError) {</span>
+          <span class="s1">didError = </span><span class="s2">true</span>
+          <span class="s1">firstError = err</span>
+        <span class="s1">}</span>
+        <span class="s0">// Keep trying other roots.</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+    <span class="s1">mountedRootsSnapshot.forEach((root) =&gt; {</span>
+      <span class="s1">const helpers = helpersByRootSnapshot.get(root)</span>
+      <span class="s2">if </span><span class="s1">(helpers === undefined) {</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span>
+          <span class="s3">'Could not find helpers for a root. This is a bug in React Refresh.'</span><span class="s1">,</span>
+        <span class="s1">)</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(!mountedRoots.has(root)) {</span>
+        <span class="s0">// No longer mounted.</span>
+      <span class="s1">}</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">helpers.scheduleRefresh(root, update)</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s2">if </span><span class="s1">(!didError) {</span>
+          <span class="s1">didError = </span><span class="s2">true</span>
+          <span class="s1">firstError = err</span>
+        <span class="s1">}</span>
+        <span class="s0">// Keep trying other roots.</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+    <span class="s2">if </span><span class="s1">(didError) {</span>
+      <span class="s2">throw </span><span class="s1">firstError</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">update</span>
+  <span class="s1">} </span><span class="s2">finally </span><span class="s1">{</span>
+    <span class="s1">isPerformingRefresh = </span><span class="s2">false</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">export </span><span class="s2">function </span><span class="s1">register(type, id) {</span>
+  <span class="s2">if </span><span class="s1">(type === </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">return</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">type !== </span><span class="s3">'function' </span><span class="s1">&amp;&amp; </span><span class="s2">typeof </span><span class="s1">type !== </span><span class="s3">'object'</span><span class="s1">) {</span>
+    <span class="s2">return</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// This can happen in an edge case, e.g. if we register</span>
+  <span class="s0">// return value of a HOC but it returns a cached component.</span>
+  <span class="s0">// Ignore anything but the first registration for each type.</span>
+  <span class="s2">if </span><span class="s1">(allFamiliesByType.has(type)) {</span>
+    <span class="s2">return</span>
+  <span class="s1">}</span>
+  <span class="s0">// Create family or remember to update it.</span>
+  <span class="s0">// None of this bookkeeping affects reconciliation</span>
+  <span class="s0">// until the first performReactRefresh() call above.</span>
+  <span class="s1">let family = allFamiliesByID.get(id)</span>
+  <span class="s2">if </span><span class="s1">(family === undefined) {</span>
+    <span class="s1">family = { current: type }</span>
+    <span class="s1">allFamiliesByID.set(id, family)</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">pendingUpdates.push([family, type])</span>
+  <span class="s1">}</span>
+  <span class="s1">allFamiliesByType.set(type, family)</span>
+
+  <span class="s0">// Visit inner types because we might not have registered them.</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">type === </span><span class="s3">'object' </span><span class="s1">&amp;&amp; type !== </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">switch </span><span class="s1">(getProperty(type, </span><span class="s3">'$$typeof'</span><span class="s1">)) {</span>
+      <span class="s2">case </span><span class="s1">REACT_FORWARD_REF_TYPE:</span>
+        <span class="s1">register(type.render, id + </span><span class="s3">'$render'</span><span class="s1">)</span>
+        <span class="s2">break</span>
+      <span class="s2">case </span><span class="s1">REACT_MEMO_TYPE:</span>
+        <span class="s1">register(type.type, id + </span><span class="s3">'$type'</span><span class="s1">)</span>
+        <span class="s2">break</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">setSignature(type, key, forceReset, getCustomHooks) {</span>
+  <span class="s2">if </span><span class="s1">(!allSignaturesByType.has(type)) {</span>
+    <span class="s1">allSignaturesByType.set(type, {</span>
+      <span class="s1">forceReset,</span>
+      <span class="s1">ownKey: key,</span>
+      <span class="s1">fullKey: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">getCustomHooks: getCustomHooks || (() =&gt; []),</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+  <span class="s0">// Visit inner types because we might not have signed them.</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">type === </span><span class="s3">'object' </span><span class="s1">&amp;&amp; type !== </span><span class="s2">null</span><span class="s1">) {</span>
+    <span class="s2">switch </span><span class="s1">(getProperty(type, </span><span class="s3">'$$typeof'</span><span class="s1">)) {</span>
+      <span class="s2">case </span><span class="s1">REACT_FORWARD_REF_TYPE:</span>
+        <span class="s1">setSignature(type.render, key, forceReset, getCustomHooks)</span>
+        <span class="s2">break</span>
+      <span class="s2">case </span><span class="s1">REACT_MEMO_TYPE:</span>
+        <span class="s1">setSignature(type.type, key, forceReset, getCustomHooks)</span>
+        <span class="s2">break</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">// This is lazily called during first render for a type.</span>
+<span class="s0">// It captures Hook list at that time so inline requires don't break comparisons.</span>
+<span class="s2">function </span><span class="s1">collectCustomHooksForSignature(type) {</span>
+  <span class="s1">const signature = allSignaturesByType.get(type)</span>
+  <span class="s2">if </span><span class="s1">(signature !== undefined) {</span>
+    <span class="s1">computeFullKey(signature)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">export </span><span class="s2">function </span><span class="s1">injectIntoGlobalHook(globalObject) {</span>
+  <span class="s0">// For React Native, the global hook will be set up by require('react-devtools-core').</span>
+  <span class="s0">// That code will run before us. So we need to monkeypatch functions on existing hook.</span>
+
+  <span class="s0">// For React Web, the global hook will be set up by the extension.</span>
+  <span class="s0">// This will also run before us.</span>
+  <span class="s1">let hook = globalObject.__REACT_DEVTOOLS_GLOBAL_HOOK__</span>
+  <span class="s2">if </span><span class="s1">(hook === undefined) {</span>
+    <span class="s0">// However, if there is no DevTools extension, we'll need to set up the global hook ourselves.</span>
+    <span class="s0">// Note that in this case it's important that renderer code runs *after* this method call.</span>
+    <span class="s0">// Otherwise, the renderer will think that there is no global hook, and won't do the injection.</span>
+    <span class="s1">let nextID = </span><span class="s4">0</span>
+    <span class="s1">globalObject.__REACT_DEVTOOLS_GLOBAL_HOOK__ = hook = {</span>
+      <span class="s1">renderers: </span><span class="s2">new </span><span class="s1">Map(),</span>
+      <span class="s1">supportsFiber: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">inject: (injected) =&gt; nextID++,</span>
+      <span class="s1">onScheduleFiberRoot: (id, root, children) =&gt; {},</span>
+      <span class="s1">onCommitFiberRoot: (id, root, maybePriorityLevel, didError) =&gt; {},</span>
+      <span class="s1">onCommitFiberUnmount() {},</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(hook.isDisabled) {</span>
+    <span class="s0">// This isn't a real property on the hook, but it can be set to opt out</span>
+    <span class="s0">// of DevTools integration and associated warnings and logs.</span>
+    <span class="s0">// Using console['warn'] to evade Babel and ESLint</span>
+    <span class="s1">console[</span><span class="s3">'warn'</span><span class="s1">](</span>
+      <span class="s3">'Something has shimmed the React DevTools global hook (__REACT_DEVTOOLS_GLOBAL_HOOK__). ' </span><span class="s1">+</span>
+        <span class="s3">'Fast Refresh is not compatible with this shim and will be disabled.'</span><span class="s1">,</span>
+    <span class="s1">)</span>
+    <span class="s2">return</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Here, we just want to get a reference to scheduleRefresh.</span>
+  <span class="s1">const oldInject = hook.inject</span>
+  <span class="s1">hook.inject = </span><span class="s2">function </span><span class="s1">(injected) {</span>
+    <span class="s1">const id = oldInject.apply(</span><span class="s2">this</span><span class="s1">, arguments)</span>
+    <span class="s2">if </span><span class="s1">(</span>
+      <span class="s2">typeof </span><span class="s1">injected.scheduleRefresh === </span><span class="s3">'function' </span><span class="s1">&amp;&amp;</span>
+      <span class="s2">typeof </span><span class="s1">injected.setRefreshHandler === </span><span class="s3">'function'</span>
+    <span class="s1">) {</span>
+      <span class="s0">// This version supports React Refresh.</span>
+      <span class="s1">helpersByRendererID.set(id, injected)</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">id</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// Do the same for any already injected roots.</span>
+  <span class="s0">// This is useful if ReactDOM has already been initialized.</span>
+  <span class="s0">// https://github.com/facebook/react/issues/17626</span>
+  <span class="s1">hook.renderers.forEach((injected, id) =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(</span>
+      <span class="s2">typeof </span><span class="s1">injected.scheduleRefresh === </span><span class="s3">'function' </span><span class="s1">&amp;&amp;</span>
+      <span class="s2">typeof </span><span class="s1">injected.setRefreshHandler === </span><span class="s3">'function'</span>
+    <span class="s1">) {</span>
+      <span class="s0">// This version supports React Refresh.</span>
+      <span class="s1">helpersByRendererID.set(id, injected)</span>
+    <span class="s1">}</span>
+  <span class="s1">})</span>
+
+  <span class="s0">// We also want to track currently mounted roots.</span>
+  <span class="s1">const oldOnCommitFiberRoot = hook.onCommitFiberRoot</span>
+  <span class="s1">const oldOnScheduleFiberRoot = hook.onScheduleFiberRoot || (() =&gt; {})</span>
+  <span class="s1">hook.onScheduleFiberRoot = </span><span class="s2">function </span><span class="s1">(id, root, children) {</span>
+    <span class="s2">if </span><span class="s1">(!isPerformingRefresh) {</span>
+      <span class="s0">// If it was intentionally scheduled, don't attempt to restore.</span>
+      <span class="s0">// This includes intentionally scheduled unmounts.</span>
+      <span class="s1">failedRoots.</span><span class="s2">delete</span><span class="s1">(root)</span>
+      <span class="s2">if </span><span class="s1">(rootElements !== </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">rootElements.set(root, children)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">oldOnScheduleFiberRoot.apply(</span><span class="s2">this</span><span class="s1">, arguments)</span>
+  <span class="s1">}</span>
+  <span class="s1">hook.onCommitFiberRoot = </span><span class="s2">function </span><span class="s1">(id, root, maybePriorityLevel, didError) {</span>
+    <span class="s1">const helpers = helpersByRendererID.get(id)</span>
+    <span class="s2">if </span><span class="s1">(helpers !== undefined) {</span>
+      <span class="s1">helpersByRoot.set(root, helpers)</span>
+
+      <span class="s1">const current = root.current</span>
+      <span class="s1">const alternate = current.alternate</span>
+
+      <span class="s0">// We need to determine whether this root has just (un)mounted.</span>
+      <span class="s0">// This logic is copy-pasted from similar logic in the DevTools backend.</span>
+      <span class="s0">// If this breaks with some refactoring, you'll want to update DevTools too.</span>
+
+      <span class="s2">if </span><span class="s1">(alternate !== </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">const wasMounted =</span>
+          <span class="s1">alternate.memoizedState != </span><span class="s2">null </span><span class="s1">&amp;&amp;</span>
+          <span class="s1">alternate.memoizedState.element != </span><span class="s2">null </span><span class="s1">&amp;&amp;</span>
+          <span class="s1">mountedRoots.has(root)</span>
+
+        <span class="s1">const isMounted =</span>
+          <span class="s1">current.memoizedState != </span><span class="s2">null </span><span class="s1">&amp;&amp; current.memoizedState.element != </span><span class="s2">null</span>
+
+        <span class="s2">if </span><span class="s1">(!wasMounted &amp;&amp; isMounted) {</span>
+          <span class="s0">// Mount a new root.</span>
+          <span class="s1">mountedRoots.add(root)</span>
+          <span class="s1">failedRoots.</span><span class="s2">delete</span><span class="s1">(root)</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(wasMounted &amp;&amp; isMounted) {</span>
+          <span class="s0">// Update an existing root.</span>
+          <span class="s0">// This doesn't affect our mounted root Set.</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(wasMounted &amp;&amp; !isMounted) {</span>
+          <span class="s0">// Unmount an existing root.</span>
+          <span class="s1">mountedRoots.</span><span class="s2">delete</span><span class="s1">(root)</span>
+          <span class="s2">if </span><span class="s1">(didError) {</span>
+            <span class="s0">// We'll remount it on future edits.</span>
+            <span class="s1">failedRoots.add(root)</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">helpersByRoot.</span><span class="s2">delete</span><span class="s1">(root)</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(!wasMounted &amp;&amp; !isMounted) {</span>
+          <span class="s2">if </span><span class="s1">(didError) {</span>
+            <span class="s0">// We'll remount it on future edits.</span>
+            <span class="s1">failedRoots.add(root)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s0">// Mount a new root.</span>
+        <span class="s1">mountedRoots.add(root)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// Always call the decorated DevTools hook.</span>
+    <span class="s2">return </span><span class="s1">oldOnCommitFiberRoot.apply(</span><span class="s2">this</span><span class="s1">, arguments)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">// This is a wrapper over more primitive functions for setting signature.</span>
+<span class="s0">// Signatures let us decide whether the Hook order has changed on refresh.</span>
+<span class="s0">//</span>
+<span class="s0">// This function is intended to be used as a transform target, e.g.:</span>
+<span class="s0">// var _s = createSignatureFunctionForTransform()</span>
+<span class="s0">//</span>
+<span class="s0">// function Hello() {</span>
+<span class="s0">//   const [foo, setFoo] = useState(0);</span>
+<span class="s0">//   const value = useCustomHook();</span>
+<span class="s0">//   _s(); /* Call without arguments triggers collecting the custom Hook list.</span>
+<span class="s0">//          * This doesn't happen during the module evaluation because we</span>
+<span class="s0">//          * don't want to change the module order with inline requires.</span>
+<span class="s0">//          * Next calls are noops. */</span>
+<span class="s0">//   return &lt;h1&gt;Hi&lt;/h1&gt;;</span>
+<span class="s0">// }</span>
+<span class="s0">//</span>
+<span class="s0">// /* Call with arguments attaches the signature to the type: */</span>
+<span class="s0">// _s(</span>
+<span class="s0">//   Hello,</span>
+<span class="s0">//   'useState{[foo, setFoo]}(0)',</span>
+<span class="s0">//   () =&gt; [useCustomHook], /* Lazy to avoid triggering inline requires */</span>
+<span class="s0">// );</span>
+<span class="s1">export </span><span class="s2">function </span><span class="s1">createSignatureFunctionForTransform() {</span>
+  <span class="s1">let savedType</span>
+  <span class="s1">let hasCustomHooks</span>
+  <span class="s1">let didCollectHooks = </span><span class="s2">false</span>
+  <span class="s2">return function </span><span class="s1">(type, key, forceReset, getCustomHooks) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">key === </span><span class="s3">'string'</span><span class="s1">) {</span>
+      <span class="s0">// We're in the initial phase that associates signatures</span>
+      <span class="s0">// with the functions. Note this may be called multiple times</span>
+      <span class="s0">// in HOC chains like _s(hoc1(_s(hoc2(_s(actualFunction))))).</span>
+      <span class="s2">if </span><span class="s1">(!savedType) {</span>
+        <span class="s0">// We're in the innermost call, so this is the actual type.</span>
+        <span class="s0">// $FlowFixMe[escaped-generic] discovered when updating Flow</span>
+        <span class="s1">savedType = type</span>
+        <span class="s1">hasCustomHooks = </span><span class="s2">typeof </span><span class="s1">getCustomHooks === </span><span class="s3">'function'</span>
+      <span class="s1">}</span>
+      <span class="s0">// Set the signature for all types (even wrappers!) in case</span>
+      <span class="s0">// they have no signatures of their own. This is to prevent</span>
+      <span class="s0">// problems like https://github.com/facebook/react/issues/20417.</span>
+      <span class="s2">if </span><span class="s1">(</span>
+        <span class="s1">type != </span><span class="s2">null </span><span class="s1">&amp;&amp;</span>
+        <span class="s1">(</span><span class="s2">typeof </span><span class="s1">type === </span><span class="s3">'function' </span><span class="s1">|| </span><span class="s2">typeof </span><span class="s1">type === </span><span class="s3">'object'</span><span class="s1">)</span>
+      <span class="s1">) {</span>
+        <span class="s1">setSignature(type, key, forceReset, getCustomHooks)</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">type</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s0">// We're in the _s() call without arguments, which means</span>
+      <span class="s0">// this is the time to collect custom Hook signatures.</span>
+      <span class="s0">// Only do this once. This path is hot and runs *inside* every render!</span>
+      <span class="s2">if </span><span class="s1">(!didCollectHooks &amp;&amp; hasCustomHooks) {</span>
+        <span class="s1">didCollectHooks = </span><span class="s2">true</span>
+        <span class="s1">collectCustomHooksForSignature(savedType)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">isLikelyComponentType(type) {</span>
+  <span class="s2">switch </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">type) {</span>
+    <span class="s2">case </span><span class="s3">'function'</span><span class="s1">: {</span>
+      <span class="s0">// First, deal with classes.</span>
+      <span class="s2">if </span><span class="s1">(type.prototype != </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s2">if </span><span class="s1">(type.prototype.isReactComponent) {</span>
+          <span class="s0">// React class.</span>
+          <span class="s2">return true</span>
+        <span class="s1">}</span>
+        <span class="s1">const ownNames = Object.getOwnPropertyNames(type.prototype)</span>
+        <span class="s2">if </span><span class="s1">(ownNames.length &gt; </span><span class="s4">1 </span><span class="s1">|| ownNames[</span><span class="s4">0</span><span class="s1">] !== </span><span class="s3">'constructor'</span><span class="s1">) {</span>
+          <span class="s0">// This looks like a class.</span>
+          <span class="s2">return false</span>
+        <span class="s1">}</span>
+
+        <span class="s2">if </span><span class="s1">(type.prototype.__proto__ !== Object.prototype) {</span>
+          <span class="s0">// It has a superclass.</span>
+          <span class="s2">return false</span>
+        <span class="s1">}</span>
+        <span class="s0">// Pass through.</span>
+        <span class="s0">// This looks like a regular function with empty prototype.</span>
+      <span class="s1">}</span>
+      <span class="s0">// For plain functions and arrows, use name as a heuristic.</span>
+      <span class="s1">const name = type.name || type.displayName</span>
+      <span class="s2">return typeof </span><span class="s1">name === </span><span class="s3">'string' </span><span class="s1">&amp;&amp; /^[A-Z]/.test(name)</span>
+    <span class="s1">}</span>
+    <span class="s2">case </span><span class="s3">'object'</span><span class="s1">: {</span>
+      <span class="s2">if </span><span class="s1">(type != </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s2">switch </span><span class="s1">(getProperty(type, </span><span class="s3">'$$typeof'</span><span class="s1">)) {</span>
+          <span class="s2">case </span><span class="s1">REACT_FORWARD_REF_TYPE:</span>
+          <span class="s2">case </span><span class="s1">REACT_MEMO_TYPE:</span>
+            <span class="s0">// Definitely React components.</span>
+            <span class="s2">return true</span>
+          <span class="s2">default</span><span class="s1">:</span>
+            <span class="s2">return false</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">return false</span>
+    <span class="s1">}</span>
+    <span class="s2">default</span><span class="s1">: {</span>
+      <span class="s2">return false</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">isCompoundComponent(type) {</span>
+  <span class="s2">if </span><span class="s1">(!isPlainObject(type)) </span><span class="s2">return false</span>
+  <span class="s2">for </span><span class="s1">(const key </span><span class="s2">in </span><span class="s1">type) {</span>
+    <span class="s2">if </span><span class="s1">(!isLikelyComponentType(type[key])) </span><span class="s2">return false</span>
+  <span class="s1">}</span>
+  <span class="s2">return true</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">isPlainObject(obj) {</span>
+  <span class="s2">return </span><span class="s1">(</span>
+    <span class="s1">Object.prototype.toString.call(obj) === </span><span class="s3">'[object Object]' </span><span class="s1">&amp;&amp;</span>
+    <span class="s1">(obj.constructor === Object || obj.constructor === undefined)</span>
+  <span class="s1">)</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Plugin utils 
+ */</span>
+
+<span class="s0">// Taken from https://github.com/pmmmwh/react-refresh-webpack-plugin/blob/main/lib/runtime/RefreshUtils.js#L141</span>
+<span class="s0">// This allows to resister components not detected by SWC like styled component</span>
+<span class="s1">export </span><span class="s2">function </span><span class="s1">registerExportsForReactRefresh(filename, moduleExports) {</span>
+  <span class="s2">for </span><span class="s1">(const key </span><span class="s2">in </span><span class="s1">moduleExports) {</span>
+    <span class="s2">if </span><span class="s1">(key === </span><span class="s3">'__esModule'</span><span class="s1">) </span><span class="s2">continue</span>
+    <span class="s1">const exportValue = moduleExports[key]</span>
+    <span class="s2">if </span><span class="s1">(isLikelyComponentType(exportValue)) {</span>
+      <span class="s0">// 'export' is required to avoid key collision when renamed exports that</span>
+      <span class="s0">// shadow a local component name: https://github.com/vitejs/vite-plugin-react/issues/116</span>
+      <span class="s0">// The register function has an identity check to not register twice the same component,</span>
+      <span class="s0">// so this is safe to not used the same key here.</span>
+      <span class="s1">register(exportValue, filename + </span><span class="s3">' export ' </span><span class="s1">+ key)</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isCompoundComponent(exportValue)) {</span>
+      <span class="s2">for </span><span class="s1">(const subKey </span><span class="s2">in </span><span class="s1">exportValue) {</span>
+        <span class="s1">register(</span>
+          <span class="s1">exportValue[subKey],</span>
+          <span class="s1">filename + </span><span class="s3">' export ' </span><span class="s1">+ key + </span><span class="s3">'-' </span><span class="s1">+ subKey,</span>
+        <span class="s1">)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">debounce(fn, delay) {</span>
+  <span class="s1">let handle</span>
+  <span class="s2">return </span><span class="s1">() =&gt; {</span>
+    <span class="s1">clearTimeout(handle)</span>
+    <span class="s1">handle = setTimeout(fn, delay)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">const hooks = []</span>
+<span class="s1">window.__registerBeforePerformReactRefresh = (cb) =&gt; {</span>
+  <span class="s1">hooks.push(cb)</span>
+<span class="s1">}</span>
+<span class="s1">const enqueueUpdate = debounce(async () =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(hooks.length) await Promise.all(hooks.map((cb) =&gt; cb()))</span>
+  <span class="s1">performReactRefresh()</span>
+<span class="s1">}, </span><span class="s4">16</span><span class="s1">)</span>
+
+<span class="s1">export </span><span class="s2">function </span><span class="s1">validateRefreshBoundaryAndEnqueueUpdate(</span>
+  <span class="s1">id,</span>
+  <span class="s1">prevExports,</span>
+  <span class="s1">nextExports,</span>
+<span class="s1">) {</span>
+  <span class="s1">const ignoredExports = window.__getReactRefreshIgnoredExports?.({ id }) ?? []</span>
+  <span class="s2">if </span><span class="s1">(</span>
+    <span class="s1">predicateOnExport(</span>
+      <span class="s1">ignoredExports,</span>
+      <span class="s1">prevExports,</span>
+      <span class="s1">(key) =&gt; key </span><span class="s2">in </span><span class="s1">nextExports,</span>
+    <span class="s1">) !== </span><span class="s2">true</span>
+  <span class="s1">) {</span>
+    <span class="s2">return </span><span class="s3">'Could not Fast Refresh (export removed)'</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(</span>
+    <span class="s1">predicateOnExport(</span>
+      <span class="s1">ignoredExports,</span>
+      <span class="s1">nextExports,</span>
+      <span class="s1">(key) =&gt; key </span><span class="s2">in </span><span class="s1">prevExports,</span>
+    <span class="s1">) !== </span><span class="s2">true</span>
+  <span class="s1">) {</span>
+    <span class="s2">return </span><span class="s3">'Could not Fast Refresh (new export)'</span>
+  <span class="s1">}</span>
+
+  <span class="s1">let hasExports = </span><span class="s2">false</span>
+  <span class="s1">const allExportsAreComponentsOrUnchanged = predicateOnExport(</span>
+    <span class="s1">ignoredExports,</span>
+    <span class="s1">nextExports,</span>
+    <span class="s1">(key, value) =&gt; {</span>
+      <span class="s1">hasExports = </span><span class="s2">true</span>
+      <span class="s2">if </span><span class="s1">(isLikelyComponentType(value)) </span><span class="s2">return true</span>
+      <span class="s2">if </span><span class="s1">(isCompoundComponent(value)) </span><span class="s2">return true</span>
+      <span class="s2">return </span><span class="s1">prevExports[key] === nextExports[key]</span>
+    <span class="s1">},</span>
+  <span class="s1">)</span>
+  <span class="s2">if </span><span class="s1">(hasExports &amp;&amp; allExportsAreComponentsOrUnchanged === </span><span class="s2">true</span><span class="s1">) {</span>
+    <span class="s1">enqueueUpdate()</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s2">return </span><span class="s1">`Could not Fast Refresh (</span><span class="s3">&quot;${allExportsAreComponentsOrUnchanged}&quot; </span><span class="s1">export is incompatible). Learn more at __README_URL__#consistent-components-exports`</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">predicateOnExport(ignoredExports, moduleExports, predicate) {</span>
+  <span class="s2">for </span><span class="s1">(const key </span><span class="s2">in </span><span class="s1">moduleExports) {</span>
+    <span class="s2">if </span><span class="s1">(ignoredExports.includes(key)) </span><span class="s2">continue</span>
+    <span class="s2">if </span><span class="s1">(!predicate(key, moduleExports[key])) </span><span class="s2">return </span><span class="s1">key</span>
+  <span class="s1">}</span>
+  <span class="s2">return true</span>
+<span class="s1">}</span>
+
+<span class="s0">// Hides vite-ignored dynamic import so that Vite can skip analysis if no other</span>
+<span class="s0">// dynamic import is present (https://github.com/vitejs/vite/pull/12732)</span>
+<span class="s1">export const __hmr_import = (module) =&gt; import(</span><span class="s0">/* @vite-ignore */ </span><span class="s1">module)</span>
+
+<span class="s0">// For backwards compatibility with @vitejs/plugin-react.</span>
+<span class="s1">export </span><span class="s2">default </span><span class="s1">{ injectIntoGlobalHook }</span>
+</pre>
+</body>
+</html>

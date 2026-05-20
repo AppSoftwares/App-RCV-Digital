@@ -1,0 +1,353 @@
+<html>
+<head>
+<title>spring.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+spring.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ millisecondsToSeconds, clamp, secondsToMilliseconds, warning } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ generateLinearEasing } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../waapi/utils/linear.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ calcGeneratorDuration, maxGeneratorDuration } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/calc-duration.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createGeneratorEasing } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/create-generator-easing.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">springDefaults = {</span>
+    <span class="s2">// </span><span class="s4">Default spring physics</span>
+    <span class="s1">stiffness</span><span class="s2">: </span><span class="s5">100</span><span class="s2">,</span>
+    <span class="s1">damping</span><span class="s2">: </span><span class="s5">10</span><span class="s2">,</span>
+    <span class="s1">mass</span><span class="s2">: </span><span class="s5">1.0</span><span class="s2">,</span>
+    <span class="s1">velocity</span><span class="s2">: </span><span class="s5">0.0</span><span class="s2">,</span>
+    <span class="s2">// </span><span class="s4">Default duration/bounce-based options</span>
+    <span class="s1">duration</span><span class="s2">: </span><span class="s5">800</span><span class="s2">, // </span><span class="s4">in ms</span>
+    <span class="s1">bounce</span><span class="s2">: </span><span class="s5">0.3</span><span class="s2">,</span>
+    <span class="s1">visualDuration</span><span class="s2">: </span><span class="s5">0.3</span><span class="s2">, // </span><span class="s4">in seconds</span>
+    <span class="s2">// </span><span class="s4">Rest thresholds</span>
+    <span class="s1">restSpeed</span><span class="s2">: {</span>
+        <span class="s1">granular</span><span class="s2">: </span><span class="s5">0.01</span><span class="s2">,</span>
+        <span class="s1">default</span><span class="s2">: </span><span class="s5">2</span><span class="s2">,</span>
+    <span class="s2">},</span>
+    <span class="s1">restDelta</span><span class="s2">: {</span>
+        <span class="s1">granular</span><span class="s2">: </span><span class="s5">0.005</span><span class="s2">,</span>
+        <span class="s1">default</span><span class="s2">: </span><span class="s5">0.5</span><span class="s2">,</span>
+    <span class="s2">},</span>
+    <span class="s2">// </span><span class="s4">Limits</span>
+    <span class="s1">minDuration</span><span class="s2">: </span><span class="s5">0.01</span><span class="s2">, // </span><span class="s4">in seconds</span>
+    <span class="s1">maxDuration</span><span class="s2">: </span><span class="s5">10.0</span><span class="s2">, // </span><span class="s4">in seconds</span>
+    <span class="s1">minDamping</span><span class="s2">: </span><span class="s5">0.05</span><span class="s2">,</span>
+    <span class="s1">maxDamping</span><span class="s2">: </span><span class="s5">1</span><span class="s2">,</span>
+<span class="s2">};</span>
+<span class="s0">function </span><span class="s6">calcAngularFreq</span><span class="s2">(undampedFreq, dampingRatio) {</span>
+    <span class="s0">return </span><span class="s2">undampedFreq * Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s5">1 </span><span class="s2">- dampingRatio * dampingRatio</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">const </span><span class="s2">rootIterations = </span><span class="s5">12</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s6">approximateRoot</span><span class="s2">(envelope, derivative, initialGuess) {</span>
+    <span class="s0">let </span><span class="s2">result = initialGuess;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">1</span><span class="s2">; i &lt; rootIterations; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">result = result - </span><span class="s6">envelope</span><span class="s1">(</span><span class="s2">result</span><span class="s1">) </span><span class="s2">/ </span><span class="s6">derivative</span><span class="s1">(</span><span class="s2">result</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">result;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* This is ported from the Framer implementation of duration-based spring resolution. 
+ </span><span class="s2">*/</span>
+<span class="s0">const </span><span class="s2">safeMin = </span><span class="s5">0.001</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s6">findSpring</span><span class="s2">({ duration = springDefaults.duration, bounce = springDefaults.bounce, velocity = springDefaults.velocity, mass = springDefaults.mass, }) {</span>
+    <span class="s0">let </span><span class="s2">envelope;</span>
+    <span class="s0">let </span><span class="s2">derivative;</span>
+    <span class="s6">warning</span><span class="s1">(</span><span class="s2">duration &lt;= </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">springDefaults.maxDuration</span><span class="s1">)</span><span class="s2">, &quot;</span><span class="s3">Spring duration must be 10 seconds or less</span><span class="s2">&quot;, &quot;</span><span class="s3">spring-duration-limit</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">dampingRatio = </span><span class="s5">1 </span><span class="s2">- bounce;</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Restrict dampingRatio and duration to within acceptable ranges. 
+     </span><span class="s2">*/</span>
+    <span class="s2">dampingRatio = </span><span class="s6">clamp</span><span class="s1">(</span><span class="s2">springDefaults.minDamping, springDefaults.maxDamping, dampingRatio</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">duration = </span><span class="s6">clamp</span><span class="s1">(</span><span class="s2">springDefaults.minDuration, springDefaults.maxDuration, </span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">duration</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">dampingRatio &lt; </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Underdamped spring 
+         </span><span class="s2">*/</span>
+        <span class="s6">envelope </span><span class="s2">= (undampedFreq) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">exponentialDecay = undampedFreq * dampingRatio;</span>
+            <span class="s0">const </span><span class="s2">delta = exponentialDecay * duration;</span>
+            <span class="s0">const </span><span class="s2">a = exponentialDecay - velocity;</span>
+            <span class="s0">const </span><span class="s2">b = </span><span class="s6">calcAngularFreq</span><span class="s1">(</span><span class="s2">undampedFreq, dampingRatio</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">c = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-delta</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">safeMin - </span><span class="s1">(</span><span class="s2">a / b</span><span class="s1">) </span><span class="s2">* c;</span>
+        <span class="s2">};</span>
+        <span class="s6">derivative </span><span class="s2">= (undampedFreq) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">exponentialDecay = undampedFreq * dampingRatio;</span>
+            <span class="s0">const </span><span class="s2">delta = exponentialDecay * duration;</span>
+            <span class="s0">const </span><span class="s2">d = delta * velocity + velocity;</span>
+            <span class="s0">const </span><span class="s2">e = Math.</span><span class="s6">pow</span><span class="s1">(</span><span class="s2">dampingRatio, </span><span class="s5">2</span><span class="s1">) </span><span class="s2">* Math.</span><span class="s6">pow</span><span class="s1">(</span><span class="s2">undampedFreq, </span><span class="s5">2</span><span class="s1">) </span><span class="s2">* duration;</span>
+            <span class="s0">const </span><span class="s2">f = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-delta</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">g = </span><span class="s6">calcAngularFreq</span><span class="s1">(</span><span class="s2">Math.</span><span class="s6">pow</span><span class="s1">(</span><span class="s2">undampedFreq, </span><span class="s5">2</span><span class="s1">)</span><span class="s2">, dampingRatio</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">factor = -</span><span class="s6">envelope</span><span class="s1">(</span><span class="s2">undampedFreq</span><span class="s1">) </span><span class="s2">+ safeMin &gt; </span><span class="s5">0 </span><span class="s2">? -</span><span class="s5">1 </span><span class="s2">: </span><span class="s5">1</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s1">(</span><span class="s2">factor * </span><span class="s1">((</span><span class="s2">d - e</span><span class="s1">) </span><span class="s2">* f</span><span class="s1">)) </span><span class="s2">/ g;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Critically-damped spring 
+         </span><span class="s2">*/</span>
+        <span class="s6">envelope </span><span class="s2">= (undampedFreq) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">a = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-undampedFreq * duration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">b = </span><span class="s1">(</span><span class="s2">undampedFreq - velocity</span><span class="s1">) </span><span class="s2">* duration + </span><span class="s5">1</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">-safeMin + a * b;</span>
+        <span class="s2">};</span>
+        <span class="s6">derivative </span><span class="s2">= (undampedFreq) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">a = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-undampedFreq * duration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">b = </span><span class="s1">(</span><span class="s2">velocity - undampedFreq</span><span class="s1">) </span><span class="s2">* </span><span class="s1">(</span><span class="s2">duration * duration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">a * b;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">initialGuess = </span><span class="s5">5 </span><span class="s2">/ duration;</span>
+    <span class="s0">const </span><span class="s2">undampedFreq = </span><span class="s6">approximateRoot</span><span class="s1">(</span><span class="s2">envelope, derivative, initialGuess</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">duration = </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">duration</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s6">isNaN</span><span class="s1">(</span><span class="s2">undampedFreq</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{</span>
+            <span class="s1">stiffness</span><span class="s2">: springDefaults.stiffness,</span>
+            <span class="s1">damping</span><span class="s2">: springDefaults.damping,</span>
+            <span class="s2">duration,</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">else </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">stiffness = Math.</span><span class="s6">pow</span><span class="s1">(</span><span class="s2">undampedFreq, </span><span class="s5">2</span><span class="s1">) </span><span class="s2">* mass;</span>
+        <span class="s0">return </span><span class="s2">{</span>
+            <span class="s2">stiffness,</span>
+            <span class="s1">damping</span><span class="s2">: dampingRatio * </span><span class="s5">2 </span><span class="s2">* Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s2">mass * stiffness</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s2">duration,</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">const </span><span class="s2">durationKeys = </span><span class="s1">[</span><span class="s2">&quot;</span><span class="s3">duration</span><span class="s2">&quot;, &quot;</span><span class="s3">bounce</span><span class="s2">&quot;</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s0">const </span><span class="s2">physicsKeys = </span><span class="s1">[</span><span class="s2">&quot;</span><span class="s3">stiffness</span><span class="s2">&quot;, &quot;</span><span class="s3">damping</span><span class="s2">&quot;, &quot;</span><span class="s3">mass</span><span class="s2">&quot;</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s6">isSpringType</span><span class="s2">(options, keys) {</span>
+    <span class="s0">return </span><span class="s2">keys.</span><span class="s6">some</span><span class="s1">(</span><span class="s2">(key) </span><span class="s0">=&gt; </span><span class="s2">options</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">!== </span><span class="s7">undefined</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s6">getSpringOptions</span><span class="s2">(options) {</span>
+    <span class="s0">let </span><span class="s2">springOptions = {</span>
+        <span class="s1">velocity</span><span class="s2">: springDefaults.velocity,</span>
+        <span class="s1">stiffness</span><span class="s2">: springDefaults.stiffness,</span>
+        <span class="s1">damping</span><span class="s2">: springDefaults.damping,</span>
+        <span class="s1">mass</span><span class="s2">: springDefaults.mass,</span>
+        <span class="s1">isResolvedFromDuration</span><span class="s2">: </span><span class="s7">false</span><span class="s2">,</span>
+        <span class="s2">...options,</span>
+    <span class="s2">};</span>
+    <span class="s2">// </span><span class="s4">stiffness/damping/mass overrides duration/bounce</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s6">isSpringType</span><span class="s1">(</span><span class="s2">options, physicsKeys</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+        <span class="s6">isSpringType</span><span class="s1">(</span><span class="s2">options, durationKeys</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s4">Time-defined springs should ignore inherited velocity.</span>
+        <span class="s2">// </span><span class="s4">Velocity from interrupted animations can cause findSpring()</span>
+        <span class="s2">// </span><span class="s4">to compute wildly different spring parameters, leading to</span>
+        <span class="s2">// </span><span class="s4">massive oscillation on small-range animations.</span>
+        <span class="s2">springOptions.velocity = </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">options.visualDuration</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">visualDuration = options.visualDuration;</span>
+            <span class="s0">const </span><span class="s2">root = </span><span class="s1">(</span><span class="s5">2 </span><span class="s2">* Math.PI</span><span class="s1">) </span><span class="s2">/ </span><span class="s1">(</span><span class="s2">visualDuration * </span><span class="s5">1.2</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">stiffness = root * root;</span>
+            <span class="s0">const </span><span class="s2">damping = </span><span class="s5">2 </span><span class="s2">*</span>
+                <span class="s6">clamp</span><span class="s1">(</span><span class="s5">0.05</span><span class="s2">, </span><span class="s5">1</span><span class="s2">, </span><span class="s5">1 </span><span class="s2">- </span><span class="s1">(</span><span class="s2">options.bounce || </span><span class="s5">0</span><span class="s1">)) </span><span class="s2">*</span>
+                <span class="s2">Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s2">stiffness</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">springOptions = {</span>
+                <span class="s2">...springOptions,</span>
+                <span class="s1">mass</span><span class="s2">: springDefaults.mass,</span>
+                <span class="s2">stiffness,</span>
+                <span class="s2">damping,</span>
+            <span class="s2">};</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">derived = </span><span class="s6">findSpring</span><span class="s1">(</span><span class="s2">{ ...options, </span><span class="s1">velocity</span><span class="s2">: </span><span class="s5">0 </span><span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">springOptions = {</span>
+                <span class="s2">...springOptions,</span>
+                <span class="s2">...derived,</span>
+                <span class="s1">mass</span><span class="s2">: springDefaults.mass,</span>
+            <span class="s2">};</span>
+            <span class="s2">springOptions.isResolvedFromDuration = </span><span class="s7">true</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">springOptions;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s6">spring</span><span class="s2">(optionsOrVisualDuration = springDefaults.visualDuration, bounce = springDefaults.bounce) {</span>
+    <span class="s0">const </span><span class="s2">options = typeof optionsOrVisualDuration !== &quot;</span><span class="s3">object</span><span class="s2">&quot;</span>
+        <span class="s2">? {</span>
+            <span class="s1">visualDuration</span><span class="s2">: optionsOrVisualDuration,</span>
+            <span class="s1">keyframes</span><span class="s2">: </span><span class="s1">[</span><span class="s5">0</span><span class="s2">, </span><span class="s5">1</span><span class="s1">]</span><span class="s2">,</span>
+            <span class="s2">bounce,</span>
+        <span class="s2">}</span>
+        <span class="s2">: optionsOrVisualDuration;</span>
+    <span class="s0">let </span><span class="s2">{ restSpeed, restDelta } = options;</span>
+    <span class="s0">const </span><span class="s2">origin = options.keyframes</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">target = options.keyframes</span><span class="s1">[</span><span class="s2">options.keyframes.</span><span class="s1">length </span><span class="s2">- </span><span class="s5">1</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s4">* This is the Iterator-spec return value. We ensure it's mutable rather than using a generator 
+     * to reduce GC during animation. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">state = { </span><span class="s1">done</span><span class="s2">: </span><span class="s7">false</span><span class="s2">, </span><span class="s1">value</span><span class="s2">: origin };</span>
+    <span class="s0">const </span><span class="s2">{ stiffness, damping, mass, duration, velocity, isResolvedFromDuration, } = </span><span class="s6">getSpringOptions</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">...options,</span>
+        <span class="s1">velocity</span><span class="s2">: -</span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">options.velocity || </span><span class="s5">0</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">initialVelocity = velocity || </span><span class="s5">0.0</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">dampingRatio = damping / </span><span class="s1">(</span><span class="s5">2 </span><span class="s2">* Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s2">stiffness * mass</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">initialDelta = target - origin;</span>
+    <span class="s0">const </span><span class="s2">undampedAngularFreq = </span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s2">stiffness / mass</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s4">* If we're working on a granular scale, use smaller defaults for determining 
+     * when the spring is finished. 
+     * 
+     * These defaults have been selected emprically based on what strikes a good 
+     * ratio between feeling good and finishing as soon as changes are imperceptible. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">isGranularScale = Math.</span><span class="s6">abs</span><span class="s1">(</span><span class="s2">initialDelta</span><span class="s1">) </span><span class="s2">&lt; </span><span class="s5">5</span><span class="s2">;</span>
+    <span class="s2">restSpeed || </span><span class="s1">(</span><span class="s2">restSpeed = isGranularScale</span>
+        <span class="s2">? springDefaults.restSpeed.granular</span>
+        <span class="s2">: springDefaults.restSpeed.default</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">restDelta || </span><span class="s1">(</span><span class="s2">restDelta = isGranularScale</span>
+        <span class="s2">? springDefaults.restDelta.granular</span>
+        <span class="s2">: springDefaults.restDelta.default</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">resolveSpring;</span>
+    <span class="s0">let </span><span class="s2">resolveVelocity;</span>
+    <span class="s2">// </span><span class="s4">Underdamped coefficients, hoisted for use in the inlined next() hot path</span>
+    <span class="s0">let </span><span class="s2">angularFreq;</span>
+    <span class="s0">let </span><span class="s2">A;</span>
+    <span class="s0">let </span><span class="s2">sinCoeff;</span>
+    <span class="s0">let </span><span class="s2">cosCoeff;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">dampingRatio &lt; </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">angularFreq = </span><span class="s6">calcAngularFreq</span><span class="s1">(</span><span class="s2">undampedAngularFreq, dampingRatio</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">A =</span>
+            <span class="s1">(</span><span class="s2">initialVelocity +</span>
+                <span class="s2">dampingRatio * undampedAngularFreq * initialDelta</span><span class="s1">) </span><span class="s2">/</span>
+                <span class="s2">angularFreq;</span>
+        <span class="s2">// </span><span class="s4">Underdamped spring</span>
+        <span class="s6">resolveSpring </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">envelope = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-dampingRatio * undampedAngularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s1">(</span><span class="s2">target -</span>
+                <span class="s2">envelope *</span>
+                    <span class="s1">(</span><span class="s2">A * Math.</span><span class="s6">sin</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">) </span><span class="s2">+</span>
+                        <span class="s2">initialDelta * Math.</span><span class="s6">cos</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">)))</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">// </span><span class="s4">Analytical derivative of underdamped spring (px/ms)</span>
+        <span class="s2">sinCoeff =</span>
+            <span class="s2">dampingRatio * undampedAngularFreq * A + initialDelta * angularFreq;</span>
+        <span class="s2">cosCoeff =</span>
+            <span class="s2">dampingRatio * undampedAngularFreq * initialDelta - A * angularFreq;</span>
+        <span class="s6">resolveVelocity </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">envelope = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-dampingRatio * undampedAngularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">envelope *</span>
+                <span class="s1">(</span><span class="s2">sinCoeff * Math.</span><span class="s6">sin</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">) </span><span class="s2">+</span>
+                    <span class="s2">cosCoeff * Math.</span><span class="s6">cos</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">else if </span><span class="s1">(</span><span class="s2">dampingRatio === </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s4">Critically damped spring</span>
+        <span class="s6">resolveSpring </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">target -</span>
+            <span class="s2">Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-undampedAngularFreq * t</span><span class="s1">) </span><span class="s2">*</span>
+                <span class="s1">(</span><span class="s2">initialDelta +</span>
+                    <span class="s1">(</span><span class="s2">initialVelocity + undampedAngularFreq * initialDelta</span><span class="s1">) </span><span class="s2">* t</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s4">Analytical derivative of critically damped spring (px/ms)</span>
+        <span class="s0">const </span><span class="s2">C = initialVelocity + undampedAngularFreq * initialDelta;</span>
+        <span class="s6">resolveVelocity </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-undampedAngularFreq * t</span><span class="s1">) </span><span class="s2">*</span>
+            <span class="s1">(</span><span class="s2">undampedAngularFreq * C * t - initialVelocity</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s4">Overdamped spring</span>
+        <span class="s0">const </span><span class="s2">dampedAngularFreq = undampedAngularFreq * Math.</span><span class="s6">sqrt</span><span class="s1">(</span><span class="s2">dampingRatio * dampingRatio - </span><span class="s5">1</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s6">resolveSpring </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">envelope = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-dampingRatio * undampedAngularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s4">When performing sinh or cosh values can hit Infinity so we cap them here</span>
+            <span class="s0">const </span><span class="s2">freqForT = Math.</span><span class="s6">min</span><span class="s1">(</span><span class="s2">dampedAngularFreq * t, </span><span class="s5">300</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s1">(</span><span class="s2">target -</span>
+                <span class="s1">(</span><span class="s2">envelope *</span>
+                    <span class="s1">((</span><span class="s2">initialVelocity +</span>
+                        <span class="s2">dampingRatio * undampedAngularFreq * initialDelta</span><span class="s1">) </span><span class="s2">*</span>
+                        <span class="s2">Math.</span><span class="s6">sinh</span><span class="s1">(</span><span class="s2">freqForT</span><span class="s1">) </span><span class="s2">+</span>
+                        <span class="s2">dampedAngularFreq *</span>
+                            <span class="s2">initialDelta *</span>
+                            <span class="s2">Math.</span><span class="s6">cosh</span><span class="s1">(</span><span class="s2">freqForT</span><span class="s1">))) </span><span class="s2">/</span>
+                    <span class="s2">dampedAngularFreq</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">// </span><span class="s4">Analytical derivative of overdamped spring (px/ms)</span>
+        <span class="s0">const </span><span class="s2">P = </span><span class="s1">(</span><span class="s2">initialVelocity +</span>
+            <span class="s2">dampingRatio * undampedAngularFreq * initialDelta</span><span class="s1">) </span><span class="s2">/</span>
+            <span class="s2">dampedAngularFreq;</span>
+        <span class="s0">const </span><span class="s2">sinhCoeff = dampingRatio * undampedAngularFreq * P - initialDelta * dampedAngularFreq;</span>
+        <span class="s0">const </span><span class="s2">coshCoeff = dampingRatio * undampedAngularFreq * initialDelta - P * dampedAngularFreq;</span>
+        <span class="s6">resolveVelocity </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">envelope = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-dampingRatio * undampedAngularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">freqForT = Math.</span><span class="s6">min</span><span class="s1">(</span><span class="s2">dampedAngularFreq * t, </span><span class="s5">300</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">envelope *</span>
+                <span class="s1">(</span><span class="s2">sinhCoeff * Math.</span><span class="s6">sinh</span><span class="s1">(</span><span class="s2">freqForT</span><span class="s1">) </span><span class="s2">+</span>
+                    <span class="s2">coshCoeff * Math.</span><span class="s6">cosh</span><span class="s1">(</span><span class="s2">freqForT</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">generator = {</span>
+        <span class="s1">calculatedDuration</span><span class="s2">: isResolvedFromDuration ? duration || </span><span class="s7">null </span><span class="s2">: </span><span class="s7">null</span><span class="s2">,</span>
+        <span class="s6">velocity</span><span class="s2">: (t) </span><span class="s0">=&gt; </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s6">resolveVelocity</span><span class="s1">(</span><span class="s2">t</span><span class="s1">))</span><span class="s2">,</span>
+        <span class="s6">next</span><span class="s2">: (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">/**</span>
+             <span class="s4">* For underdamped physics springs we need both position and 
+             * velocity each tick. Compute shared trig values once to avoid 
+             * duplicate Math.exp/sin/cos calls on the hot path. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!isResolvedFromDuration &amp;&amp; dampingRatio &lt; </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">envelope = Math.</span><span class="s6">exp</span><span class="s1">(</span><span class="s2">-dampingRatio * undampedAngularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">sin = Math.</span><span class="s6">sin</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">cos = Math.</span><span class="s6">cos</span><span class="s1">(</span><span class="s2">angularFreq * t</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">current = target -</span>
+                    <span class="s2">envelope *</span>
+                        <span class="s1">(</span><span class="s2">A * sin + initialDelta * cos</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">currentVelocity = </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">envelope *</span>
+                    <span class="s1">(</span><span class="s2">sinCoeff * sin + cosCoeff * cos</span><span class="s1">))</span><span class="s2">;</span>
+                <span class="s2">state.done =</span>
+                    <span class="s2">Math.</span><span class="s6">abs</span><span class="s1">(</span><span class="s2">currentVelocity</span><span class="s1">) </span><span class="s2">&lt;= restSpeed &amp;&amp;</span>
+                        <span class="s2">Math.</span><span class="s6">abs</span><span class="s1">(</span><span class="s2">target - current</span><span class="s1">) </span><span class="s2">&lt;= restDelta;</span>
+                <span class="s2">state.value = state.done ? target : current;</span>
+                <span class="s0">return </span><span class="s2">state;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">current = </span><span class="s6">resolveSpring</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!isResolvedFromDuration</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">currentVelocity = </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s6">resolveVelocity</span><span class="s1">(</span><span class="s2">t</span><span class="s1">))</span><span class="s2">;</span>
+                <span class="s2">state.done =</span>
+                    <span class="s2">Math.</span><span class="s6">abs</span><span class="s1">(</span><span class="s2">currentVelocity</span><span class="s1">) </span><span class="s2">&lt;= restSpeed &amp;&amp;</span>
+                        <span class="s2">Math.</span><span class="s6">abs</span><span class="s1">(</span><span class="s2">target - current</span><span class="s1">) </span><span class="s2">&lt;= restDelta;</span>
+            <span class="s2">}</span>
+            <span class="s0">else </span><span class="s2">{</span>
+                <span class="s2">state.done = t &gt;= duration;</span>
+            <span class="s2">}</span>
+            <span class="s2">state.value = state.done ? target : current;</span>
+            <span class="s0">return </span><span class="s2">state;</span>
+        <span class="s2">},</span>
+        <span class="s6">toString</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">calculatedDuration = Math.</span><span class="s6">min</span><span class="s1">(</span><span class="s6">calcGeneratorDuration</span><span class="s1">(</span><span class="s2">generator</span><span class="s1">)</span><span class="s2">, maxGeneratorDuration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">easing = </span><span class="s6">generateLinearEasing</span><span class="s1">(</span><span class="s2">(progress) </span><span class="s0">=&gt; </span><span class="s2">generator.</span><span class="s6">next</span><span class="s1">(</span><span class="s2">calculatedDuration * progress</span><span class="s1">)</span><span class="s2">.value, calculatedDuration, </span><span class="s5">30</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">calculatedDuration + &quot;</span><span class="s3">ms </span><span class="s2">&quot; + easing;</span>
+        <span class="s2">},</span>
+        <span class="s6">toTransition</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">{ },</span>
+    <span class="s2">};</span>
+    <span class="s0">return </span><span class="s2">generator;</span>
+<span class="s2">}</span>
+<span class="s2">spring.</span><span class="s6">applyToOptions </span><span class="s2">= (options) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">generatorOptions = </span><span class="s6">createGeneratorEasing</span><span class="s1">(</span><span class="s2">options, </span><span class="s5">100</span><span class="s2">, spring</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">options.ease = generatorOptions.ease;</span>
+    <span class="s2">options.duration = </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">generatorOptions.duration</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">options.type = &quot;</span><span class="s3">keyframes</span><span class="s2">&quot;;</span>
+    <span class="s0">return </span><span class="s2">options;</span>
+<span class="s2">};</span>
+
+<span class="s0">export </span><span class="s2">{ spring };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=spring.mjs.map</span>
+</pre>
+</body>
+</html>

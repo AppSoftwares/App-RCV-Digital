@@ -1,0 +1,172 @@
+<html>
+<head>
+<title>inferer-reference.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+inferer-reference.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.</span><span class="s2">default </span><span class="s1">= _default;</span>
+<span class="s2">var </span><span class="s1">_t = require(</span><span class="s0">&quot;@babel/types&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_util = require(</span><span class="s0">&quot;./util.js&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+  <span class="s1">BOOLEAN_NUMBER_BINARY_OPERATORS,</span>
+  <span class="s1">createTypeAnnotationBasedOnTypeof,</span>
+  <span class="s1">numberTypeAnnotation,</span>
+  <span class="s1">voidTypeAnnotation</span>
+<span class="s1">} = _t;</span>
+<span class="s2">function </span><span class="s1">_default(node) {</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.isReferenced()) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">const binding = </span><span class="s2">this</span><span class="s1">.scope.getBinding(node.name);</span>
+  <span class="s2">if </span><span class="s1">(binding) {</span>
+    <span class="s2">if </span><span class="s1">(binding.identifier.typeAnnotation) {</span>
+      <span class="s2">return </span><span class="s1">binding.identifier.typeAnnotation;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s1">getTypeAnnotationBindingConstantViolations(binding, </span><span class="s2">this</span><span class="s1">, node.name);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(node.name === </span><span class="s0">&quot;undefined&quot;</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">voidTypeAnnotation();</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(node.name === </span><span class="s0">&quot;NaN&quot; </span><span class="s1">|| node.name === </span><span class="s0">&quot;Infinity&quot;</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">numberTypeAnnotation();</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(node.name === </span><span class="s0">&quot;arguments&quot;</span><span class="s1">) {}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getTypeAnnotationBindingConstantViolations(binding, path, name) {</span>
+  <span class="s1">const types = [];</span>
+  <span class="s1">const functionConstantViolations = [];</span>
+  <span class="s1">let constantViolations = getConstantViolationsBefore(binding, path, functionConstantViolations);</span>
+  <span class="s1">const testType = getConditionalAnnotation(binding, path, name);</span>
+  <span class="s2">if </span><span class="s1">(testType) {</span>
+    <span class="s1">const testConstantViolations = getConstantViolationsBefore(binding, testType.ifStatement);</span>
+    <span class="s1">constantViolations = constantViolations.filter(path =&gt; !testConstantViolations.includes(path));</span>
+    <span class="s1">types.push(testType.typeAnnotation);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(constantViolations.length) {</span>
+    <span class="s1">constantViolations.push(...functionConstantViolations);</span>
+    <span class="s2">for </span><span class="s1">(const violation of constantViolations) {</span>
+      <span class="s1">types.push(violation.getTypeAnnotation());</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!types.length) {</span>
+    <span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">(</span><span class="s3">0</span><span class="s1">, _util.createUnionType)(types);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getConstantViolationsBefore(binding, path, functions) {</span>
+  <span class="s1">const violations = binding.constantViolations.slice();</span>
+  <span class="s1">violations.unshift(binding.path);</span>
+  <span class="s2">return </span><span class="s1">violations.filter(violation =&gt; {</span>
+    <span class="s1">violation = violation.resolve();</span>
+    <span class="s1">const status = violation._guessExecutionStatusRelativeTo(path);</span>
+    <span class="s2">if </span><span class="s1">(functions &amp;&amp; status === </span><span class="s0">&quot;unknown&quot;</span><span class="s1">) functions.push(violation);</span>
+    <span class="s2">return </span><span class="s1">status === </span><span class="s0">&quot;before&quot;</span><span class="s1">;</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">inferAnnotationFromBinaryExpression(name, path) {</span>
+  <span class="s1">const operator = path.node.operator;</span>
+  <span class="s1">const right = path.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">).resolve();</span>
+  <span class="s1">const left = path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">).resolve();</span>
+  <span class="s1">let target;</span>
+  <span class="s2">if </span><span class="s1">(left.isIdentifier({</span>
+    <span class="s1">name</span>
+  <span class="s1">})) {</span>
+    <span class="s1">target = right;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(right.isIdentifier({</span>
+    <span class="s1">name</span>
+  <span class="s1">})) {</span>
+    <span class="s1">target = left;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(target) {</span>
+    <span class="s2">if </span><span class="s1">(operator === </span><span class="s0">&quot;===&quot;</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">target.getTypeAnnotation();</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(BOOLEAN_NUMBER_BINARY_OPERATORS.includes(operator)) {</span>
+      <span class="s2">return </span><span class="s1">numberTypeAnnotation();</span>
+    <span class="s1">}</span>
+    <span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(operator !== </span><span class="s0">&quot;===&quot; </span><span class="s1">&amp;&amp; operator !== </span><span class="s0">&quot;==&quot;</span><span class="s1">) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">let typeofPath;</span>
+  <span class="s1">let typePath;</span>
+  <span class="s2">if </span><span class="s1">(left.isUnaryExpression({</span>
+    <span class="s1">operator: </span><span class="s0">&quot;typeof&quot;</span>
+  <span class="s1">})) {</span>
+    <span class="s1">typeofPath = left;</span>
+    <span class="s1">typePath = right;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(right.isUnaryExpression({</span>
+    <span class="s1">operator: </span><span class="s0">&quot;typeof&quot;</span>
+  <span class="s1">})) {</span>
+    <span class="s1">typeofPath = right;</span>
+    <span class="s1">typePath = left;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!typeofPath) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(!typeofPath.get(</span><span class="s0">&quot;argument&quot;</span><span class="s1">).isIdentifier({</span>
+    <span class="s1">name</span>
+  <span class="s1">})) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">typePath = typePath.resolve();</span>
+  <span class="s2">if </span><span class="s1">(!typePath.isLiteral()) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">const typeValue = typePath.node.value;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">typeValue !== </span><span class="s0">&quot;string&quot;</span><span class="s1">) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">return </span><span class="s1">createTypeAnnotationBasedOnTypeof(typeValue);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getParentConditionalPath(binding, path, name) {</span>
+  <span class="s1">let parentPath;</span>
+  <span class="s2">while </span><span class="s1">(parentPath = path.parentPath) {</span>
+    <span class="s2">if </span><span class="s1">(parentPath.isIfStatement() || parentPath.isConditionalExpression()) {</span>
+      <span class="s2">if </span><span class="s1">(path.key === </span><span class="s0">&quot;test&quot;</span><span class="s1">) {</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">parentPath;</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(parentPath.isFunction()) {</span>
+      <span class="s2">if </span><span class="s1">(name == </span><span class="s2">null </span><span class="s1">|| parentPath.parentPath.scope.getBinding(name) !== binding) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">path = parentPath;</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getConditionalAnnotation(binding, path, name) {</span>
+  <span class="s1">const ifStatement = getParentConditionalPath(binding, path, name);</span>
+  <span class="s2">if </span><span class="s1">(!ifStatement) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">const test = ifStatement.get(</span><span class="s0">&quot;test&quot;</span><span class="s1">);</span>
+  <span class="s1">const paths = [test];</span>
+  <span class="s1">const types = [];</span>
+  <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; paths.length; i++) {</span>
+    <span class="s1">const path = paths[i];</span>
+    <span class="s2">if </span><span class="s1">(path.isLogicalExpression()) {</span>
+      <span class="s2">if </span><span class="s1">(path.node.operator === </span><span class="s0">&quot;&amp;&amp;&quot;</span><span class="s1">) {</span>
+        <span class="s1">paths.push(path.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">));</span>
+        <span class="s1">paths.push(path.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">));</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(path.isBinaryExpression()) {</span>
+      <span class="s1">const type = inferAnnotationFromBinaryExpression(name, path);</span>
+      <span class="s2">if </span><span class="s1">(type) types.push(type);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(types.length) {</span>
+    <span class="s2">return </span><span class="s1">{</span>
+      <span class="s1">typeAnnotation: (</span><span class="s3">0</span><span class="s1">, _util.createUnionType)(types),</span>
+      <span class="s1">ifStatement</span>
+    <span class="s1">};</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">getConditionalAnnotation(binding, ifStatement, name);</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=inferer-reference.js.map</span>
+</pre>
+</body>
+</html>

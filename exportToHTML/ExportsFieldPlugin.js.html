@@ -1,0 +1,253 @@
+<html>
+<head>
+<title>ExportsFieldPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ExportsFieldPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Ivan Kopeykin @vankop 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const DescriptionFileUtils = require(</span><span class="s2">&quot;./DescriptionFileUtils&quot;</span><span class="s1">);</span>
+<span class="s1">const forEachBail = require(</span><span class="s2">&quot;./forEachBail&quot;</span><span class="s1">);</span>
+<span class="s1">const { processExportsField } = require(</span><span class="s2">&quot;./util/entrypoints&quot;</span><span class="s1">);</span>
+<span class="s1">const { parseIdentifier } = require(</span><span class="s2">&quot;./util/identifier&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+	<span class="s1">deprecatedInvalidSegmentRegEx,</span>
+	<span class="s1">invalidSegmentRegEx,</span>
+<span class="s1">} = require(</span><span class="s2">&quot;./util/path&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonObject} JsonObject */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+<span class="s0">/** @typedef {import(&quot;./util/entrypoints&quot;).ExportsField} ExportsField */</span>
+<span class="s0">/** @typedef {import(&quot;./util/entrypoints&quot;).FieldProcessor} FieldProcessor */</span>
+
+<span class="s1">module.exports = class ExportsFieldPlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {Set&lt;string&gt;} conditionNames condition names 
+     * @param {string | string[]} fieldNamePath name path 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, conditionNames, fieldNamePath, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+		<span class="s3">this</span><span class="s1">.conditionNames = conditionNames;</span>
+		<span class="s3">this</span><span class="s1">.fieldName = fieldNamePath;</span>
+		<span class="s0">// `null` is cached for description files that have no exports field,</span>
+		<span class="s0">// so subsequent resolves against the same package.json skip the</span>
+		<span class="s0">// `DescriptionFileUtils.getField` walk entirely.</span>
+		<span class="s0">/** @type {WeakMap&lt;JsonObject, FieldProcessor | null&gt;} */</span>
+		<span class="s3">this</span><span class="s1">._fieldProcessorCache = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;ExportsFieldPlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s0">// When there is no description file, abort</span>
+				<span class="s3">if </span><span class="s1">(!request.descriptionFileData) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s3">if </span><span class="s1">(</span>
+					<span class="s0">// When the description file is inherited from parent, abort</span>
+					<span class="s0">// (There is no description file inside of this package)</span>
+					<span class="s1">request.relativePath !== </span><span class="s2">&quot;.&quot; </span><span class="s1">||</span>
+					<span class="s1">request.request === undefined</span>
+				<span class="s1">) {</span>
+					<span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+
+				<span class="s1">const { descriptionFileData } = request;</span>
+				<span class="s1">const remainingRequest =</span>
+					<span class="s1">request.query || request.fragment</span>
+						<span class="s1">? (request.request === </span><span class="s2">&quot;.&quot; </span><span class="s1">? </span><span class="s2">&quot;./&quot; </span><span class="s1">: request.request) +</span>
+							<span class="s1">request.query +</span>
+							<span class="s1">request.fragment</span>
+						<span class="s1">: request.request;</span>
+
+				<span class="s0">/** @type {string[]} */</span>
+				<span class="s1">let paths;</span>
+				<span class="s0">/** @type {string | null} */</span>
+				<span class="s1">let usedField;</span>
+
+				<span class="s3">try </span><span class="s1">{</span>
+					<span class="s0">// Look up the cached processor first. On a cache hit we</span>
+					<span class="s0">// avoid re-walking the description file for the exports</span>
+					<span class="s0">// field — and `null` is cached for description files that</span>
+					<span class="s0">// have no exports field at all, so those skip the read</span>
+					<span class="s0">// entirely. `processExportsField` can throw on a malformed</span>
+					<span class="s0">// `exports` map (e.g. a key without a leading `.`), so</span>
+					<span class="s0">// building the processor must stay inside this try/catch.</span>
+					<span class="s1">let fieldProcessor =</span>
+						<span class="s3">this</span><span class="s1">._fieldProcessorCache.get(descriptionFileData);</span>
+					<span class="s3">if </span><span class="s1">(</span>
+						<span class="s1">fieldProcessor === undefined &amp;&amp;</span>
+						<span class="s1">!</span><span class="s3">this</span><span class="s1">._fieldProcessorCache.has(descriptionFileData)</span>
+					<span class="s1">) {</span>
+						<span class="s1">const exportsField =</span>
+							<span class="s0">/** @type {ExportsField | null | undefined} */</span>
+							<span class="s1">(</span>
+								<span class="s1">DescriptionFileUtils.getField(</span>
+									<span class="s1">descriptionFileData,</span>
+									<span class="s3">this</span><span class="s1">.fieldName,</span>
+								<span class="s1">)</span>
+							<span class="s1">);</span>
+						<span class="s1">fieldProcessor = exportsField</span>
+							<span class="s1">? processExportsField(exportsField)</span>
+							<span class="s1">: </span><span class="s3">null</span><span class="s1">;</span>
+						<span class="s3">this</span><span class="s1">._fieldProcessorCache.set(descriptionFileData, fieldProcessor);</span>
+					<span class="s1">}</span>
+					<span class="s3">if </span><span class="s1">(!fieldProcessor) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+					<span class="s3">if </span><span class="s1">(request.directory) {</span>
+						<span class="s3">return </span><span class="s1">callback(</span>
+							<span class="s3">new </span><span class="s1">Error(</span>
+								<span class="s1">`Resolving to directories is not possible </span><span class="s3">with </span><span class="s1">the exports field (request was ${remainingRequest}/)`,</span>
+							<span class="s1">),</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+
+					<span class="s1">[paths, usedField] = fieldProcessor(</span>
+						<span class="s1">remainingRequest,</span>
+						<span class="s3">this</span><span class="s1">.conditionNames,</span>
+					<span class="s1">);</span>
+				<span class="s1">} </span><span class="s3">catch </span><span class="s1">(</span><span class="s0">/** @type {unknown} */ </span><span class="s1">err) {</span>
+					<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+						<span class="s1">resolveContext.log(</span>
+							<span class="s1">`Exports field </span><span class="s3">in </span><span class="s1">${request.descriptionFilePath} can</span><span class="s2">'t be processed: ${err}`,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+					<span class="s3">return </span><span class="s1">callback(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(err));</span>
+				<span class="s1">}</span>
+
+				<span class="s3">if </span><span class="s1">(paths.length === </span><span class="s4">0</span><span class="s1">) {</span>
+					<span class="s1">const conditions = [...</span><span class="s3">this</span><span class="s1">.conditionNames];</span>
+					<span class="s1">const conditionsStr =</span>
+						<span class="s1">conditions.length === </span><span class="s4">1</span>
+							<span class="s1">? `the condition </span><span class="s2">&quot;${conditions[0]}&quot;</span><span class="s1">`</span>
+							<span class="s1">: `the conditions ${JSON.stringify(conditions)}`;</span>
+					<span class="s3">return </span><span class="s1">callback(</span>
+						<span class="s3">new </span><span class="s1">Error(</span>
+							<span class="s1">`</span><span class="s2">&quot;${remainingRequest}&quot; </span><span class="s1">is not exported under ${conditionsStr} from package ${request.descriptionFileRoot} (see exports field </span><span class="s3">in </span><span class="s1">${request.descriptionFilePath})`,</span>
+						<span class="s1">),</span>
+					<span class="s1">);</span>
+				<span class="s1">}</span>
+
+				<span class="s1">forEachBail(</span>
+					<span class="s1">paths,</span>
+					<span class="s0">/** 
+                     * @param {string} path path 
+                     * @param {(err?: null | Error, result?: null | ResolveRequest) =&gt; void} callback callback 
+                     * @param {number} i index 
+                     * @returns {void} 
+                     */</span>
+					<span class="s1">(path, callback, i) =&gt; {</span>
+						<span class="s1">const parsedIdentifier = parseIdentifier(path);</span>
+
+						<span class="s3">if </span><span class="s1">(!parsedIdentifier) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+						<span class="s1">const [relativePath, query, fragment] = parsedIdentifier;</span>
+
+						<span class="s3">if </span><span class="s1">(relativePath.length === </span><span class="s4">0 </span><span class="s1">|| !relativePath.startsWith(</span><span class="s2">&quot;./&quot;</span><span class="s1">)) {</span>
+							<span class="s3">if </span><span class="s1">(paths.length === i) {</span>
+								<span class="s3">return </span><span class="s1">callback(</span>
+									<span class="s3">new </span><span class="s1">Error(</span>
+										<span class="s1">`Invalid </span><span class="s2">&quot;exports&quot; </span><span class="s1">target </span><span class="s2">&quot;${path}&quot; </span><span class="s1">defined </span><span class="s3">for </span><span class="s2">&quot;${usedField}&quot; </span><span class="s3">in </span><span class="s1">the package config ${request.descriptionFilePath}, targets must start </span><span class="s3">with </span><span class="s2">&quot;./&quot;</span><span class="s1">`,</span>
+									<span class="s1">),</span>
+								<span class="s1">);</span>
+							<span class="s1">}</span>
+
+							<span class="s3">return </span><span class="s1">callback();</span>
+						<span class="s1">}</span>
+
+						<span class="s1">const withoutDotSlash = relativePath.slice(</span><span class="s4">2</span><span class="s1">);</span>
+						<span class="s3">if </span><span class="s1">(</span>
+							<span class="s1">invalidSegmentRegEx.exec(withoutDotSlash) !== </span><span class="s3">null </span><span class="s1">&amp;&amp;</span>
+							<span class="s1">deprecatedInvalidSegmentRegEx.test(withoutDotSlash)</span>
+						<span class="s1">) {</span>
+							<span class="s3">if </span><span class="s1">(paths.length === i) {</span>
+								<span class="s3">return </span><span class="s1">callback(</span>
+									<span class="s3">new </span><span class="s1">Error(</span>
+										<span class="s1">`Invalid </span><span class="s2">&quot;exports&quot; </span><span class="s1">target </span><span class="s2">&quot;${path}&quot; </span><span class="s1">defined </span><span class="s3">for </span><span class="s2">&quot;${usedField}&quot; </span><span class="s3">in </span><span class="s1">the package config ${request.descriptionFilePath}, targets must start </span><span class="s3">with </span><span class="s2">&quot;./&quot;</span><span class="s1">`,</span>
+									<span class="s1">),</span>
+								<span class="s1">);</span>
+							<span class="s1">}</span>
+
+							<span class="s3">return </span><span class="s1">callback();</span>
+						<span class="s1">}</span>
+
+						<span class="s0">/** @type {ResolveRequest} */</span>
+						<span class="s1">const obj = {</span>
+							<span class="s1">...request,</span>
+							<span class="s1">request: undefined,</span>
+							<span class="s1">path: resolver.join(</span>
+								<span class="s0">/** @type {string} */ </span><span class="s1">(request.descriptionFileRoot),</span>
+								<span class="s1">relativePath,</span>
+							<span class="s1">),</span>
+							<span class="s1">relativePath,</span>
+							<span class="s1">query,</span>
+							<span class="s1">fragment,</span>
+						<span class="s1">};</span>
+
+						<span class="s1">resolver.doResolve(</span>
+							<span class="s1">target,</span>
+							<span class="s1">obj,</span>
+							<span class="s1">`using exports field: ${path}`,</span>
+							<span class="s1">resolveContext,</span>
+							<span class="s1">(err, result) =&gt; {</span>
+								<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+								<span class="s0">// Don't allow to continue - https://github.com/webpack/enhanced-resolve/issues/400</span>
+								<span class="s3">if </span><span class="s1">(result === undefined) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+								<span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+							<span class="s1">},</span>
+						<span class="s1">);</span>
+					<span class="s1">},</span>
+					<span class="s0">/** 
+                     * @param {(null | Error)=} err error 
+                     * @param {(null | ResolveRequest)=} result result 
+                     * @returns {void} 
+                     */</span>
+					<span class="s1">(err, result) =&gt; {</span>
+						<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+						<span class="s0">// When an exports field match was found but the target file doesn't exist,</span>
+						<span class="s0">// return an error to prevent fallback to parent node_modules directories.</span>
+						<span class="s0">// Per the Node.js ESM spec, a matched exports entry that fails to resolve</span>
+						<span class="s0">// is a hard error, not a signal to continue searching up the directory tree.</span>
+						<span class="s0">// See: https://github.com/webpack/enhanced-resolve/issues/399</span>
+						<span class="s3">if </span><span class="s1">(!result) {</span>
+							<span class="s3">return </span><span class="s1">callback(</span>
+								<span class="s3">new </span><span class="s1">Error(</span>
+									<span class="s1">`Package path ${remainingRequest} is exported from package ${request.descriptionFileRoot}, but no valid target file was found (see exports field </span><span class="s3">in </span><span class="s1">${request.descriptionFilePath})`,</span>
+								<span class="s1">),</span>
+							<span class="s1">);</span>
+						<span class="s1">}</span>
+						<span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+					<span class="s1">},</span>
+				<span class="s1">);</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<html>
+<head>
+<title>pluggable-auth-client.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+pluggable-auth-client.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2022 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.PluggableAuthClient = exports.ExecutableError = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const baseexternalclient_1 = require(</span><span class="s0">&quot;./baseexternalclient&quot;</span><span class="s1">);</span>
+<span class="s1">const executable_response_1 = require(</span><span class="s0">&quot;./executable-response&quot;</span><span class="s1">);</span>
+<span class="s1">const pluggable_auth_handler_1 = require(</span><span class="s0">&quot;./pluggable-auth-handler&quot;</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">pluggable_auth_handler_2 = require(</span><span class="s0">&quot;./pluggable-auth-handler&quot;</span><span class="s1">);</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;ExecutableError&quot;</span><span class="s1">, { enumerable: </span><span class="s3">true</span><span class="s1">, get: </span><span class="s3">function </span><span class="s1">() { </span><span class="s3">return </span><span class="s1">pluggable_auth_handler_2.ExecutableError; } });</span>
+<span class="s2">/** 
+ * The default executable timeout when none is provided, in milliseconds. 
+ */</span>
+<span class="s1">const DEFAULT_EXECUTABLE_TIMEOUT_MILLIS = </span><span class="s4">30 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The minimum allowed executable timeout in milliseconds. 
+ */</span>
+<span class="s1">const MINIMUM_EXECUTABLE_TIMEOUT_MILLIS = </span><span class="s4">5 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The maximum allowed executable timeout in milliseconds. 
+ */</span>
+<span class="s1">const MAXIMUM_EXECUTABLE_TIMEOUT_MILLIS = </span><span class="s4">120 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The environment variable to check to see if executable can be run. 
+ * Value must be set to '1' for the executable to run. 
+ */</span>
+<span class="s1">const GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES = </span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * The maximum currently supported executable version. 
+ */</span>
+<span class="s1">const MAXIMUM_EXECUTABLE_VERSION = </span><span class="s4">1</span><span class="s1">;</span>
+<span class="s2">/** 
+ * PluggableAuthClient enables the exchange of workload identity pool external credentials for 
+ * Google access tokens by retrieving 3rd party tokens through a user supplied executable. These 
+ * scripts/executables are completely independent of the Google Cloud Auth libraries. These 
+ * credentials plug into ADC and will call the specified executable to retrieve the 3rd party token 
+ * to be exchanged for a Google access token. 
+ * 
+ * &lt;p&gt;To use these credentials, the GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES environment variable 
+ * must be set to '1'. This is for security reasons. 
+ * 
+ * &lt;p&gt;Both OIDC and SAML are supported. The executable must adhere to a specific response format 
+ * defined below. 
+ * 
+ * &lt;p&gt;The executable must print out the 3rd party token to STDOUT in JSON format. When an 
+ * output_file is specified in the credential configuration, the executable must also handle writing the 
+ * JSON response to this file. 
+ * 
+ * &lt;pre&gt; 
+ * OIDC response sample: 
+ * { 
+ *   &quot;version&quot;: 1, 
+ *   &quot;success&quot;: true, 
+ *   &quot;token_type&quot;: &quot;urn:ietf:params:oauth:token-type:id_token&quot;, 
+ *   &quot;id_token&quot;: &quot;HEADER.PAYLOAD.SIGNATURE&quot;, 
+ *   &quot;expiration_time&quot;: 1620433341 
+ * } 
+ * 
+ * SAML2 response sample: 
+ * { 
+ *   &quot;version&quot;: 1, 
+ *   &quot;success&quot;: true, 
+ *   &quot;token_type&quot;: &quot;urn:ietf:params:oauth:token-type:saml2&quot;, 
+ *   &quot;saml_response&quot;: &quot;...&quot;, 
+ *   &quot;expiration_time&quot;: 1620433341 
+ * } 
+ * 
+ * Error response sample: 
+ * { 
+ *   &quot;version&quot;: 1, 
+ *   &quot;success&quot;: false, 
+ *   &quot;code&quot;: &quot;401&quot;, 
+ *   &quot;message&quot;: &quot;Error message.&quot; 
+ * } 
+ * &lt;/pre&gt; 
+ * 
+ * &lt;p&gt;The &quot;expiration_time&quot; field in the JSON response is only required for successful 
+ * responses when an output file was specified in the credential configuration 
+ * 
+ * &lt;p&gt;The auth libraries will populate certain environment variables that will be accessible by the 
+ * executable, such as: GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE, GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE, 
+ * GOOGLE_EXTERNAL_ACCOUNT_INTERACTIVE, GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL, and 
+ * GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE. 
+ * 
+ * &lt;p&gt;Please see this repositories README for a complete executable request/response specification. 
+ */</span>
+<span class="s1">class PluggableAuthClient extends baseexternalclient_1.BaseExternalAccountClient {</span>
+    <span class="s2">/** 
+     * The command used to retrieve the third party token. 
+     */</span>
+    <span class="s1">command;</span>
+    <span class="s2">/** 
+     * The timeout in milliseconds for running executable, 
+     * set to default if none provided. 
+     */</span>
+    <span class="s1">timeoutMillis;</span>
+    <span class="s2">/** 
+     * The path to file to check for cached executable response. 
+     */</span>
+    <span class="s1">outputFile;</span>
+    <span class="s2">/** 
+     * Executable and output file handler. 
+     */</span>
+    <span class="s1">handler;</span>
+    <span class="s2">/** 
+     * Instantiates a PluggableAuthClient instance using the provided JSON 
+     * object loaded from an external account credentials file. 
+     * An error is thrown if the credential is not a valid pluggable auth credential. 
+     * @param options The external account options object typically loaded from 
+     *   the external account JSON credential file. 
+     */</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s1">super(options);</span>
+        <span class="s3">if </span><span class="s1">(!options.credential_source.executable) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No valid Pluggable Auth &quot;credential_source&quot; provided.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.command = options.credential_source.executable.command;</span>
+        <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.command) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No valid Pluggable Auth &quot;credential_source&quot; provided.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Check if the provided timeout exists and if it is valid.</span>
+        <span class="s3">if </span><span class="s1">(options.credential_source.executable.timeout_millis === undefined) {</span>
+            <span class="s3">this</span><span class="s1">.timeoutMillis = DEFAULT_EXECUTABLE_TIMEOUT_MILLIS;</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">this</span><span class="s1">.timeoutMillis = options.credential_source.executable.timeout_millis;</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.timeoutMillis &lt; MINIMUM_EXECUTABLE_TIMEOUT_MILLIS ||</span>
+                <span class="s3">this</span><span class="s1">.timeoutMillis &gt; MAXIMUM_EXECUTABLE_TIMEOUT_MILLIS) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(`Timeout must be between ${MINIMUM_EXECUTABLE_TIMEOUT_MILLIS} and ` +</span>
+                    <span class="s1">`${MAXIMUM_EXECUTABLE_TIMEOUT_MILLIS} milliseconds.`);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.outputFile = options.credential_source.executable.output_file;</span>
+        <span class="s3">this</span><span class="s1">.handler = </span><span class="s3">new </span><span class="s1">pluggable_auth_handler_1.PluggableAuthHandler({</span>
+            <span class="s1">command: </span><span class="s3">this</span><span class="s1">.command,</span>
+            <span class="s1">timeoutMillis: </span><span class="s3">this</span><span class="s1">.timeoutMillis,</span>
+            <span class="s1">outputFile: </span><span class="s3">this</span><span class="s1">.outputFile,</span>
+        <span class="s1">});</span>
+        <span class="s3">this</span><span class="s1">.credentialSourceType = </span><span class="s0">'executable'</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Triggered when an external subject token is needed to be exchanged for a 
+     * GCP access token via GCP STS endpoint. 
+     * This uses the `options.credential_source` object to figure out how 
+     * to retrieve the token using the current environment. In this case, 
+     * this calls a user provided executable which returns the subject token. 
+     * The logic is summarized as: 
+     * 1. Validated that the executable is allowed to run. The 
+     *    GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES environment must be set to 
+     *    1 for security reasons. 
+     * 2. If an output file is specified by the user, check the file location 
+     *    for a response. If the file exists and contains a valid response, 
+     *    return the subject token from the file. 
+     * 3. Call the provided executable and return response. 
+     * @return A promise that resolves with the external subject token. 
+     */</span>
+    <span class="s1">async retrieveSubjectToken() {</span>
+        <span class="s2">// Check if the executable is allowed to run.</span>
+        <span class="s3">if </span><span class="s1">(process.env[GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES] !== </span><span class="s0">'1'</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Pluggable Auth executables need to be explicitly allowed to run by ' </span><span class="s1">+</span>
+                <span class="s0">'setting the GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES environment ' </span><span class="s1">+</span>
+                <span class="s0">'Variable to 1.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">let executableResponse = undefined;</span>
+        <span class="s2">// Try to get cached executable response from output file.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.outputFile) {</span>
+            <span class="s1">executableResponse = await </span><span class="s3">this</span><span class="s1">.handler.retrieveCachedResponse();</span>
+        <span class="s1">}</span>
+        <span class="s2">// If no response from output file, call the executable.</span>
+        <span class="s3">if </span><span class="s1">(!executableResponse) {</span>
+            <span class="s2">// Set up environment map with required values for the executable.</span>
+            <span class="s1">const envMap = </span><span class="s3">new </span><span class="s1">Map();</span>
+            <span class="s1">envMap.set(</span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_AUDIENCE'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.audience);</span>
+            <span class="s1">envMap.set(</span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_TOKEN_TYPE'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.subjectTokenType);</span>
+            <span class="s2">// Always set to 0 because interactive mode is not supported.</span>
+            <span class="s1">envMap.set(</span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_INTERACTIVE'</span><span class="s1">, </span><span class="s0">'0'</span><span class="s1">);</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.outputFile) {</span>
+                <span class="s1">envMap.set(</span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_OUTPUT_FILE'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.outputFile);</span>
+            <span class="s1">}</span>
+            <span class="s1">const serviceAccountEmail = </span><span class="s3">this</span><span class="s1">.getServiceAccountEmail();</span>
+            <span class="s3">if </span><span class="s1">(serviceAccountEmail) {</span>
+                <span class="s1">envMap.set(</span><span class="s0">'GOOGLE_EXTERNAL_ACCOUNT_IMPERSONATED_EMAIL'</span><span class="s1">, serviceAccountEmail);</span>
+            <span class="s1">}</span>
+            <span class="s1">executableResponse =</span>
+                <span class="s1">await </span><span class="s3">this</span><span class="s1">.handler.retrieveResponseFromExecutable(envMap);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(executableResponse.version &gt; MAXIMUM_EXECUTABLE_VERSION) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(`Version of executable is not currently supported, maximum supported version is ${MAXIMUM_EXECUTABLE_VERSION}.`);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Check that response was successful.</span>
+        <span class="s3">if </span><span class="s1">(!executableResponse.success) {</span>
+            <span class="s3">throw new </span><span class="s1">pluggable_auth_handler_1.ExecutableError(executableResponse.errorMessage, executableResponse.errorCode);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Check that response contains expiration time if output file was specified.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.outputFile) {</span>
+            <span class="s3">if </span><span class="s1">(!executableResponse.expirationTime) {</span>
+                <span class="s3">throw new </span><span class="s1">executable_response_1.InvalidExpirationTimeFieldError(</span><span class="s0">'The executable response must contain the `expiration_time` field for successful responses when an output_file has been specified in the configuration.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">// Check that response is not expired.</span>
+        <span class="s3">if </span><span class="s1">(executableResponse.isExpired()) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Executable response is expired.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Return subject token from response.</span>
+        <span class="s3">return </span><span class="s1">executableResponse.subjectToken;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.PluggableAuthClient = PluggableAuthClient;</span>
+<span class="s2">//# sourceMappingURL=pluggable-auth-client.js.map</span></pre>
+</body>
+</html>

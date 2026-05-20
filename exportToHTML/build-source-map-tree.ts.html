@@ -1,0 +1,114 @@
+<html>
+<head>
+<title>build-source-map-tree.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #cf8e6d; font-style: italic;}
+.s8 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+build-source-map-tree.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ TraceMap } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@jridgewell/trace-mapping</span><span class="s2">';</span>
+
+<span class="s0">import </span><span class="s2">{ OriginalSource, MapSource } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./source-map-tree</span><span class="s2">';</span>
+
+<span class="s0">import type </span><span class="s2">{ Sources, MapSource </span><span class="s0">as </span><span class="s2">MapSourceType } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./source-map-tree</span><span class="s2">';</span>
+<span class="s0">import type </span><span class="s2">{ SourceMapInput, SourceMapLoader, LoaderContext } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+
+<span class="s0">function </span><span class="s4">asArray</span><span class="s2">&lt;T&gt;(value: T | T</span><span class="s1">[]</span><span class="s2">): T</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s0">return </span><span class="s2">value;</span>
+  <span class="s0">return </span><span class="s1">[</span><span class="s2">value</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s5">* Recursively builds a tree structure out of sourcemap files, with each node 
+ * being either an `OriginalSource` &quot;leaf&quot; or a `SourceMapTree` composed of 
+ * `OriginalSource`s and `SourceMapTree`s. 
+ * 
+ * Every sourcemap is composed of a collection of source files and mappings 
+ * into locations of those source files. When we generate a `SourceMapTree` for 
+ * the sourcemap, we attempt to load each source file's own sourcemap. If it 
+ * does not have an associated sourcemap, it is considered an original, 
+ * unmodified source file. 
+ </span><span class="s2">*/</span>
+<span class="s0">export default function </span><span class="s4">buildSourceMapTree</span><span class="s2">(</span>
+  <span class="s2">input: SourceMapInput | SourceMapInput</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">loader: SourceMapLoader,</span>
+<span class="s2">): MapSourceType {</span>
+  <span class="s0">const </span><span class="s2">maps = </span><span class="s4">asArray</span><span class="s1">(</span><span class="s2">input</span><span class="s1">)</span><span class="s2">.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(m) </span><span class="s0">=&gt; </span><span class="s2">new </span><span class="s4">TraceMap</span><span class="s1">(</span><span class="s2">m, ''</span><span class="s1">))</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">map = maps.</span><span class="s4">pop</span><span class="s1">()</span><span class="s2">!;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s6">0</span><span class="s2">; i &lt; maps.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">maps</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">.sources.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s6">1</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s4">Error</span><span class="s1">(</span>
+        <span class="s2">`</span><span class="s3">Transformation map </span><span class="s2">${i} </span><span class="s3">must have exactly one source file.</span><span class="s7">\n</span><span class="s2">` +</span>
+          <span class="s2">'</span><span class="s3">Did you specify these with the most recent transformation maps first?</span><span class="s2">',</span>
+      <span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">let </span><span class="s2">tree = </span><span class="s4">build</span><span class="s1">(</span><span class="s2">map, loader, '', </span><span class="s6">0</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = maps.</span><span class="s1">length </span><span class="s2">- </span><span class="s6">1</span><span class="s2">; i &gt;= </span><span class="s6">0</span><span class="s2">; i--</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">tree = </span><span class="s4">MapSource</span><span class="s1">(</span><span class="s2">maps</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">, </span><span class="s1">[</span><span class="s2">tree</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s2">}</span>
+  <span class="s0">return </span><span class="s2">tree;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">build</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">loader: SourceMapLoader,</span>
+  <span class="s2">importer: string,</span>
+  <span class="s2">importerDepth: number,</span>
+<span class="s2">): MapSourceType {</span>
+  <span class="s0">const </span><span class="s2">{ resolvedSources, sourcesContent, ignoreList } = map;</span>
+
+  <span class="s0">const </span><span class="s2">depth = importerDepth + </span><span class="s6">1</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">children = resolvedSources.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(sourceFile: string | null, i: number): Sources </span><span class="s0">=&gt; </span><span class="s2">{</span>
+    <span class="s2">// </span><span class="s5">The loading context gives the loader more information about why this file is being loaded</span>
+    <span class="s2">// </span><span class="s5">(eg, from which importer). It also allows the loader to override the location of the loaded</span>
+    <span class="s2">// </span><span class="s5">sourcemap/original source, or to override the content in the sourcesContent field if it's</span>
+    <span class="s2">// </span><span class="s5">an unmodified source file.</span>
+    <span class="s0">const </span><span class="s2">ctx: LoaderContext = {</span>
+      <span class="s2">importer,</span>
+      <span class="s2">depth,</span>
+      <span class="s1">source</span><span class="s2">: sourceFile || '',</span>
+      <span class="s1">content</span><span class="s2">: </span><span class="s8">undefined</span><span class="s2">,</span>
+      <span class="s1">ignore</span><span class="s2">: </span><span class="s8">undefined</span><span class="s2">,</span>
+    <span class="s2">};</span>
+
+    <span class="s2">// </span><span class="s5">Use the provided loader callback to retrieve the file's sourcemap.</span>
+    <span class="s2">// </span><span class="s5">TODO: We should eventually support async loading of sourcemap files.</span>
+    <span class="s0">const </span><span class="s2">sourceMap = </span><span class="s4">loader</span><span class="s1">(</span><span class="s2">ctx.source, ctx</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s2">{ source, content, ignore } = ctx;</span>
+
+    <span class="s2">// </span><span class="s5">If there is a sourcemap, then we need to recurse into it to load its source files.</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">sourceMap</span><span class="s1">) </span><span class="s0">return </span><span class="s4">build</span><span class="s1">(</span><span class="s2">new </span><span class="s4">TraceMap</span><span class="s1">(</span><span class="s2">sourceMap, source</span><span class="s1">)</span><span class="s2">, loader, source, depth</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s2">// </span><span class="s5">Else, it's an unmodified source file.</span>
+    <span class="s2">// </span><span class="s5">The contents of this unmodified source file can be overridden via the loader context,</span>
+    <span class="s2">// </span><span class="s5">allowing it to be explicitly null or a string. If it remains undefined, we fall back to</span>
+    <span class="s2">// </span><span class="s5">the importing sourcemap's `sourcesContent` field.</span>
+    <span class="s0">const </span><span class="s2">sourceContent =</span>
+      <span class="s2">content !== </span><span class="s8">undefined </span><span class="s2">? content : sourcesContent ? sourcesContent</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">: </span><span class="s8">null</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">ignored = ignore !== </span><span class="s8">undefined </span><span class="s2">? ignore : ignoreList ? ignoreList.</span><span class="s4">includes</span><span class="s1">(</span><span class="s2">i</span><span class="s1">) </span><span class="s2">: </span><span class="s8">false</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s4">OriginalSource</span><span class="s1">(</span><span class="s2">source, sourceContent, ignored</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s4">MapSource</span><span class="s1">(</span><span class="s2">map, children</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

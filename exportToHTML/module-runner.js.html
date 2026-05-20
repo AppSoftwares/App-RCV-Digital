@@ -1,0 +1,1333 @@
+<html>
+<head>
+<title>module-runner.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+.s5 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+module-runner.js</font>
+</center></td></tr></table>
+<pre><span class="s0">const VALID_ID_PREFIX = </span><span class="s1">&quot;/@id/&quot;</span><span class="s0">, NULL_BYTE_PLACEHOLDER = </span><span class="s1">&quot;__x00__&quot;</span><span class="s0">;</span>
+<span class="s0">let SOURCEMAPPING_URL = </span><span class="s1">&quot;sourceMa&quot;</span><span class="s0">;</span>
+<span class="s0">SOURCEMAPPING_URL += </span><span class="s1">&quot;ppingURL&quot;</span><span class="s0">;</span>
+<span class="s0">const ERR_OUTDATED_OPTIMIZED_DEP = </span><span class="s1">&quot;ERR_OUTDATED_OPTIMIZED_DEP&quot;</span><span class="s0">, isWindows = </span><span class="s2">typeof </span><span class="s0">process &lt; </span><span class="s1">&quot;u&quot; </span><span class="s0">&amp;&amp; process.platform === </span><span class="s1">&quot;win32&quot;</span><span class="s0">;</span>
+<span class="s2">function </span><span class="s0">unwrapId(id) {</span>
+  <span class="s2">return </span><span class="s0">id.startsWith(VALID_ID_PREFIX) ? id.slice(VALID_ID_PREFIX.length).replace(NULL_BYTE_PLACEHOLDER, </span><span class="s1">&quot;</span><span class="s2">\0</span><span class="s1">&quot;</span><span class="s0">) : id;</span>
+<span class="s0">}</span>
+<span class="s0">const windowsSlashRE = /\\/g;</span>
+<span class="s2">function </span><span class="s0">slash(p) {</span>
+  <span class="s2">return </span><span class="s0">p.replace(windowsSlashRE, </span><span class="s1">&quot;/&quot;</span><span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s0">const postfixRE = /[?#].*$/;</span>
+<span class="s2">function </span><span class="s0">cleanUrl(url) {</span>
+  <span class="s2">return </span><span class="s0">url.replace(postfixRE, </span><span class="s1">&quot;&quot;</span><span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">isPrimitive(value) {</span>
+  <span class="s2">return </span><span class="s0">!value || </span><span class="s2">typeof </span><span class="s0">value != </span><span class="s1">&quot;object&quot; </span><span class="s0">&amp;&amp; </span><span class="s2">typeof </span><span class="s0">value != </span><span class="s1">&quot;function&quot;</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s0">const AsyncFunction = async </span><span class="s2">function</span><span class="s0">() {</span>
+<span class="s0">}.constructor;</span>
+<span class="s0">let asyncFunctionDeclarationPaddingLineCount;</span>
+<span class="s2">function </span><span class="s0">getAsyncFunctionDeclarationPaddingLineCount() {</span>
+  <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">asyncFunctionDeclarationPaddingLineCount &gt; </span><span class="s1">&quot;u&quot;</span><span class="s0">) {</span>
+    <span class="s0">const body = </span><span class="s1">&quot;/*code*/&quot;</span><span class="s0">, source = </span><span class="s2">new </span><span class="s0">AsyncFunction(</span><span class="s1">&quot;a&quot;</span><span class="s0">, </span><span class="s1">&quot;b&quot;</span><span class="s0">, body).toString();</span>
+    <span class="s0">asyncFunctionDeclarationPaddingLineCount = source.slice(</span><span class="s3">0</span><span class="s0">, source.indexOf(body)).split(`</span>
+<span class="s0">`).length - </span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">asyncFunctionDeclarationPaddingLineCount;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">promiseWithResolvers() {</span>
+  <span class="s0">let resolve2, reject;</span>
+  <span class="s2">return </span><span class="s0">{ promise: </span><span class="s2">new </span><span class="s0">Promise((_resolve, _reject) =&gt; {</span>
+    <span class="s0">resolve2 = _resolve, reject = _reject;</span>
+  <span class="s0">}), resolve: resolve2, reject };</span>
+<span class="s0">}</span>
+<span class="s0">const _DRIVE_LETTER_START_RE = /^[A-Za-z]:\</span><span class="s4">//;</span>
+<span class="s2">function </span><span class="s0">normalizeWindowsPath(input = </span><span class="s1">&quot;&quot;</span><span class="s0">) {</span>
+  <span class="s2">return </span><span class="s0">input &amp;&amp; input.replace(/\\/g, </span><span class="s1">&quot;/&quot;</span><span class="s0">).replace(_DRIVE_LETTER_START_RE, (r) =&gt; r.toUpperCase());</span>
+<span class="s0">}</span>
+<span class="s0">const _IS_ABSOLUTE_RE = /^[/\\](?![/\\])|^[/\\]{</span><span class="s3">2</span><span class="s0">}(?!\.)|^[A-Za-z]:[/\\]/, _DRIVE_LETTER_RE = /^[A-Za-z]:$/;</span>
+<span class="s2">function </span><span class="s0">cwd() {</span>
+  <span class="s2">return typeof </span><span class="s0">process &lt; </span><span class="s1">&quot;u&quot; </span><span class="s0">&amp;&amp; </span><span class="s2">typeof </span><span class="s0">process.cwd == </span><span class="s1">&quot;function&quot; </span><span class="s0">? process.cwd().replace(/\\/g, </span><span class="s1">&quot;/&quot;</span><span class="s0">) : </span><span class="s1">&quot;/&quot;</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s0">const resolve = </span><span class="s2">function</span><span class="s0">(...arguments_) {</span>
+  <span class="s0">arguments_ = arguments_.map((argument) =&gt; normalizeWindowsPath(argument));</span>
+  <span class="s0">let resolvedPath = </span><span class="s1">&quot;&quot;</span><span class="s0">, resolvedAbsolute = !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s2">for </span><span class="s0">(let index = arguments_.length - </span><span class="s3">1</span><span class="s0">; index &gt;= -</span><span class="s3">1 </span><span class="s0">&amp;&amp; !resolvedAbsolute; index--) {</span>
+    <span class="s0">const path = index &gt;= </span><span class="s3">0 </span><span class="s0">? arguments_[index] : cwd();</span>
+    <span class="s0">!path || path.length === </span><span class="s3">0 </span><span class="s0">|| (resolvedPath = `${path}/${resolvedPath}`, resolvedAbsolute = isAbsolute(path));</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">resolvedPath = normalizeString(resolvedPath, !resolvedAbsolute), resolvedAbsolute &amp;&amp; !isAbsolute(resolvedPath) ? `/${resolvedPath}` : resolvedPath.length &gt; </span><span class="s3">0 </span><span class="s0">? resolvedPath : </span><span class="s1">&quot;.&quot;</span><span class="s0">;</span>
+<span class="s0">};</span>
+<span class="s2">function </span><span class="s0">normalizeString(path, allowAboveRoot) {</span>
+  <span class="s0">let res = </span><span class="s1">&quot;&quot;</span><span class="s0">, lastSegmentLength = </span><span class="s3">0</span><span class="s0">, lastSlash = -</span><span class="s3">1</span><span class="s0">, dots = </span><span class="s3">0</span><span class="s0">, char = </span><span class="s2">null</span><span class="s0">;</span>
+  <span class="s2">for </span><span class="s0">(let index = </span><span class="s3">0</span><span class="s0">; index &lt;= path.length; ++index) {</span>
+    <span class="s2">if </span><span class="s0">(index &lt; path.length)</span>
+      <span class="s0">char = path[index];</span>
+    <span class="s2">else </span><span class="s0">{</span>
+      <span class="s2">if </span><span class="s0">(char === </span><span class="s1">&quot;/&quot;</span><span class="s0">)</span>
+        <span class="s2">break</span><span class="s0">;</span>
+      <span class="s0">char = </span><span class="s1">&quot;/&quot;</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(char === </span><span class="s1">&quot;/&quot;</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(!(lastSlash === index - </span><span class="s3">1 </span><span class="s0">|| dots === </span><span class="s3">1</span><span class="s0">)) </span><span class="s2">if </span><span class="s0">(dots === </span><span class="s3">2</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(res.length &lt; </span><span class="s3">2 </span><span class="s0">|| lastSegmentLength !== </span><span class="s3">2 </span><span class="s0">|| res[res.length - </span><span class="s3">1</span><span class="s0">] !== </span><span class="s1">&quot;.&quot; </span><span class="s0">|| res[res.length - </span><span class="s3">2</span><span class="s0">] !== </span><span class="s1">&quot;.&quot;</span><span class="s0">) {</span>
+          <span class="s2">if </span><span class="s0">(res.length &gt; </span><span class="s3">2</span><span class="s0">) {</span>
+            <span class="s0">const lastSlashIndex = res.lastIndexOf(</span><span class="s1">&quot;/&quot;</span><span class="s0">);</span>
+            <span class="s0">lastSlashIndex === -</span><span class="s3">1 </span><span class="s0">? (res = </span><span class="s1">&quot;&quot;</span><span class="s0">, lastSegmentLength = </span><span class="s3">0</span><span class="s0">) : (res = res.slice(</span><span class="s3">0</span><span class="s0">, lastSlashIndex), lastSegmentLength = res.length - </span><span class="s3">1 </span><span class="s0">- res.lastIndexOf(</span><span class="s1">&quot;/&quot;</span><span class="s0">)), lastSlash = index, dots = </span><span class="s3">0</span><span class="s0">;</span>
+            <span class="s2">continue</span><span class="s0">;</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(res.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+            <span class="s0">res = </span><span class="s1">&quot;&quot;</span><span class="s0">, lastSegmentLength = </span><span class="s3">0</span><span class="s0">, lastSlash = index, dots = </span><span class="s3">0</span><span class="s0">;</span>
+            <span class="s2">continue</span><span class="s0">;</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s0">allowAboveRoot &amp;&amp; (res += res.length &gt; </span><span class="s3">0 </span><span class="s0">? </span><span class="s1">&quot;/..&quot; </span><span class="s0">: </span><span class="s1">&quot;..&quot;</span><span class="s0">, lastSegmentLength = </span><span class="s3">2</span><span class="s0">);</span>
+      <span class="s0">} </span><span class="s2">else</span>
+        <span class="s0">res.length &gt; </span><span class="s3">0 </span><span class="s0">? res += `/${path.slice(lastSlash + </span><span class="s3">1</span><span class="s0">, index)}` : res = path.slice(lastSlash + </span><span class="s3">1</span><span class="s0">, index), lastSegmentLength = index - lastSlash - </span><span class="s3">1</span><span class="s0">;</span>
+      <span class="s0">lastSlash = index, dots = </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">char === </span><span class="s1">&quot;.&quot; </span><span class="s0">&amp;&amp; dots !== -</span><span class="s3">1 </span><span class="s0">? ++dots : dots = -</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">res;</span>
+<span class="s0">}</span>
+<span class="s0">const isAbsolute = </span><span class="s2">function</span><span class="s0">(p) {</span>
+  <span class="s2">return </span><span class="s0">_IS_ABSOLUTE_RE.test(p);</span>
+<span class="s0">}, dirname = </span><span class="s2">function</span><span class="s0">(p) {</span>
+  <span class="s0">const segments = normalizeWindowsPath(p).replace(/\/$/, </span><span class="s1">&quot;&quot;</span><span class="s0">).split(</span><span class="s1">&quot;/&quot;</span><span class="s0">).slice(</span><span class="s3">0</span><span class="s0">, -</span><span class="s3">1</span><span class="s0">);</span>
+  <span class="s2">return </span><span class="s0">segments.length === </span><span class="s3">1 </span><span class="s0">&amp;&amp; _DRIVE_LETTER_RE.test(segments[</span><span class="s3">0</span><span class="s0">]) &amp;&amp; (segments[</span><span class="s3">0</span><span class="s0">] += </span><span class="s1">&quot;/&quot;</span><span class="s0">), segments.join(</span><span class="s1">&quot;/&quot;</span><span class="s0">) || (isAbsolute(p) ? </span><span class="s1">&quot;/&quot; </span><span class="s0">: </span><span class="s1">&quot;.&quot;</span><span class="s0">);</span>
+<span class="s0">}, decodeBase64 = </span><span class="s2">typeof </span><span class="s0">atob &lt; </span><span class="s1">&quot;u&quot; </span><span class="s0">? atob : (str) =&gt; Buffer.from(str, </span><span class="s1">&quot;base64&quot;</span><span class="s0">).toString(</span><span class="s1">&quot;utf-8&quot;</span><span class="s0">), CHAR_FORWARD_SLASH = </span><span class="s3">47</span><span class="s0">, CHAR_BACKWARD_SLASH = </span><span class="s3">92</span><span class="s0">, percentRegEx = /%/g, backslashRegEx = /\\/g, newlineRegEx = /\n/g, carriageReturnRegEx = /\r/g, tabRegEx = /\t/g, questionRegex = /\?/g, hashRegex = /#/g;</span>
+<span class="s2">function </span><span class="s0">encodePathChars(filepath) {</span>
+  <span class="s2">return </span><span class="s0">filepath.indexOf(</span><span class="s1">&quot;%&quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (filepath = filepath.replace(percentRegEx, </span><span class="s1">&quot;%25&quot;</span><span class="s0">)), !isWindows &amp;&amp; filepath.indexOf(</span><span class="s1">&quot;</span><span class="s2">\\</span><span class="s1">&quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (filepath = filepath.replace(backslashRegEx, </span><span class="s1">&quot;%5C&quot;</span><span class="s0">)), filepath.indexOf(`</span>
+<span class="s0">`) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (filepath = filepath.replace(newlineRegEx, </span><span class="s1">&quot;%0A&quot;</span><span class="s0">)), filepath.indexOf(</span><span class="s1">&quot;</span><span class="s2">\r</span><span class="s1">&quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (filepath = filepath.replace(carriageReturnRegEx, </span><span class="s1">&quot;%0D&quot;</span><span class="s0">)), filepath.indexOf(</span><span class="s1">&quot; &quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (filepath = filepath.replace(tabRegEx, </span><span class="s1">&quot;%09&quot;</span><span class="s0">)), filepath;</span>
+<span class="s0">}</span>
+<span class="s0">const posixDirname = dirname, posixResolve = resolve;</span>
+<span class="s2">function </span><span class="s0">posixPathToFileHref(posixPath) {</span>
+  <span class="s0">let resolved = posixResolve(posixPath);</span>
+  <span class="s0">const filePathLast = posixPath.charCodeAt(posixPath.length - </span><span class="s3">1</span><span class="s0">);</span>
+  <span class="s2">return </span><span class="s0">(filePathLast === CHAR_FORWARD_SLASH || isWindows &amp;&amp; filePathLast === CHAR_BACKWARD_SLASH) &amp;&amp; resolved[resolved.length - </span><span class="s3">1</span><span class="s0">] !== </span><span class="s1">&quot;/&quot; </span><span class="s0">&amp;&amp; (resolved += </span><span class="s1">&quot;/&quot;</span><span class="s0">), resolved = encodePathChars(resolved), resolved.indexOf(</span><span class="s1">&quot;?&quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (resolved = resolved.replace(questionRegex, </span><span class="s1">&quot;%3F&quot;</span><span class="s0">)), resolved.indexOf(</span><span class="s1">&quot;#&quot;</span><span class="s0">) !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; (resolved = resolved.replace(hashRegex, </span><span class="s1">&quot;%23&quot;</span><span class="s0">)), </span><span class="s2">new </span><span class="s0">URL(`file:</span><span class="s4">//${resolved}`).href;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">toWindowsPath(path) {</span>
+  <span class="s2">return </span><span class="s0">path.replace(/\</span><span class="s4">//g, &quot;\\&quot;);</span>
+<span class="s0">}</span>
+<span class="s0">const comma = </span><span class="s3">44</span><span class="s0">, chars = </span><span class="s1">&quot;ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/&quot;</span><span class="s0">, intToChar = </span><span class="s2">new </span><span class="s0">Uint8Array(</span><span class="s3">64</span><span class="s0">), charToInt = </span><span class="s2">new </span><span class="s0">Uint8Array(</span><span class="s3">128</span><span class="s0">);</span>
+<span class="s2">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; chars.length; i++) {</span>
+  <span class="s0">const c = chars.charCodeAt(i);</span>
+  <span class="s0">intToChar[i] = c, charToInt[c] = i;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">decodeInteger(reader, relative) {</span>
+  <span class="s0">let value = </span><span class="s3">0</span><span class="s0">, shift = </span><span class="s3">0</span><span class="s0">, integer = </span><span class="s3">0</span><span class="s0">;</span>
+  <span class="s2">do </span><span class="s0">{</span>
+    <span class="s0">const c = reader.next();</span>
+    <span class="s0">integer = charToInt[c], value |= (integer &amp; </span><span class="s3">31</span><span class="s0">) &lt;&lt; shift, shift += </span><span class="s3">5</span><span class="s0">;</span>
+  <span class="s0">} </span><span class="s2">while </span><span class="s0">(integer &amp; </span><span class="s3">32</span><span class="s0">);</span>
+  <span class="s0">const shouldNegate = value &amp; </span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s2">return </span><span class="s0">value &gt;&gt;&gt;= </span><span class="s3">1</span><span class="s0">, shouldNegate &amp;&amp; (value = -</span><span class="s3">2147483648 </span><span class="s0">| -value), relative + value;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">hasMoreVlq(reader, max) {</span>
+  <span class="s2">return </span><span class="s0">reader.pos &gt;= max ? !</span><span class="s3">1 </span><span class="s0">: reader.peek() !== comma;</span>
+<span class="s0">}</span>
+<span class="s0">class StringReader {</span>
+  <span class="s0">constructor(buffer) {</span>
+    <span class="s2">this</span><span class="s0">.pos = </span><span class="s3">0</span><span class="s0">, </span><span class="s2">this</span><span class="s0">.buffer = buffer;</span>
+  <span class="s0">}</span>
+  <span class="s0">next() {</span>
+    <span class="s2">return this</span><span class="s0">.buffer.charCodeAt(</span><span class="s2">this</span><span class="s0">.pos++);</span>
+  <span class="s0">}</span>
+  <span class="s0">peek() {</span>
+    <span class="s2">return this</span><span class="s0">.buffer.charCodeAt(</span><span class="s2">this</span><span class="s0">.pos);</span>
+  <span class="s0">}</span>
+  <span class="s0">indexOf(char) {</span>
+    <span class="s0">const { buffer, pos } = </span><span class="s2">this</span><span class="s0">, idx = buffer.indexOf(char, pos);</span>
+    <span class="s2">return </span><span class="s0">idx === -</span><span class="s3">1 </span><span class="s0">? buffer.length : idx;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">decode(mappings) {</span>
+  <span class="s0">const { length } = mappings, reader = </span><span class="s2">new </span><span class="s0">StringReader(mappings), decoded = [];</span>
+  <span class="s0">let genColumn = </span><span class="s3">0</span><span class="s0">, sourcesIndex = </span><span class="s3">0</span><span class="s0">, sourceLine = </span><span class="s3">0</span><span class="s0">, sourceColumn = </span><span class="s3">0</span><span class="s0">, namesIndex = </span><span class="s3">0</span><span class="s0">;</span>
+  <span class="s2">do </span><span class="s0">{</span>
+    <span class="s0">const semi = reader.indexOf(</span><span class="s1">&quot;;&quot;</span><span class="s0">), line = [];</span>
+    <span class="s0">let sorted = !</span><span class="s3">0</span><span class="s0">, lastCol = </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s2">for </span><span class="s0">(genColumn = </span><span class="s3">0</span><span class="s0">; reader.pos &lt; semi; ) {</span>
+      <span class="s0">let seg;</span>
+      <span class="s0">genColumn = decodeInteger(reader, genColumn), genColumn &lt; lastCol &amp;&amp; (sorted = !</span><span class="s3">1</span><span class="s0">), lastCol = genColumn, hasMoreVlq(reader, semi) ? (sourcesIndex = decodeInteger(reader, sourcesIndex), sourceLine = decodeInteger(reader, sourceLine), sourceColumn = decodeInteger(reader, sourceColumn), hasMoreVlq(reader, semi) ? (namesIndex = decodeInteger(reader, namesIndex), seg = [genColumn, sourcesIndex, sourceLine, sourceColumn, namesIndex]) : seg = [genColumn, sourcesIndex, sourceLine, sourceColumn]) : seg = [genColumn], line.push(seg), reader.pos++;</span>
+    <span class="s0">}</span>
+    <span class="s0">sorted || sort(line), decoded.push(line), reader.pos = semi + </span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">} </span><span class="s2">while </span><span class="s0">(reader.pos &lt;= length);</span>
+  <span class="s2">return </span><span class="s0">decoded;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">sort(line) {</span>
+  <span class="s0">line.sort(sortComparator);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">sortComparator(a, b) {</span>
+  <span class="s2">return </span><span class="s0">a[</span><span class="s3">0</span><span class="s0">] - b[</span><span class="s3">0</span><span class="s0">];</span>
+<span class="s0">}</span>
+<span class="s0">const COLUMN = </span><span class="s3">0</span><span class="s0">, SOURCES_INDEX = </span><span class="s3">1</span><span class="s0">, SOURCE_LINE = </span><span class="s3">2</span><span class="s0">, SOURCE_COLUMN = </span><span class="s3">3</span><span class="s0">, NAMES_INDEX = </span><span class="s3">4</span><span class="s0">;</span>
+<span class="s0">let found = !</span><span class="s3">1</span><span class="s0">;</span>
+<span class="s2">function </span><span class="s0">binarySearch(haystack, needle, low, high) {</span>
+  <span class="s2">for </span><span class="s0">(; low &lt;= high; ) {</span>
+    <span class="s0">const mid = low + (high - low &gt;&gt; </span><span class="s3">1</span><span class="s0">), cmp = haystack[mid][COLUMN] - needle;</span>
+    <span class="s2">if </span><span class="s0">(cmp === </span><span class="s3">0</span><span class="s0">)</span>
+      <span class="s2">return </span><span class="s0">found = !</span><span class="s3">0</span><span class="s0">, mid;</span>
+    <span class="s0">cmp &lt; </span><span class="s3">0 </span><span class="s0">? low = mid + </span><span class="s3">1 </span><span class="s0">: high = mid - </span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">found = !</span><span class="s3">1</span><span class="s0">, low - </span><span class="s3">1</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">upperBound(haystack, needle, index) {</span>
+  <span class="s2">for </span><span class="s0">(let i = index + </span><span class="s3">1</span><span class="s0">; i &lt; haystack.length &amp;&amp; haystack[i][COLUMN] === needle; index = i++)</span>
+    <span class="s0">;</span>
+  <span class="s2">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">lowerBound(haystack, needle, index) {</span>
+  <span class="s2">for </span><span class="s0">(let i = index - </span><span class="s3">1</span><span class="s0">; i &gt;= </span><span class="s3">0 </span><span class="s0">&amp;&amp; haystack[i][COLUMN] === needle; index = i--)</span>
+    <span class="s0">;</span>
+  <span class="s2">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">memoizedBinarySearch(haystack, needle, state, key) {</span>
+  <span class="s0">const { lastKey, lastNeedle, lastIndex } = state;</span>
+  <span class="s0">let low = </span><span class="s3">0</span><span class="s0">, high = haystack.length - </span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s2">if </span><span class="s0">(key === lastKey) {</span>
+    <span class="s2">if </span><span class="s0">(needle === lastNeedle)</span>
+      <span class="s2">return </span><span class="s0">found = lastIndex !== -</span><span class="s3">1 </span><span class="s0">&amp;&amp; haystack[lastIndex][COLUMN] === needle, lastIndex;</span>
+    <span class="s0">needle &gt;= lastNeedle ? low = lastIndex === -</span><span class="s3">1 </span><span class="s0">? </span><span class="s3">0 </span><span class="s0">: lastIndex : high = lastIndex;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">state.lastKey = key, state.lastNeedle = needle, state.lastIndex = binarySearch(haystack, needle, low, high);</span>
+<span class="s0">}</span>
+<span class="s0">const LINE_GTR_ZERO = </span><span class="s1">&quot;`line` must be greater than 0 (lines start at line 1)&quot;</span><span class="s0">, COL_GTR_EQ_ZERO = </span><span class="s1">&quot;`column` must be greater than or equal to 0 (columns start at column 0)&quot;</span><span class="s0">, LEAST_UPPER_BOUND = -</span><span class="s3">1</span><span class="s0">, GREATEST_LOWER_BOUND = </span><span class="s3">1</span><span class="s0">;</span>
+<span class="s2">function </span><span class="s0">cast(map) {</span>
+  <span class="s2">return </span><span class="s0">map;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">decodedMappings(map) {</span>
+  <span class="s2">var </span><span class="s0">_a;</span>
+  <span class="s2">return </span><span class="s0">(_a = map)._decoded || (_a._decoded = decode(map._encoded));</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">originalPositionFor(map, needle) {</span>
+  <span class="s0">let { line, column, bias } = needle;</span>
+  <span class="s2">if </span><span class="s0">(line--, line &lt; </span><span class="s3">0</span><span class="s0">)</span>
+    <span class="s2">throw new </span><span class="s0">Error(LINE_GTR_ZERO);</span>
+  <span class="s2">if </span><span class="s0">(column &lt; </span><span class="s3">0</span><span class="s0">)</span>
+    <span class="s2">throw new </span><span class="s0">Error(COL_GTR_EQ_ZERO);</span>
+  <span class="s0">const decoded = decodedMappings(map);</span>
+  <span class="s2">if </span><span class="s0">(line &gt;= decoded.length)</span>
+    <span class="s2">return </span><span class="s0">OMapping(</span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">);</span>
+  <span class="s0">const segments = decoded[line], index = traceSegmentInternal(segments, map._decodedMemo, line, column, bias || GREATEST_LOWER_BOUND);</span>
+  <span class="s2">if </span><span class="s0">(index === -</span><span class="s3">1</span><span class="s0">)</span>
+    <span class="s2">return </span><span class="s0">OMapping(</span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">);</span>
+  <span class="s0">const segment = segments[index];</span>
+  <span class="s2">if </span><span class="s0">(segment.length === </span><span class="s3">1</span><span class="s0">)</span>
+    <span class="s2">return </span><span class="s0">OMapping(</span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">, </span><span class="s2">null</span><span class="s0">);</span>
+  <span class="s0">const { names, resolvedSources } = map;</span>
+  <span class="s2">return </span><span class="s0">OMapping(resolvedSources[segment[SOURCES_INDEX]], segment[SOURCE_LINE] + </span><span class="s3">1</span><span class="s0">, segment[SOURCE_COLUMN], segment.length === </span><span class="s3">5 </span><span class="s0">? names[segment[NAMES_INDEX]] : </span><span class="s2">null</span><span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">OMapping(source, line, column, name) {</span>
+  <span class="s2">return </span><span class="s0">{ source, line, column, name };</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">traceSegmentInternal(segments, memo, line, column, bias) {</span>
+  <span class="s0">let index = memoizedBinarySearch(segments, column, memo, line);</span>
+  <span class="s2">return </span><span class="s0">found ? index = (bias === LEAST_UPPER_BOUND ? upperBound : lowerBound)(segments, column, index) : bias === LEAST_UPPER_BOUND &amp;&amp; index++, index === -</span><span class="s3">1 </span><span class="s0">|| index === segments.length ? -</span><span class="s3">1 </span><span class="s0">: index;</span>
+<span class="s0">}</span>
+<span class="s0">class DecodedMap {</span>
+  <span class="s0">constructor(map, from) {</span>
+    <span class="s2">this</span><span class="s0">.map = map;</span>
+    <span class="s0">const { mappings, names, sources } = map;</span>
+    <span class="s2">this</span><span class="s0">.version = map.version, </span><span class="s2">this</span><span class="s0">.names = names || [], </span><span class="s2">this</span><span class="s0">._encoded = mappings || </span><span class="s1">&quot;&quot;</span><span class="s0">, </span><span class="s2">this</span><span class="s0">._decodedMemo = memoizedState(), </span><span class="s2">this</span><span class="s0">.url = from, </span><span class="s2">this</span><span class="s0">.resolvedSources = (sources || []).map(</span>
+      <span class="s0">(s) =&gt; posixResolve(s || </span><span class="s1">&quot;&quot;</span><span class="s0">, from)</span>
+    <span class="s0">);</span>
+  <span class="s0">}</span>
+  <span class="s0">_encoded;</span>
+  <span class="s0">_decoded;</span>
+  <span class="s0">_decodedMemo;</span>
+  <span class="s0">url;</span>
+  <span class="s0">version;</span>
+  <span class="s0">names = [];</span>
+  <span class="s0">resolvedSources;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">memoizedState() {</span>
+  <span class="s2">return </span><span class="s0">{</span>
+    <span class="s0">lastKey: -</span><span class="s3">1</span><span class="s0">,</span>
+    <span class="s0">lastNeedle: -</span><span class="s3">1</span><span class="s0">,</span>
+    <span class="s0">lastIndex: -</span><span class="s3">1</span>
+  <span class="s0">};</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">getOriginalPosition(map, needle) {</span>
+  <span class="s0">const result = originalPositionFor(map, needle);</span>
+  <span class="s2">return </span><span class="s0">result.column == </span><span class="s2">null </span><span class="s0">? </span><span class="s2">null </span><span class="s0">: result;</span>
+<span class="s0">}</span>
+<span class="s0">const MODULE_RUNNER_SOURCEMAPPING_REGEXP = </span><span class="s2">new </span><span class="s0">RegExp(</span>
+  <span class="s0">`</span><span class="s4">//# ${SOURCEMAPPING_URL}=data:application/json;base64,(.+)`</span>
+<span class="s0">);</span>
+<span class="s0">class EvaluatedModuleNode {</span>
+  <span class="s0">constructor(id, url) {</span>
+    <span class="s2">this</span><span class="s0">.id = id, </span><span class="s2">this</span><span class="s0">.url = url, </span><span class="s2">this</span><span class="s0">.file = cleanUrl(id);</span>
+  <span class="s0">}</span>
+  <span class="s0">importers = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set();</span>
+  <span class="s0">imports = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set();</span>
+  <span class="s0">evaluated = !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">meta;</span>
+  <span class="s0">promise;</span>
+  <span class="s0">exports;</span>
+  <span class="s0">file;</span>
+  <span class="s0">map;</span>
+<span class="s0">}</span>
+<span class="s0">class EvaluatedModules {</span>
+  <span class="s0">idToModuleMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">fileToModulesMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">urlToIdModuleMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s4">/** 
+   * Returns the module node by the resolved module ID. Usually, module ID is 
+   * the file system path with query and/or hash. It can also be a virtual module. 
+   * 
+   * Module runner graph will have 1 to 1 mapping with the server module graph. 
+   * @param id Resolved module ID 
+   */</span>
+  <span class="s0">getModuleById(id) {</span>
+    <span class="s2">return this</span><span class="s0">.idToModuleMap.get(id);</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Returns all modules related to the file system path. Different modules 
+   * might have different query parameters or hash, so it's possible to have 
+   * multiple modules for the same file. 
+   * @param file The file system path of the module 
+   */</span>
+  <span class="s0">getModulesByFile(file) {</span>
+    <span class="s2">return this</span><span class="s0">.fileToModulesMap.get(file);</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Returns the module node by the URL that was used in the import statement. 
+   * Unlike module graph on the server, the URL is not resolved and is used as is. 
+   * @param url Server URL that was used in the import statement 
+   */</span>
+  <span class="s0">getModuleByUrl(url) {</span>
+    <span class="s2">return this</span><span class="s0">.urlToIdModuleMap.get(unwrapId(url));</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Ensure that module is in the graph. If the module is already in the graph, 
+   * it will return the existing module node. Otherwise, it will create a new 
+   * module node and add it to the graph. 
+   * @param id Resolved module ID 
+   * @param url URL that was used in the import statement 
+   */</span>
+  <span class="s0">ensureModule(id, url) {</span>
+    <span class="s2">if </span><span class="s0">(id = normalizeModuleId(id), </span><span class="s2">this</span><span class="s0">.idToModuleMap.has(id)) {</span>
+      <span class="s0">const moduleNode2 = </span><span class="s2">this</span><span class="s0">.idToModuleMap.get(id);</span>
+      <span class="s2">return this</span><span class="s0">.urlToIdModuleMap.set(url, moduleNode2), moduleNode2;</span>
+    <span class="s0">}</span>
+    <span class="s0">const moduleNode = </span><span class="s2">new </span><span class="s0">EvaluatedModuleNode(id, url);</span>
+    <span class="s2">this</span><span class="s0">.idToModuleMap.set(id, moduleNode), </span><span class="s2">this</span><span class="s0">.urlToIdModuleMap.set(url, moduleNode);</span>
+    <span class="s0">const fileModules = </span><span class="s2">this</span><span class="s0">.fileToModulesMap.get(moduleNode.file) || </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set();</span>
+    <span class="s2">return </span><span class="s0">fileModules.add(moduleNode), </span><span class="s2">this</span><span class="s0">.fileToModulesMap.set(moduleNode.file, fileModules), moduleNode;</span>
+  <span class="s0">}</span>
+  <span class="s0">invalidateModule(node) {</span>
+    <span class="s0">node.evaluated = !</span><span class="s3">1</span><span class="s0">, node.meta = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">, node.map = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">, node.promise = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">, node.exports = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">, node.imports.clear();</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Extracts the inlined source map from the module code and returns the decoded 
+   * source map. If the source map is not inlined, it will return null. 
+   * @param id Resolved module ID 
+   */</span>
+  <span class="s0">getModuleSourceMapById(id) {</span>
+    <span class="s0">const mod = </span><span class="s2">this</span><span class="s0">.getModuleById(id);</span>
+    <span class="s2">if </span><span class="s0">(!mod) </span><span class="s2">return null</span><span class="s0">;</span>
+    <span class="s2">if </span><span class="s0">(mod.map) </span><span class="s2">return </span><span class="s0">mod.map;</span>
+    <span class="s2">if </span><span class="s0">(!mod.meta || !(</span><span class="s1">&quot;code&quot; </span><span class="s2">in </span><span class="s0">mod.meta)) </span><span class="s2">return null</span><span class="s0">;</span>
+    <span class="s0">const mapString = MODULE_RUNNER_SOURCEMAPPING_REGEXP.exec(</span>
+      <span class="s0">mod.meta.code</span>
+    <span class="s0">)?.[</span><span class="s3">1</span><span class="s0">];</span>
+    <span class="s2">return </span><span class="s0">mapString ? (mod.map = </span><span class="s2">new </span><span class="s0">DecodedMap(JSON.parse(decodeBase64(mapString)), mod.file), mod.map) : </span><span class="s2">null</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s0">clear() {</span>
+    <span class="s2">this</span><span class="s0">.idToModuleMap.clear(), </span><span class="s2">this</span><span class="s0">.fileToModulesMap.clear(), </span><span class="s2">this</span><span class="s0">.urlToIdModuleMap.clear();</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">const prefixedBuiltins = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set([</span>
+  <span class="s1">&quot;node:sea&quot;</span><span class="s0">,</span>
+  <span class="s1">&quot;node:sqlite&quot;</span><span class="s0">,</span>
+  <span class="s1">&quot;node:test&quot;</span><span class="s0">,</span>
+  <span class="s1">&quot;node:test/reporters&quot;</span>
+<span class="s0">]);</span>
+<span class="s2">function </span><span class="s0">normalizeModuleId(file) {</span>
+  <span class="s2">return </span><span class="s0">prefixedBuiltins.has(file) ? file : slash(file).replace(/^\/@fs\</span><span class="s4">//, isWindows ? &quot;&quot; : &quot;/&quot;).replace(/^node:/, &quot;&quot;).replace(/^\/+/, &quot;/&quot;).replace(/^file:\//, &quot;/&quot;);</span>
+<span class="s0">}</span>
+<span class="s0">class HMRContext {</span>
+  <span class="s0">constructor(hmrClient, ownerPath) {</span>
+    <span class="s2">this</span><span class="s0">.hmrClient = hmrClient, </span><span class="s2">this</span><span class="s0">.ownerPath = ownerPath, hmrClient.dataMap.has(ownerPath) || hmrClient.dataMap.set(ownerPath, {});</span>
+    <span class="s0">const mod = hmrClient.hotModulesMap.get(ownerPath);</span>
+    <span class="s0">mod &amp;&amp; (mod.callbacks = []);</span>
+    <span class="s0">const staleListeners = hmrClient.ctxToListenersMap.get(ownerPath);</span>
+    <span class="s2">if </span><span class="s0">(staleListeners)</span>
+      <span class="s2">for </span><span class="s0">(const [event, staleFns] of staleListeners) {</span>
+        <span class="s0">const listeners = hmrClient.customListenersMap.get(event);</span>
+        <span class="s0">listeners &amp;&amp; hmrClient.customListenersMap.set(</span>
+          <span class="s0">event,</span>
+          <span class="s0">listeners.filter((l) =&gt; !staleFns.includes(l))</span>
+        <span class="s0">);</span>
+      <span class="s0">}</span>
+    <span class="s2">this</span><span class="s0">.newListeners = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map(), hmrClient.ctxToListenersMap.set(ownerPath, </span><span class="s2">this</span><span class="s0">.newListeners);</span>
+  <span class="s0">}</span>
+  <span class="s0">newListeners;</span>
+  <span class="s0">get data() {</span>
+    <span class="s2">return this</span><span class="s0">.hmrClient.dataMap.get(</span><span class="s2">this</span><span class="s0">.ownerPath);</span>
+  <span class="s0">}</span>
+  <span class="s0">accept(deps, callback) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">deps == </span><span class="s1">&quot;function&quot; </span><span class="s0">|| !deps)</span>
+      <span class="s2">this</span><span class="s0">.acceptDeps([</span><span class="s2">this</span><span class="s0">.ownerPath], ([mod]) =&gt; deps?.(mod));</span>
+    <span class="s2">else if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">deps == </span><span class="s1">&quot;string&quot;</span><span class="s0">)</span>
+      <span class="s2">this</span><span class="s0">.acceptDeps([deps], ([mod]) =&gt; callback?.(mod));</span>
+    <span class="s2">else if </span><span class="s0">(Array.isArray(deps))</span>
+      <span class="s2">this</span><span class="s0">.acceptDeps(deps, callback);</span>
+    <span class="s2">else</span>
+      <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;invalid hot.accept() usage.&quot;</span><span class="s0">);</span>
+  <span class="s0">}</span>
+  <span class="s4">// export names (first arg) are irrelevant on the client side, they're</span>
+  <span class="s4">// extracted in the server for propagation</span>
+  <span class="s0">acceptExports(_, callback) {</span>
+    <span class="s2">this</span><span class="s0">.acceptDeps([</span><span class="s2">this</span><span class="s0">.ownerPath], ([mod]) =&gt; callback?.(mod));</span>
+  <span class="s0">}</span>
+  <span class="s0">dispose(cb) {</span>
+    <span class="s2">this</span><span class="s0">.hmrClient.disposeMap.set(</span><span class="s2">this</span><span class="s0">.ownerPath, cb);</span>
+  <span class="s0">}</span>
+  <span class="s0">prune(cb) {</span>
+    <span class="s2">this</span><span class="s0">.hmrClient.pruneMap.set(</span><span class="s2">this</span><span class="s0">.ownerPath, cb);</span>
+  <span class="s0">}</span>
+  <span class="s4">// Kept for backward compatibility (#11036)</span>
+  <span class="s4">// eslint-disable-next-line @typescript-eslint/no-empty-function</span>
+  <span class="s0">decline() {</span>
+  <span class="s0">}</span>
+  <span class="s0">invalidate(message) {</span>
+    <span class="s0">const firstInvalidatedBy = </span><span class="s2">this</span><span class="s0">.hmrClient.currentFirstInvalidatedBy ?? </span><span class="s2">this</span><span class="s0">.ownerPath;</span>
+    <span class="s2">this</span><span class="s0">.hmrClient.notifyListeners(</span><span class="s1">&quot;vite:invalidate&quot;</span><span class="s0">, {</span>
+      <span class="s0">path: </span><span class="s2">this</span><span class="s0">.ownerPath,</span>
+      <span class="s0">message,</span>
+      <span class="s0">firstInvalidatedBy</span>
+    <span class="s0">}), </span><span class="s2">this</span><span class="s0">.send(</span><span class="s1">&quot;vite:invalidate&quot;</span><span class="s0">, {</span>
+      <span class="s0">path: </span><span class="s2">this</span><span class="s0">.ownerPath,</span>
+      <span class="s0">message,</span>
+      <span class="s0">firstInvalidatedBy</span>
+    <span class="s0">}), </span><span class="s2">this</span><span class="s0">.hmrClient.logger.debug(</span>
+      <span class="s0">`invalidate ${</span><span class="s2">this</span><span class="s0">.ownerPath}${message ? `: ${message}` : </span><span class="s1">&quot;&quot;</span><span class="s0">}`</span>
+    <span class="s0">);</span>
+  <span class="s0">}</span>
+  <span class="s0">on(event, cb) {</span>
+    <span class="s0">const addToMap = (map) =&gt; {</span>
+      <span class="s0">const existing = map.get(event) || [];</span>
+      <span class="s0">existing.push(cb), map.set(event, existing);</span>
+    <span class="s0">};</span>
+    <span class="s0">addToMap(</span><span class="s2">this</span><span class="s0">.hmrClient.customListenersMap), addToMap(</span><span class="s2">this</span><span class="s0">.newListeners);</span>
+  <span class="s0">}</span>
+  <span class="s0">off(event, cb) {</span>
+    <span class="s0">const removeFromMap = (map) =&gt; {</span>
+      <span class="s0">const existing = map.get(event);</span>
+      <span class="s2">if </span><span class="s0">(existing === </span><span class="s2">void </span><span class="s3">0</span><span class="s0">)</span>
+        <span class="s2">return</span><span class="s0">;</span>
+      <span class="s0">const pruned = existing.filter((l) =&gt; l !== cb);</span>
+      <span class="s2">if </span><span class="s0">(pruned.length === </span><span class="s3">0</span><span class="s0">) {</span>
+        <span class="s0">map.</span><span class="s2">delete</span><span class="s0">(event);</span>
+        <span class="s2">return</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s0">map.set(event, pruned);</span>
+    <span class="s0">};</span>
+    <span class="s0">removeFromMap(</span><span class="s2">this</span><span class="s0">.hmrClient.customListenersMap), removeFromMap(</span><span class="s2">this</span><span class="s0">.newListeners);</span>
+  <span class="s0">}</span>
+  <span class="s0">send(event, data) {</span>
+    <span class="s2">this</span><span class="s0">.hmrClient.send({ type: </span><span class="s1">&quot;custom&quot;</span><span class="s0">, event, data });</span>
+  <span class="s0">}</span>
+  <span class="s0">acceptDeps(deps, callback = () =&gt; {</span>
+  <span class="s0">}) {</span>
+    <span class="s0">const mod = </span><span class="s2">this</span><span class="s0">.hmrClient.hotModulesMap.get(</span><span class="s2">this</span><span class="s0">.ownerPath) || {</span>
+      <span class="s0">id: </span><span class="s2">this</span><span class="s0">.ownerPath,</span>
+      <span class="s0">callbacks: []</span>
+    <span class="s0">};</span>
+    <span class="s0">mod.callbacks.push({</span>
+      <span class="s0">deps,</span>
+      <span class="s0">fn: callback</span>
+    <span class="s0">}), </span><span class="s2">this</span><span class="s0">.hmrClient.hotModulesMap.set(</span><span class="s2">this</span><span class="s0">.ownerPath, mod);</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">class HMRClient {</span>
+  <span class="s0">constructor(logger, transport, importUpdatedModule) {</span>
+    <span class="s2">this</span><span class="s0">.logger = logger, </span><span class="s2">this</span><span class="s0">.transport = transport, </span><span class="s2">this</span><span class="s0">.importUpdatedModule = importUpdatedModule;</span>
+  <span class="s0">}</span>
+  <span class="s0">hotModulesMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">disposeMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">pruneMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">dataMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">customListenersMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">ctxToListenersMap = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">currentFirstInvalidatedBy;</span>
+  <span class="s0">async notifyListeners(event, data) {</span>
+    <span class="s0">const cbs = </span><span class="s2">this</span><span class="s0">.customListenersMap.get(event);</span>
+    <span class="s0">cbs &amp;&amp; await Promise.allSettled(cbs.map((cb) =&gt; cb(data)));</span>
+  <span class="s0">}</span>
+  <span class="s0">send(payload) {</span>
+    <span class="s2">this</span><span class="s0">.transport.send(payload).</span><span class="s2">catch</span><span class="s0">((err) =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.logger.error(err);</span>
+    <span class="s0">});</span>
+  <span class="s0">}</span>
+  <span class="s0">clear() {</span>
+    <span class="s2">this</span><span class="s0">.hotModulesMap.clear(), </span><span class="s2">this</span><span class="s0">.disposeMap.clear(), </span><span class="s2">this</span><span class="s0">.pruneMap.clear(), </span><span class="s2">this</span><span class="s0">.dataMap.clear(), </span><span class="s2">this</span><span class="s0">.customListenersMap.clear(), </span><span class="s2">this</span><span class="s0">.ctxToListenersMap.clear();</span>
+  <span class="s0">}</span>
+  <span class="s4">// After an HMR update, some modules are no longer imported on the page</span>
+  <span class="s4">// but they may have left behind side effects that need to be cleaned up</span>
+  <span class="s4">// (e.g. style injections)</span>
+  <span class="s0">async prunePaths(paths) {</span>
+    <span class="s0">await Promise.all(</span>
+      <span class="s0">paths.map((path) =&gt; {</span>
+        <span class="s0">const disposer = </span><span class="s2">this</span><span class="s0">.disposeMap.get(path);</span>
+        <span class="s2">if </span><span class="s0">(disposer) </span><span class="s2">return </span><span class="s0">disposer(</span><span class="s2">this</span><span class="s0">.dataMap.get(path));</span>
+      <span class="s0">})</span>
+    <span class="s0">), paths.forEach((path) =&gt; {</span>
+      <span class="s0">const fn = </span><span class="s2">this</span><span class="s0">.pruneMap.get(path);</span>
+      <span class="s0">fn &amp;&amp; fn(</span><span class="s2">this</span><span class="s0">.dataMap.get(path));</span>
+    <span class="s0">});</span>
+  <span class="s0">}</span>
+  <span class="s0">warnFailedUpdate(err, path) {</span>
+    <span class="s0">(!(err </span><span class="s2">instanceof </span><span class="s0">Error) || !err.message.includes(</span><span class="s1">&quot;fetch&quot;</span><span class="s0">)) &amp;&amp; </span><span class="s2">this</span><span class="s0">.logger.error(err), </span><span class="s2">this</span><span class="s0">.logger.error(</span>
+      <span class="s0">`Failed to reload ${path}. This could be due to syntax errors or importing non-existent modules. (see errors above)`</span>
+    <span class="s0">);</span>
+  <span class="s0">}</span>
+  <span class="s0">updateQueue = [];</span>
+  <span class="s0">pendingUpdateQueue = !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s4">/** 
+   * buffer multiple hot updates triggered by the same src change 
+   * so that they are invoked in the same order they were sent. 
+   * (otherwise the order may be inconsistent because of the http request round trip) 
+   */</span>
+  <span class="s0">async queueUpdate(payload) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.updateQueue.push(</span><span class="s2">this</span><span class="s0">.fetchUpdate(payload)), !</span><span class="s2">this</span><span class="s0">.pendingUpdateQueue) {</span>
+      <span class="s2">this</span><span class="s0">.pendingUpdateQueue = !</span><span class="s3">0</span><span class="s0">, await Promise.resolve(), </span><span class="s2">this</span><span class="s0">.pendingUpdateQueue = !</span><span class="s3">1</span><span class="s0">;</span>
+      <span class="s0">const loading = [...</span><span class="s2">this</span><span class="s0">.updateQueue];</span>
+      <span class="s2">this</span><span class="s0">.updateQueue = [], (await Promise.all(loading)).forEach((fn) =&gt; fn &amp;&amp; fn());</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s0">async fetchUpdate(update) {</span>
+    <span class="s0">const { path, acceptedPath, firstInvalidatedBy } = update, mod = </span><span class="s2">this</span><span class="s0">.hotModulesMap.get(path);</span>
+    <span class="s2">if </span><span class="s0">(!mod)</span>
+      <span class="s2">return</span><span class="s0">;</span>
+    <span class="s0">let fetchedModule;</span>
+    <span class="s0">const isSelfUpdate = path === acceptedPath, qualifiedCallbacks = mod.callbacks.filter(</span>
+      <span class="s0">({ deps }) =&gt; deps.includes(acceptedPath)</span>
+    <span class="s0">);</span>
+    <span class="s2">if </span><span class="s0">(isSelfUpdate || qualifiedCallbacks.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+      <span class="s0">const disposer = </span><span class="s2">this</span><span class="s0">.disposeMap.get(acceptedPath);</span>
+      <span class="s0">disposer &amp;&amp; await disposer(</span><span class="s2">this</span><span class="s0">.dataMap.get(acceptedPath));</span>
+      <span class="s2">try </span><span class="s0">{</span>
+        <span class="s0">fetchedModule = await </span><span class="s2">this</span><span class="s0">.importUpdatedModule(update);</span>
+      <span class="s0">} </span><span class="s2">catch </span><span class="s0">(e) {</span>
+        <span class="s2">this</span><span class="s0">.warnFailedUpdate(e, acceptedPath);</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">return </span><span class="s0">() =&gt; {</span>
+      <span class="s2">try </span><span class="s0">{</span>
+        <span class="s2">this</span><span class="s0">.currentFirstInvalidatedBy = firstInvalidatedBy;</span>
+        <span class="s2">for </span><span class="s0">(const { deps, fn } of qualifiedCallbacks)</span>
+          <span class="s0">fn(</span>
+            <span class="s0">deps.map(</span>
+              <span class="s0">(dep) =&gt; dep === acceptedPath ? fetchedModule : </span><span class="s2">void </span><span class="s3">0</span>
+            <span class="s0">)</span>
+          <span class="s0">);</span>
+        <span class="s0">const loggedPath = isSelfUpdate ? path : `${acceptedPath} via ${path}`;</span>
+        <span class="s2">this</span><span class="s0">.logger.debug(`hot updated: ${loggedPath}`);</span>
+      <span class="s0">} </span><span class="s2">finally </span><span class="s0">{</span>
+        <span class="s2">this</span><span class="s0">.currentFirstInvalidatedBy = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">}</span>
+    <span class="s0">};</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">analyzeImportedModDifference(mod, rawId, moduleType, metadata) {</span>
+  <span class="s2">if </span><span class="s0">(!metadata?.isDynamicImport &amp;&amp; metadata?.importedNames?.length) {</span>
+    <span class="s0">const missingBindings = metadata.importedNames.filter((s) =&gt; !(s </span><span class="s2">in </span><span class="s0">mod));</span>
+    <span class="s2">if </span><span class="s0">(missingBindings.length) {</span>
+      <span class="s0">const lastBinding = missingBindings[missingBindings.length - </span><span class="s3">1</span><span class="s0">];</span>
+      <span class="s2">throw </span><span class="s0">moduleType === </span><span class="s1">&quot;module&quot; </span><span class="s0">? </span><span class="s2">new </span><span class="s0">SyntaxError(</span>
+        <span class="s0">`[vite] The requested module </span><span class="s1">'${rawId}' </span><span class="s0">does not provide an export named </span><span class="s1">'${lastBinding}'</span><span class="s0">`</span>
+      <span class="s0">) : </span><span class="s2">new </span><span class="s0">SyntaxError(`[vite] Named export </span><span class="s1">'${lastBinding}' </span><span class="s0">not found. The requested module </span><span class="s1">'${rawId}' </span><span class="s0">is a CommonJS module, which may not support all module.exports as named exports.</span>
+<span class="s0">CommonJS modules can always be imported via the </span><span class="s2">default </span><span class="s0">export, </span><span class="s2">for </span><span class="s0">example using:</span>
+
+<span class="s0">import pkg from </span><span class="s1">'${rawId}'</span><span class="s0">;</span>
+<span class="s0">const {${missingBindings.join(</span><span class="s1">&quot;, &quot;</span><span class="s0">)}} = pkg;</span>
+<span class="s0">`);</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">let urlAlphabet = </span><span class="s1">&quot;useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict&quot;</span><span class="s0">, nanoid = (size = </span><span class="s3">21</span><span class="s0">) =&gt; {</span>
+  <span class="s0">let id = </span><span class="s1">&quot;&quot;</span><span class="s0">, i = size | </span><span class="s3">0</span><span class="s0">;</span>
+  <span class="s2">for </span><span class="s0">(; i--; )</span>
+    <span class="s0">id += urlAlphabet[Math.random() * </span><span class="s3">64 </span><span class="s0">| </span><span class="s3">0</span><span class="s0">];</span>
+  <span class="s2">return </span><span class="s0">id;</span>
+<span class="s0">};</span>
+<span class="s2">function </span><span class="s0">reviveInvokeError(e) {</span>
+  <span class="s0">const error = </span><span class="s2">new </span><span class="s0">Error(e.message || </span><span class="s1">&quot;Unknown invoke error&quot;</span><span class="s0">);</span>
+  <span class="s2">return </span><span class="s0">Object.assign(error, e, {</span>
+    <span class="s4">// pass the whole error instead of just the stacktrace</span>
+    <span class="s4">// so that it gets formatted nicely with console.log</span>
+    <span class="s0">runnerError: </span><span class="s2">new </span><span class="s0">Error(</span><span class="s1">&quot;RunnerError&quot;</span><span class="s0">)</span>
+  <span class="s0">}), error;</span>
+<span class="s0">}</span>
+<span class="s0">const createInvokeableTransport = (transport) =&gt; {</span>
+  <span class="s2">if </span><span class="s0">(transport.invoke)</span>
+    <span class="s2">return </span><span class="s0">{</span>
+      <span class="s0">...transport,</span>
+      <span class="s0">async invoke(name, data) {</span>
+        <span class="s0">const result = await transport.invoke({</span>
+          <span class="s0">type: </span><span class="s1">&quot;custom&quot;</span><span class="s0">,</span>
+          <span class="s0">event: </span><span class="s1">&quot;vite:invoke&quot;</span><span class="s0">,</span>
+          <span class="s0">data: {</span>
+            <span class="s0">id: </span><span class="s1">&quot;send&quot;</span><span class="s0">,</span>
+            <span class="s0">name,</span>
+            <span class="s0">data</span>
+          <span class="s0">}</span>
+        <span class="s0">});</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s1">&quot;error&quot; </span><span class="s2">in </span><span class="s0">result)</span>
+          <span class="s2">throw </span><span class="s0">reviveInvokeError(result.error);</span>
+        <span class="s2">return </span><span class="s0">result.result;</span>
+      <span class="s0">}</span>
+    <span class="s0">};</span>
+  <span class="s2">if </span><span class="s0">(!transport.send || !transport.connect)</span>
+    <span class="s2">throw new </span><span class="s0">Error(</span>
+      <span class="s1">&quot;transport must implement send and connect when invoke is not implemented&quot;</span>
+    <span class="s0">);</span>
+  <span class="s0">const rpcPromises = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s2">return </span><span class="s0">{</span>
+    <span class="s0">...transport,</span>
+    <span class="s0">connect({ onMessage, onDisconnection }) {</span>
+      <span class="s2">return </span><span class="s0">transport.connect({</span>
+        <span class="s0">onMessage(payload) {</span>
+          <span class="s2">if </span><span class="s0">(payload.type === </span><span class="s1">&quot;custom&quot; </span><span class="s0">&amp;&amp; payload.event === </span><span class="s1">&quot;vite:invoke&quot;</span><span class="s0">) {</span>
+            <span class="s0">const data = payload.data;</span>
+            <span class="s2">if </span><span class="s0">(data.id.startsWith(</span><span class="s1">&quot;response:&quot;</span><span class="s0">)) {</span>
+              <span class="s0">const invokeId = data.id.slice(</span><span class="s3">9</span><span class="s0">), promise = rpcPromises.get(invokeId);</span>
+              <span class="s2">if </span><span class="s0">(!promise) </span><span class="s2">return</span><span class="s0">;</span>
+              <span class="s0">promise.timeoutId &amp;&amp; clearTimeout(promise.timeoutId), rpcPromises.</span><span class="s2">delete</span><span class="s0">(invokeId);</span>
+              <span class="s0">const { error, result } = data.data;</span>
+              <span class="s0">error ? promise.reject(error) : promise.resolve(result);</span>
+              <span class="s2">return</span><span class="s0">;</span>
+            <span class="s0">}</span>
+          <span class="s0">}</span>
+          <span class="s0">onMessage(payload);</span>
+        <span class="s0">},</span>
+        <span class="s0">onDisconnection</span>
+      <span class="s0">});</span>
+    <span class="s0">},</span>
+    <span class="s0">disconnect() {</span>
+      <span class="s2">return </span><span class="s0">rpcPromises.forEach((promise) =&gt; {</span>
+        <span class="s0">promise.reject(</span>
+          <span class="s2">new </span><span class="s0">Error(</span>
+            <span class="s0">`transport was disconnected, cannot call ${JSON.stringify(promise.name)}`</span>
+          <span class="s0">)</span>
+        <span class="s0">);</span>
+      <span class="s0">}), rpcPromises.clear(), transport.disconnect?.();</span>
+    <span class="s0">},</span>
+    <span class="s0">send(data) {</span>
+      <span class="s2">return </span><span class="s0">transport.send(data);</span>
+    <span class="s0">},</span>
+    <span class="s0">async invoke(name, data) {</span>
+      <span class="s0">const promiseId = nanoid(), wrappedData = {</span>
+        <span class="s0">type: </span><span class="s1">&quot;custom&quot;</span><span class="s0">,</span>
+        <span class="s0">event: </span><span class="s1">&quot;vite:invoke&quot;</span><span class="s0">,</span>
+        <span class="s0">data: {</span>
+          <span class="s0">name,</span>
+          <span class="s0">id: `send:${promiseId}`,</span>
+          <span class="s0">data</span>
+        <span class="s0">}</span>
+      <span class="s0">}, sendPromise = transport.send(wrappedData), { promise, resolve: resolve2, reject } = promiseWithResolvers(), timeout = transport.timeout ?? </span><span class="s3">6</span><span class="s0">e4;</span>
+      <span class="s0">let timeoutId;</span>
+      <span class="s0">timeout &gt; </span><span class="s3">0 </span><span class="s0">&amp;&amp; (timeoutId = setTimeout(() =&gt; {</span>
+        <span class="s0">rpcPromises.</span><span class="s2">delete</span><span class="s0">(promiseId), reject(</span>
+          <span class="s2">new </span><span class="s0">Error(</span>
+            <span class="s0">`transport invoke timed out after ${timeout}ms (data: ${JSON.stringify(wrappedData)})`</span>
+          <span class="s0">)</span>
+        <span class="s0">);</span>
+      <span class="s0">}, timeout), timeoutId?.unref?.()), rpcPromises.set(promiseId, { resolve: resolve2, reject, name, timeoutId }), sendPromise &amp;&amp; sendPromise.</span><span class="s2">catch</span><span class="s0">((err) =&gt; {</span>
+        <span class="s0">clearTimeout(timeoutId), rpcPromises.</span><span class="s2">delete</span><span class="s0">(promiseId), reject(err);</span>
+      <span class="s0">});</span>
+      <span class="s2">try </span><span class="s0">{</span>
+        <span class="s2">return </span><span class="s0">await promise;</span>
+      <span class="s0">} </span><span class="s2">catch </span><span class="s0">(err) {</span>
+        <span class="s2">throw </span><span class="s0">reviveInvokeError(err);</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+<span class="s0">}, normalizeModuleRunnerTransport = (transport) =&gt; {</span>
+  <span class="s0">const invokeableTransport = createInvokeableTransport(transport);</span>
+  <span class="s0">let isConnected = !invokeableTransport.connect, connectingPromise;</span>
+  <span class="s2">return </span><span class="s0">{</span>
+    <span class="s0">...transport,</span>
+    <span class="s0">...invokeableTransport.connect ? {</span>
+      <span class="s0">async connect(onMessage) {</span>
+        <span class="s2">if </span><span class="s0">(isConnected) </span><span class="s2">return</span><span class="s0">;</span>
+        <span class="s2">if </span><span class="s0">(connectingPromise) {</span>
+          <span class="s0">await connectingPromise;</span>
+          <span class="s2">return</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s0">const maybePromise = invokeableTransport.connect({</span>
+          <span class="s0">onMessage: onMessage ?? (() =&gt; {</span>
+          <span class="s0">}),</span>
+          <span class="s0">onDisconnection() {</span>
+            <span class="s0">isConnected = !</span><span class="s3">1</span><span class="s0">;</span>
+          <span class="s0">}</span>
+        <span class="s0">});</span>
+        <span class="s0">maybePromise &amp;&amp; (connectingPromise = maybePromise, await connectingPromise, connectingPromise = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">), isConnected = !</span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">}</span>
+    <span class="s0">} : {},</span>
+    <span class="s0">...invokeableTransport.disconnect ? {</span>
+      <span class="s0">async disconnect() {</span>
+        <span class="s0">isConnected &amp;&amp; (connectingPromise &amp;&amp; await connectingPromise, isConnected = !</span><span class="s3">1</span><span class="s0">, await invokeableTransport.disconnect());</span>
+      <span class="s0">}</span>
+    <span class="s0">} : {},</span>
+    <span class="s0">async send(data) {</span>
+      <span class="s2">if </span><span class="s0">(invokeableTransport.send) {</span>
+        <span class="s2">if </span><span class="s0">(!isConnected)</span>
+          <span class="s2">if </span><span class="s0">(connectingPromise)</span>
+            <span class="s0">await connectingPromise;</span>
+          <span class="s2">else</span>
+            <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;send was called before connect&quot;</span><span class="s0">);</span>
+        <span class="s0">await invokeableTransport.send(data);</span>
+      <span class="s0">}</span>
+    <span class="s0">},</span>
+    <span class="s0">async invoke(name, data) {</span>
+      <span class="s2">if </span><span class="s0">(!isConnected)</span>
+        <span class="s2">if </span><span class="s0">(connectingPromise)</span>
+          <span class="s0">await connectingPromise;</span>
+        <span class="s2">else</span>
+          <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;invoke was called before connect&quot;</span><span class="s0">);</span>
+      <span class="s2">return </span><span class="s0">invokeableTransport.invoke(name, data);</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+<span class="s0">}, createWebSocketModuleRunnerTransport = (options) =&gt; {</span>
+  <span class="s0">const pingInterval = options.pingInterval ?? </span><span class="s3">3</span><span class="s0">e4;</span>
+  <span class="s0">let ws, pingIntervalId;</span>
+  <span class="s2">return </span><span class="s0">{</span>
+    <span class="s0">async connect({ onMessage, onDisconnection }) {</span>
+      <span class="s0">const socket = options.createConnection();</span>
+      <span class="s0">socket.addEventListener(</span><span class="s1">&quot;message&quot;</span><span class="s0">, async ({ data }) =&gt; {</span>
+        <span class="s0">onMessage(JSON.parse(data));</span>
+      <span class="s0">});</span>
+      <span class="s0">let isOpened = socket.readyState === socket.OPEN;</span>
+      <span class="s0">isOpened || await </span><span class="s2">new </span><span class="s0">Promise((resolve2, reject) =&gt; {</span>
+        <span class="s0">socket.addEventListener(</span>
+          <span class="s1">&quot;open&quot;</span><span class="s0">,</span>
+          <span class="s0">() =&gt; {</span>
+            <span class="s0">isOpened = !</span><span class="s3">0</span><span class="s0">, resolve2();</span>
+          <span class="s0">},</span>
+          <span class="s0">{ once: !</span><span class="s3">0 </span><span class="s0">}</span>
+        <span class="s0">), socket.addEventListener(</span><span class="s1">&quot;close&quot;</span><span class="s0">, async () =&gt; {</span>
+          <span class="s2">if </span><span class="s0">(!isOpened) {</span>
+            <span class="s0">reject(</span><span class="s2">new </span><span class="s0">Error(</span><span class="s1">&quot;WebSocket closed without opened.&quot;</span><span class="s0">));</span>
+            <span class="s2">return</span><span class="s0">;</span>
+          <span class="s0">}</span>
+          <span class="s0">onMessage({</span>
+            <span class="s0">type: </span><span class="s1">&quot;custom&quot;</span><span class="s0">,</span>
+            <span class="s0">event: </span><span class="s1">&quot;vite:ws:disconnect&quot;</span><span class="s0">,</span>
+            <span class="s0">data: { webSocket: socket }</span>
+          <span class="s0">}), onDisconnection();</span>
+        <span class="s0">});</span>
+      <span class="s0">}), onMessage({</span>
+        <span class="s0">type: </span><span class="s1">&quot;custom&quot;</span><span class="s0">,</span>
+        <span class="s0">event: </span><span class="s1">&quot;vite:ws:connect&quot;</span><span class="s0">,</span>
+        <span class="s0">data: { webSocket: socket }</span>
+      <span class="s0">}), ws = socket, pingIntervalId = setInterval(() =&gt; {</span>
+        <span class="s0">socket.readyState === socket.OPEN &amp;&amp; socket.send(JSON.stringify({ type: </span><span class="s1">&quot;ping&quot; </span><span class="s0">}));</span>
+      <span class="s0">}, pingInterval);</span>
+    <span class="s0">},</span>
+    <span class="s0">disconnect() {</span>
+      <span class="s0">clearInterval(pingIntervalId), ws?.close();</span>
+    <span class="s0">},</span>
+    <span class="s0">send(data) {</span>
+      <span class="s0">ws.send(JSON.stringify(data));</span>
+    <span class="s0">}</span>
+  <span class="s0">};</span>
+<span class="s0">}, ssrModuleExportsKey = </span><span class="s1">&quot;__vite_ssr_exports__&quot;</span><span class="s0">, ssrImportKey = </span><span class="s1">&quot;__vite_ssr_import__&quot;</span><span class="s0">, ssrDynamicImportKey = </span><span class="s1">&quot;__vite_ssr_dynamic_import__&quot;</span><span class="s0">, ssrExportAllKey = </span><span class="s1">&quot;__vite_ssr_exportAll__&quot;</span><span class="s0">, ssrImportMetaKey = </span><span class="s1">&quot;__vite_ssr_import_meta__&quot;</span><span class="s0">, noop = () =&gt; {</span>
+<span class="s0">}, silentConsole = {</span>
+  <span class="s0">debug: noop,</span>
+  <span class="s0">error: noop</span>
+<span class="s0">}, hmrLogger = {</span>
+  <span class="s0">debug: (...msg) =&gt; console.log(</span><span class="s1">&quot;[vite]&quot;</span><span class="s0">, ...msg),</span>
+  <span class="s0">error: (error) =&gt; console.log(</span><span class="s1">&quot;[vite]&quot;</span><span class="s0">, error)</span>
+<span class="s0">};</span>
+<span class="s2">function </span><span class="s0">createHMRHandler(handler) {</span>
+  <span class="s0">const queue = </span><span class="s2">new </span><span class="s0">Queue();</span>
+  <span class="s2">return </span><span class="s0">(payload) =&gt; queue.enqueue(() =&gt; handler(payload));</span>
+<span class="s0">}</span>
+<span class="s0">class Queue {</span>
+  <span class="s0">queue = [];</span>
+  <span class="s0">pending = !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">enqueue(promise) {</span>
+    <span class="s2">return new </span><span class="s0">Promise((resolve2, reject) =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.queue.push({</span>
+        <span class="s0">promise,</span>
+        <span class="s0">resolve: resolve2,</span>
+        <span class="s0">reject</span>
+      <span class="s0">}), </span><span class="s2">this</span><span class="s0">.dequeue();</span>
+    <span class="s0">});</span>
+  <span class="s0">}</span>
+  <span class="s0">dequeue() {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.pending)</span>
+      <span class="s2">return </span><span class="s0">!</span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s0">const item = </span><span class="s2">this</span><span class="s0">.queue.shift();</span>
+    <span class="s2">return </span><span class="s0">item ? (</span><span class="s2">this</span><span class="s0">.pending = !</span><span class="s3">0</span><span class="s0">, item.promise().then(item.resolve).</span><span class="s2">catch</span><span class="s0">(item.reject).</span><span class="s2">finally</span><span class="s0">(() =&gt; {</span>
+      <span class="s2">this</span><span class="s0">.pending = !</span><span class="s3">1</span><span class="s0">, </span><span class="s2">this</span><span class="s0">.dequeue();</span>
+    <span class="s0">}), !</span><span class="s3">0</span><span class="s0">) : !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">createHMRHandlerForRunner(runner) {</span>
+  <span class="s2">return </span><span class="s0">createHMRHandler(async (payload) =&gt; {</span>
+    <span class="s0">const hmrClient = runner.hmrClient;</span>
+    <span class="s2">if </span><span class="s0">(!(!hmrClient || runner.isClosed()))</span>
+      <span class="s2">switch </span><span class="s0">(payload.type) {</span>
+        <span class="s2">case </span><span class="s1">&quot;connected&quot;</span><span class="s0">:</span>
+          <span class="s0">hmrClient.logger.debug(</span><span class="s1">&quot;connected.&quot;</span><span class="s0">);</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s2">case </span><span class="s1">&quot;update&quot;</span><span class="s0">:</span>
+          <span class="s0">await hmrClient.notifyListeners(</span><span class="s1">&quot;vite:beforeUpdate&quot;</span><span class="s0">, payload), await Promise.all(</span>
+            <span class="s0">payload.updates.map(async (update) =&gt; {</span>
+              <span class="s2">if </span><span class="s0">(update.type === </span><span class="s1">&quot;js-update&quot;</span><span class="s0">)</span>
+                <span class="s2">return </span><span class="s0">update.acceptedPath = unwrapId(update.acceptedPath), update.path = unwrapId(update.path), hmrClient.queueUpdate(update);</span>
+              <span class="s0">hmrClient.logger.error(</span><span class="s1">&quot;css hmr is not supported in runner mode.&quot;</span><span class="s0">);</span>
+            <span class="s0">})</span>
+          <span class="s0">), await hmrClient.notifyListeners(</span><span class="s1">&quot;vite:afterUpdate&quot;</span><span class="s0">, payload);</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s2">case </span><span class="s1">&quot;custom&quot;</span><span class="s0">: {</span>
+          <span class="s0">await hmrClient.notifyListeners(payload.event, payload.data);</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s2">case </span><span class="s1">&quot;full-reload&quot;</span><span class="s0">: {</span>
+          <span class="s0">const { triggeredBy } = payload, clearEntrypointUrls = triggeredBy ? getModulesEntrypoints(</span>
+            <span class="s0">runner,</span>
+            <span class="s0">getModulesByFile(runner, slash(triggeredBy))</span>
+          <span class="s0">) : findAllEntrypoints(runner);</span>
+          <span class="s2">if </span><span class="s0">(!clearEntrypointUrls.size) </span><span class="s2">break</span><span class="s0">;</span>
+          <span class="s0">hmrClient.logger.debug(</span><span class="s1">&quot;program reload&quot;</span><span class="s0">), await hmrClient.notifyListeners(</span><span class="s1">&quot;vite:beforeFullReload&quot;</span><span class="s0">, payload), runner.evaluatedModules.clear();</span>
+          <span class="s2">for </span><span class="s0">(const url of clearEntrypointUrls)</span>
+            <span class="s2">try </span><span class="s0">{</span>
+              <span class="s0">await runner.import(url);</span>
+            <span class="s0">} </span><span class="s2">catch </span><span class="s0">(err) {</span>
+              <span class="s0">err.code !== ERR_OUTDATED_OPTIMIZED_DEP &amp;&amp; hmrClient.logger.error(</span>
+                <span class="s0">`An error happened during full reload</span>
+<span class="s0">${err.message}</span>
+<span class="s0">${err.stack}`</span>
+              <span class="s0">);</span>
+            <span class="s0">}</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s2">case </span><span class="s1">&quot;prune&quot;</span><span class="s0">:</span>
+          <span class="s0">await hmrClient.notifyListeners(</span><span class="s1">&quot;vite:beforePrune&quot;</span><span class="s0">, payload), await hmrClient.prunePaths(payload.paths);</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s2">case </span><span class="s1">&quot;error&quot;</span><span class="s0">: {</span>
+          <span class="s0">await hmrClient.notifyListeners(</span><span class="s1">&quot;vite:error&quot;</span><span class="s0">, payload);</span>
+          <span class="s0">const err = payload.err;</span>
+          <span class="s0">hmrClient.logger.error(</span>
+            <span class="s0">`Internal Server Error</span>
+<span class="s0">${err.message}</span>
+<span class="s0">${err.stack}`</span>
+          <span class="s0">);</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s2">case </span><span class="s1">&quot;ping&quot;</span><span class="s0">:</span>
+          <span class="s2">break</span><span class="s0">;</span>
+        <span class="s2">default</span><span class="s0">:</span>
+          <span class="s2">return </span><span class="s0">payload;</span>
+      <span class="s0">}</span>
+  <span class="s0">});</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">getModulesByFile(runner, file) {</span>
+  <span class="s0">const nodes = runner.evaluatedModules.getModulesByFile(file);</span>
+  <span class="s2">return </span><span class="s0">nodes ? [...nodes].map((node) =&gt; node.id) : [];</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">getModulesEntrypoints(runner, modules, visited = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set(), entrypoints = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set()) {</span>
+  <span class="s2">for </span><span class="s0">(const moduleId of modules) {</span>
+    <span class="s2">if </span><span class="s0">(visited.has(moduleId)) </span><span class="s2">continue</span><span class="s0">;</span>
+    <span class="s0">visited.add(moduleId);</span>
+    <span class="s0">const module = runner.evaluatedModules.getModuleById(moduleId);</span>
+    <span class="s2">if </span><span class="s0">(module) {</span>
+      <span class="s2">if </span><span class="s0">(!module.importers.size) {</span>
+        <span class="s0">entrypoints.add(module.url);</span>
+        <span class="s2">continue</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s2">for </span><span class="s0">(const importer of module.importers)</span>
+        <span class="s0">getModulesEntrypoints(runner, [importer], visited, entrypoints);</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">entrypoints;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">findAllEntrypoints(runner, entrypoints = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set()) {</span>
+  <span class="s2">for </span><span class="s0">(const mod of runner.evaluatedModules.idToModuleMap.values())</span>
+    <span class="s0">mod.importers.size || entrypoints.add(mod.url);</span>
+  <span class="s2">return </span><span class="s0">entrypoints;</span>
+<span class="s0">}</span>
+<span class="s0">const sourceMapCache = {}, fileContentsCache = {}, evaluatedModulesCache = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set(), retrieveFileHandlers = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set(), retrieveSourceMapHandlers = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set(), createExecHandlers = (handlers) =&gt; (...args) =&gt; {</span>
+  <span class="s2">for </span><span class="s0">(const handler of handlers) {</span>
+    <span class="s0">const result = handler(...args);</span>
+    <span class="s2">if </span><span class="s0">(result) </span><span class="s2">return </span><span class="s0">result;</span>
+  <span class="s0">}</span>
+  <span class="s2">return null</span><span class="s0">;</span>
+<span class="s0">}, retrieveFileFromHandlers = createExecHandlers(retrieveFileHandlers), retrieveSourceMapFromHandlers = createExecHandlers(</span>
+  <span class="s0">retrieveSourceMapHandlers</span>
+<span class="s0">);</span>
+<span class="s0">let overridden = !</span><span class="s3">1</span><span class="s0">;</span>
+<span class="s0">const originalPrepare = Error.prepareStackTrace;</span>
+<span class="s2">function </span><span class="s0">resetInterceptor(runner, options) {</span>
+  <span class="s0">evaluatedModulesCache.</span><span class="s2">delete</span><span class="s0">(runner.evaluatedModules), options.retrieveFile &amp;&amp; retrieveFileHandlers.</span><span class="s2">delete</span><span class="s0">(options.retrieveFile), options.retrieveSourceMap &amp;&amp; retrieveSourceMapHandlers.</span><span class="s2">delete</span><span class="s0">(options.retrieveSourceMap), evaluatedModulesCache.size === </span><span class="s3">0 </span><span class="s0">&amp;&amp; (Error.prepareStackTrace = originalPrepare, overridden = !</span><span class="s3">1</span><span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">interceptStackTrace(runner, options = {}) {</span>
+  <span class="s2">return </span><span class="s0">overridden || (Error.prepareStackTrace = prepareStackTrace, overridden = !</span><span class="s3">0</span><span class="s0">), evaluatedModulesCache.add(runner.evaluatedModules), options.retrieveFile &amp;&amp; retrieveFileHandlers.add(options.retrieveFile), options.retrieveSourceMap &amp;&amp; retrieveSourceMapHandlers.add(options.retrieveSourceMap), () =&gt; resetInterceptor(runner, options);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">supportRelativeURL(file, url) {</span>
+  <span class="s2">if </span><span class="s0">(!file) </span><span class="s2">return </span><span class="s0">url;</span>
+  <span class="s0">const dir = posixDirname(slash(file)), match = /^\w+:\/\/[^/]*/.exec(dir);</span>
+  <span class="s0">let protocol = match ? match[</span><span class="s3">0</span><span class="s0">] : </span><span class="s1">&quot;&quot;</span><span class="s0">;</span>
+  <span class="s0">const startPath = dir.slice(protocol.length);</span>
+  <span class="s2">return </span><span class="s0">protocol &amp;&amp; /^\/\w:/.test(startPath) ? (protocol += </span><span class="s1">&quot;/&quot;</span><span class="s0">, protocol + slash(posixResolve(startPath, url))) : protocol + posixResolve(startPath, url);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">getRunnerSourceMap(position) {</span>
+  <span class="s2">for </span><span class="s0">(const moduleGraph of evaluatedModulesCache) {</span>
+    <span class="s0">const sourceMap = moduleGraph.getModuleSourceMapById(position.source);</span>
+    <span class="s2">if </span><span class="s0">(sourceMap)</span>
+      <span class="s2">return </span><span class="s0">{</span>
+        <span class="s0">url: position.source,</span>
+        <span class="s0">map: sourceMap,</span>
+        <span class="s0">vite: !</span><span class="s3">0</span>
+      <span class="s0">};</span>
+  <span class="s0">}</span>
+  <span class="s2">return null</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">retrieveFile(path) {</span>
+  <span class="s2">if </span><span class="s0">(path </span><span class="s2">in </span><span class="s0">fileContentsCache) </span><span class="s2">return </span><span class="s0">fileContentsCache[path];</span>
+  <span class="s0">const content = retrieveFileFromHandlers(path);</span>
+  <span class="s2">return typeof </span><span class="s0">content == </span><span class="s1">&quot;string&quot; </span><span class="s0">? (fileContentsCache[path] = content, content) : </span><span class="s2">null</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">retrieveSourceMapURL(source) {</span>
+  <span class="s0">const fileData = retrieveFile(source);</span>
+  <span class="s2">if </span><span class="s0">(!fileData) </span><span class="s2">return null</span><span class="s0">;</span>
+  <span class="s0">const re = /\/\/[@#]\s*sourceMappingURL=([^\s</span><span class="s1">'&quot;]+)</span><span class="s5">\s</span><span class="s1">*$|</span><span class="s5">\/\*</span><span class="s1">[@#]</span><span class="s5">\s</span><span class="s1">*sourceMappingURL=[^</span><span class="s5">\s</span><span class="s1">*'&quot;]+</span><span class="s5">\s</span><span class="s1">*</span><span class="s5">\*\/\s</span><span class="s1">*$/gm;</span>
+  <span class="s0">let lastMatch, match;</span>
+  <span class="s2">for </span><span class="s0">(; match = re.exec(fileData); ) lastMatch = match;</span>
+  <span class="s2">return </span><span class="s0">lastMatch ? lastMatch[</span><span class="s3">1</span><span class="s0">] : </span><span class="s2">null</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s0">const reSourceMap = /^data:application\/json[^,]+base64,/;</span>
+<span class="s2">function </span><span class="s0">retrieveSourceMap(source) {</span>
+  <span class="s0">const urlAndMap = retrieveSourceMapFromHandlers(source);</span>
+  <span class="s2">if </span><span class="s0">(urlAndMap) </span><span class="s2">return </span><span class="s0">urlAndMap;</span>
+  <span class="s0">let sourceMappingURL = retrieveSourceMapURL(source);</span>
+  <span class="s2">if </span><span class="s0">(!sourceMappingURL) </span><span class="s2">return null</span><span class="s0">;</span>
+  <span class="s0">let sourceMapData;</span>
+  <span class="s2">if </span><span class="s0">(reSourceMap.test(sourceMappingURL)) {</span>
+    <span class="s0">const rawData = sourceMappingURL.slice(sourceMappingURL.indexOf(</span><span class="s1">&quot;,&quot;</span><span class="s0">) + </span><span class="s3">1</span><span class="s0">);</span>
+    <span class="s0">sourceMapData = Buffer.from(rawData, </span><span class="s1">&quot;base64&quot;</span><span class="s0">).toString(), sourceMappingURL = source;</span>
+  <span class="s0">} </span><span class="s2">else</span>
+    <span class="s0">sourceMappingURL = supportRelativeURL(source, sourceMappingURL), sourceMapData = retrieveFile(sourceMappingURL);</span>
+  <span class="s2">return </span><span class="s0">sourceMapData ? {</span>
+    <span class="s0">url: sourceMappingURL,</span>
+    <span class="s0">map: sourceMapData</span>
+  <span class="s0">} : </span><span class="s2">null</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">mapSourcePosition(position) {</span>
+  <span class="s2">if </span><span class="s0">(!position.source) </span><span class="s2">return </span><span class="s0">position;</span>
+  <span class="s0">let sourceMap = getRunnerSourceMap(position);</span>
+  <span class="s2">if </span><span class="s0">(sourceMap || (sourceMap = sourceMapCache[position.source]), !sourceMap) {</span>
+    <span class="s0">const urlAndMap = retrieveSourceMap(position.source);</span>
+    <span class="s2">if </span><span class="s0">(urlAndMap &amp;&amp; urlAndMap.map) {</span>
+      <span class="s0">const url = urlAndMap.url;</span>
+      <span class="s0">sourceMap = sourceMapCache[position.source] = {</span>
+        <span class="s0">url,</span>
+        <span class="s0">map: </span><span class="s2">new </span><span class="s0">DecodedMap(</span>
+          <span class="s2">typeof </span><span class="s0">urlAndMap.map == </span><span class="s1">&quot;string&quot; </span><span class="s0">? JSON.parse(urlAndMap.map) : urlAndMap.map,</span>
+          <span class="s0">url</span>
+        <span class="s0">)</span>
+      <span class="s0">};</span>
+      <span class="s0">const contents = sourceMap.map?.map.sourcesContent;</span>
+      <span class="s0">sourceMap.map &amp;&amp; contents &amp;&amp; sourceMap.map.resolvedSources.forEach((source, i) =&gt; {</span>
+        <span class="s0">const content = contents[i];</span>
+        <span class="s2">if </span><span class="s0">(content &amp;&amp; source &amp;&amp; url) {</span>
+          <span class="s0">const contentUrl = supportRelativeURL(url, source);</span>
+          <span class="s0">fileContentsCache[contentUrl] = content;</span>
+        <span class="s0">}</span>
+      <span class="s0">});</span>
+    <span class="s0">} </span><span class="s2">else</span>
+      <span class="s0">sourceMap = sourceMapCache[position.source] = {</span>
+        <span class="s0">url: </span><span class="s2">null</span><span class="s0">,</span>
+        <span class="s0">map: </span><span class="s2">null</span>
+      <span class="s0">};</span>
+  <span class="s0">}</span>
+  <span class="s2">if </span><span class="s0">(sourceMap.map &amp;&amp; sourceMap.url) {</span>
+    <span class="s0">const originalPosition = getOriginalPosition(sourceMap.map, position);</span>
+    <span class="s2">if </span><span class="s0">(originalPosition &amp;&amp; originalPosition.source != </span><span class="s2">null</span><span class="s0">)</span>
+      <span class="s2">return </span><span class="s0">originalPosition.source = supportRelativeURL(</span>
+        <span class="s0">sourceMap.url,</span>
+        <span class="s0">originalPosition.source</span>
+      <span class="s0">), sourceMap.vite &amp;&amp; (originalPosition._vite = !</span><span class="s3">0</span><span class="s0">), originalPosition;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">position;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">mapEvalOrigin(origin) {</span>
+  <span class="s0">let match = /^eval at ([^(]+) \((.+):(\d+):(\d+)\)$/.exec(origin);</span>
+  <span class="s2">if </span><span class="s0">(match) {</span>
+    <span class="s0">const position = mapSourcePosition({</span>
+      <span class="s0">name: </span><span class="s2">null</span><span class="s0">,</span>
+      <span class="s0">source: match[</span><span class="s3">2</span><span class="s0">],</span>
+      <span class="s0">line: +match[</span><span class="s3">3</span><span class="s0">],</span>
+      <span class="s0">column: +match[</span><span class="s3">4</span><span class="s0">] - </span><span class="s3">1</span>
+    <span class="s0">});</span>
+    <span class="s2">return </span><span class="s0">`eval at ${match[</span><span class="s3">1</span><span class="s0">]} (${position.source}:${position.line}:${position.column + </span><span class="s3">1</span><span class="s0">})`;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">match = /^eval at ([^(]+) \((.+)\)$/.exec(origin), match ? `eval at ${match[</span><span class="s3">1</span><span class="s0">]} (${mapEvalOrigin(match[</span><span class="s3">2</span><span class="s0">])})` : origin;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">CallSiteToString() {</span>
+  <span class="s0">let fileName, fileLocation = </span><span class="s1">&quot;&quot;</span><span class="s0">;</span>
+  <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.isNative())</span>
+    <span class="s0">fileLocation = </span><span class="s1">&quot;native&quot;</span><span class="s0">;</span>
+  <span class="s2">else </span><span class="s0">{</span>
+    <span class="s0">fileName = </span><span class="s2">this</span><span class="s0">.getScriptNameOrSourceURL(), !fileName &amp;&amp; </span><span class="s2">this</span><span class="s0">.isEval() &amp;&amp; (fileLocation = </span><span class="s2">this</span><span class="s0">.getEvalOrigin(), fileLocation += </span><span class="s1">&quot;, &quot;</span><span class="s0">), fileName ? fileLocation += fileName : fileLocation += </span><span class="s1">&quot;&lt;anonymous&gt;&quot;</span><span class="s0">;</span>
+    <span class="s0">const lineNumber = </span><span class="s2">this</span><span class="s0">.getLineNumber();</span>
+    <span class="s2">if </span><span class="s0">(lineNumber != </span><span class="s2">null</span><span class="s0">) {</span>
+      <span class="s0">fileLocation += `:${lineNumber}`;</span>
+      <span class="s0">const columnNumber = </span><span class="s2">this</span><span class="s0">.getColumnNumber();</span>
+      <span class="s0">columnNumber &amp;&amp; (fileLocation += `:${columnNumber}`);</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s0">let line = </span><span class="s1">&quot;&quot;</span><span class="s0">;</span>
+  <span class="s0">const functionName = </span><span class="s2">this</span><span class="s0">.getFunctionName();</span>
+  <span class="s0">let addSuffix = !</span><span class="s3">0</span><span class="s0">;</span>
+  <span class="s0">const isConstructor = </span><span class="s2">this</span><span class="s0">.isConstructor();</span>
+  <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.isToplevel() || isConstructor)</span>
+    <span class="s0">isConstructor ? line += `</span><span class="s2">new </span><span class="s0">${functionName || </span><span class="s1">&quot;&lt;anonymous&gt;&quot;</span><span class="s0">}` : functionName ? line += functionName : (line += fileLocation, addSuffix = !</span><span class="s3">1</span><span class="s0">);</span>
+  <span class="s2">else </span><span class="s0">{</span>
+    <span class="s0">let typeName = </span><span class="s2">this</span><span class="s0">.getTypeName();</span>
+    <span class="s0">typeName === </span><span class="s1">&quot;[object Object]&quot; </span><span class="s0">&amp;&amp; (typeName = </span><span class="s1">&quot;null&quot;</span><span class="s0">);</span>
+    <span class="s0">const methodName = </span><span class="s2">this</span><span class="s0">.getMethodName();</span>
+    <span class="s0">functionName ? (typeName &amp;&amp; functionName.indexOf(typeName) !== </span><span class="s3">0 </span><span class="s0">&amp;&amp; (line += `${typeName}.`), line += functionName, methodName &amp;&amp; functionName.indexOf(`.${methodName}`) !== functionName.length - methodName.length - </span><span class="s3">1 </span><span class="s0">&amp;&amp; (line += ` [as ${methodName}]`)) : line += `${typeName}.${methodName || </span><span class="s1">&quot;&lt;anonymous&gt;&quot;</span><span class="s0">}`;</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">addSuffix &amp;&amp; (line += ` (${fileLocation})`), line;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">cloneCallSite(frame) {</span>
+  <span class="s0">const object = {};</span>
+  <span class="s2">return </span><span class="s0">Object.getOwnPropertyNames(Object.getPrototypeOf(frame)).forEach((name) =&gt; {</span>
+    <span class="s0">const key = name;</span>
+    <span class="s0">object[key] = /^(?:is|get)/.test(name) ? </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s2">return </span><span class="s0">frame[key].call(frame);</span>
+    <span class="s0">} : frame[key];</span>
+  <span class="s0">}), object.toString = CallSiteToString, object;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">wrapCallSite(frame, state) {</span>
+  <span class="s2">if </span><span class="s0">(state === </span><span class="s2">void </span><span class="s3">0 </span><span class="s0">&amp;&amp; (state = { nextPosition: </span><span class="s2">null</span><span class="s0">, curPosition: </span><span class="s2">null </span><span class="s0">}), frame.isNative())</span>
+    <span class="s2">return </span><span class="s0">state.curPosition = </span><span class="s2">null</span><span class="s0">, frame;</span>
+  <span class="s0">const source = frame.getFileName() || frame.getScriptNameOrSourceURL();</span>
+  <span class="s2">if </span><span class="s0">(source) {</span>
+    <span class="s0">const line = frame.getLineNumber();</span>
+    <span class="s0">let column = frame.getColumnNumber() - </span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s0">const headerLength = </span><span class="s3">62</span><span class="s0">;</span>
+    <span class="s0">line === </span><span class="s3">1 </span><span class="s0">&amp;&amp; column &gt; headerLength &amp;&amp; !frame.isEval() &amp;&amp; (column -= headerLength);</span>
+    <span class="s0">const position = mapSourcePosition({</span>
+      <span class="s0">name: </span><span class="s2">null</span><span class="s0">,</span>
+      <span class="s0">source,</span>
+      <span class="s0">line,</span>
+      <span class="s0">column</span>
+    <span class="s0">});</span>
+    <span class="s0">state.curPosition = position, frame = cloneCallSite(frame);</span>
+    <span class="s0">const originalFunctionName = frame.getFunctionName;</span>
+    <span class="s2">return </span><span class="s0">frame.getFunctionName = </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s0">const name = state.nextPosition == </span><span class="s2">null </span><span class="s0">? originalFunctionName() : state.nextPosition.name || originalFunctionName();</span>
+      <span class="s2">return </span><span class="s0">name === </span><span class="s1">&quot;eval&quot; </span><span class="s0">&amp;&amp; </span><span class="s1">&quot;_vite&quot; </span><span class="s2">in </span><span class="s0">position ? </span><span class="s2">null </span><span class="s0">: name;</span>
+    <span class="s0">}, frame.getFileName = </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s2">return </span><span class="s0">position.source ?? </span><span class="s2">void </span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s0">}, frame.getLineNumber = </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s2">return </span><span class="s0">position.line;</span>
+    <span class="s0">}, frame.getColumnNumber = </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s2">return </span><span class="s0">position.column + </span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s0">}, frame.getScriptNameOrSourceURL = </span><span class="s2">function</span><span class="s0">() {</span>
+      <span class="s2">return </span><span class="s0">position.source;</span>
+    <span class="s0">}, frame;</span>
+  <span class="s0">}</span>
+  <span class="s0">let origin = frame.isEval() &amp;&amp; frame.getEvalOrigin();</span>
+  <span class="s2">return </span><span class="s0">origin &amp;&amp; (origin = mapEvalOrigin(origin), frame = cloneCallSite(frame), frame.getEvalOrigin = </span><span class="s2">function</span><span class="s0">() {</span>
+    <span class="s2">return </span><span class="s0">origin || </span><span class="s2">void </span><span class="s3">0</span><span class="s0">;</span>
+  <span class="s0">}), frame;</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">prepareStackTrace(error, stack) {</span>
+  <span class="s0">const name = error.name || </span><span class="s1">&quot;Error&quot;</span><span class="s0">, message = error.message || </span><span class="s1">&quot;&quot;</span><span class="s0">, errorString = `${name}: ${message}`, state = { nextPosition: </span><span class="s2">null</span><span class="s0">, curPosition: </span><span class="s2">null </span><span class="s0">}, processedStack = [];</span>
+  <span class="s2">for </span><span class="s0">(let i = stack.length - </span><span class="s3">1</span><span class="s0">; i &gt;= </span><span class="s3">0</span><span class="s0">; i--)</span>
+    <span class="s0">processedStack.push(`</span>
+    <span class="s0">at ${wrapCallSite(stack[i], state)}`), state.nextPosition = state.curPosition;</span>
+  <span class="s2">return </span><span class="s0">state.curPosition = state.nextPosition = </span><span class="s2">null</span><span class="s0">, errorString + processedStack.reverse().join(</span><span class="s1">&quot;&quot;</span><span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">enableSourceMapSupport(runner) {</span>
+  <span class="s2">if </span><span class="s0">(runner.options.sourcemapInterceptor === </span><span class="s1">&quot;node&quot;</span><span class="s0">) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">process &gt; </span><span class="s1">&quot;u&quot;</span><span class="s0">)</span>
+      <span class="s2">throw new </span><span class="s0">TypeError(</span>
+        <span class="s0">`Cannot use </span><span class="s1">&quot;sourcemapInterceptor: 'node'&quot; </span><span class="s0">because global </span><span class="s1">&quot;process&quot; </span><span class="s0">variable is not available.`</span>
+      <span class="s0">);</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">process.setSourceMapsEnabled != </span><span class="s1">&quot;function&quot;</span><span class="s0">)</span>
+      <span class="s2">throw new </span><span class="s0">TypeError(</span>
+        <span class="s0">`Cannot use </span><span class="s1">&quot;sourcemapInterceptor: 'node'&quot; </span><span class="s0">because </span><span class="s1">&quot;process.setSourceMapsEnabled&quot; </span><span class="s2">function </span><span class="s0">is not available. Please use Node &gt;= </span><span class="s3">16.6</span><span class="s0">.</span><span class="s3">0</span><span class="s0">.`</span>
+      <span class="s0">);</span>
+    <span class="s0">const isEnabledAlready = process.sourceMapsEnabled ?? !</span><span class="s3">1</span><span class="s0">;</span>
+    <span class="s2">return </span><span class="s0">process.setSourceMapsEnabled(!</span><span class="s3">0</span><span class="s0">), () =&gt; !isEnabledAlready &amp;&amp; process.setSourceMapsEnabled(!</span><span class="s3">1</span><span class="s0">);</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">interceptStackTrace(</span>
+    <span class="s0">runner,</span>
+    <span class="s2">typeof </span><span class="s0">runner.options.sourcemapInterceptor == </span><span class="s1">&quot;object&quot; </span><span class="s0">? runner.options.sourcemapInterceptor : </span><span class="s2">void </span><span class="s3">0</span>
+  <span class="s0">);</span>
+<span class="s0">}</span>
+<span class="s0">class ESModulesEvaluator {</span>
+  <span class="s0">startOffset = getAsyncFunctionDeclarationPaddingLineCount();</span>
+  <span class="s0">async runInlinedModule(context, code) {</span>
+    <span class="s0">await </span><span class="s2">new </span><span class="s0">AsyncFunction(</span>
+      <span class="s0">ssrModuleExportsKey,</span>
+      <span class="s0">ssrImportMetaKey,</span>
+      <span class="s0">ssrImportKey,</span>
+      <span class="s0">ssrDynamicImportKey,</span>
+      <span class="s0">ssrExportAllKey,</span>
+      <span class="s4">// source map should already be inlined by Vite</span>
+      <span class="s1">'&quot;use strict&quot;;' </span><span class="s0">+ code</span>
+    <span class="s0">)(</span>
+      <span class="s0">context[ssrModuleExportsKey],</span>
+      <span class="s0">context[ssrImportMetaKey],</span>
+      <span class="s0">context[ssrImportKey],</span>
+      <span class="s0">context[ssrDynamicImportKey],</span>
+      <span class="s0">context[ssrExportAllKey]</span>
+    <span class="s0">), Object.seal(context[ssrModuleExportsKey]);</span>
+  <span class="s0">}</span>
+  <span class="s0">runExternalModule(filepath) {</span>
+    <span class="s2">return </span><span class="s0">import(filepath);</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">class ModuleRunner {</span>
+  <span class="s0">constructor(options, evaluator = </span><span class="s2">new </span><span class="s0">ESModulesEvaluator(), debug) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.options = options, </span><span class="s2">this</span><span class="s0">.evaluator = evaluator, </span><span class="s2">this</span><span class="s0">.debug = debug, </span><span class="s2">this</span><span class="s0">.evaluatedModules = options.evaluatedModules ?? </span><span class="s2">new </span><span class="s0">EvaluatedModules(), </span><span class="s2">this</span><span class="s0">.transport = normalizeModuleRunnerTransport(options.transport), options.hmr !== !</span><span class="s3">1</span><span class="s0">) {</span>
+      <span class="s0">const optionsHmr = options.hmr ?? !</span><span class="s3">0</span><span class="s0">, resolvedHmrLogger = optionsHmr === !</span><span class="s3">0 </span><span class="s0">|| optionsHmr.logger === </span><span class="s2">void </span><span class="s3">0 </span><span class="s0">? hmrLogger : optionsHmr.logger === !</span><span class="s3">1 </span><span class="s0">? silentConsole : optionsHmr.logger;</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.hmrClient = </span><span class="s2">new </span><span class="s0">HMRClient(</span>
+        <span class="s0">resolvedHmrLogger,</span>
+        <span class="s2">this</span><span class="s0">.transport,</span>
+        <span class="s0">({ acceptedPath }) =&gt; </span><span class="s2">this</span><span class="s0">.import(acceptedPath)</span>
+      <span class="s0">), !</span><span class="s2">this</span><span class="s0">.transport.connect)</span>
+        <span class="s2">throw new </span><span class="s0">Error(</span>
+          <span class="s1">&quot;HMR is not supported by this runner transport, but `hmr` option was set to true&quot;</span>
+        <span class="s0">);</span>
+      <span class="s2">this</span><span class="s0">.transport.connect(createHMRHandlerForRunner(</span><span class="s2">this</span><span class="s0">));</span>
+    <span class="s0">} </span><span class="s2">else</span>
+      <span class="s2">this</span><span class="s0">.transport.connect?.();</span>
+    <span class="s0">options.sourcemapInterceptor !== !</span><span class="s3">1 </span><span class="s0">&amp;&amp; (</span><span class="s2">this</span><span class="s0">.resetSourceMapSupport = enableSourceMapSupport(</span><span class="s2">this</span><span class="s0">));</span>
+  <span class="s0">}</span>
+  <span class="s0">evaluatedModules;</span>
+  <span class="s0">hmrClient;</span>
+  <span class="s0">envProxy = </span><span class="s2">new </span><span class="s0">Proxy({}, {</span>
+    <span class="s0">get(_, p) {</span>
+      <span class="s2">throw new </span><span class="s0">Error(</span>
+        <span class="s0">`[module runner] Dynamic access of </span><span class="s1">&quot;import.meta.env&quot; </span><span class="s0">is not supported. Please, use </span><span class="s1">&quot;import.meta.env.${String(p)}&quot; </span><span class="s0">instead.`</span>
+      <span class="s0">);</span>
+    <span class="s0">}</span>
+  <span class="s0">});</span>
+  <span class="s0">transport;</span>
+  <span class="s0">resetSourceMapSupport;</span>
+  <span class="s0">concurrentModuleNodePromises = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Map();</span>
+  <span class="s0">closed = !</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s4">/** 
+   * URL to execute. Accepts file path, server path or id relative to the root. 
+   */</span>
+  <span class="s0">async import(url) {</span>
+    <span class="s0">const fetchedModule = await </span><span class="s2">this</span><span class="s0">.cachedModule(url);</span>
+    <span class="s2">return </span><span class="s0">await </span><span class="s2">this</span><span class="s0">.cachedRequest(url, fetchedModule);</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Clear all caches including HMR listeners. 
+   */</span>
+  <span class="s0">clearCache() {</span>
+    <span class="s2">this</span><span class="s0">.evaluatedModules.clear(), </span><span class="s2">this</span><span class="s0">.hmrClient?.clear();</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Clears all caches, removes all HMR listeners, and resets source map support. 
+   * This method doesn't stop the HMR connection. 
+   */</span>
+  <span class="s0">async close() {</span>
+    <span class="s2">this</span><span class="s0">.resetSourceMapSupport?.(), </span><span class="s2">this</span><span class="s0">.clearCache(), </span><span class="s2">this</span><span class="s0">.hmrClient = </span><span class="s2">void </span><span class="s3">0</span><span class="s0">, </span><span class="s2">this</span><span class="s0">.closed = !</span><span class="s3">0</span><span class="s0">, await </span><span class="s2">this</span><span class="s0">.transport.disconnect?.();</span>
+  <span class="s0">}</span>
+  <span class="s4">/** 
+   * Returns `true` if the runtime has been closed by calling `close()` method. 
+   */</span>
+  <span class="s0">isClosed() {</span>
+    <span class="s2">return this</span><span class="s0">.closed;</span>
+  <span class="s0">}</span>
+  <span class="s0">processImport(exports, fetchResult, metadata) {</span>
+    <span class="s2">if </span><span class="s0">(!(</span><span class="s1">&quot;externalize&quot; </span><span class="s2">in </span><span class="s0">fetchResult))</span>
+      <span class="s2">return </span><span class="s0">exports;</span>
+    <span class="s0">const { url, type } = fetchResult;</span>
+    <span class="s2">return </span><span class="s0">type !== </span><span class="s1">&quot;module&quot; </span><span class="s0">&amp;&amp; type !== </span><span class="s1">&quot;commonjs&quot; </span><span class="s0">|| analyzeImportedModDifference(exports, url, type, metadata), exports;</span>
+  <span class="s0">}</span>
+  <span class="s0">isCircularModule(mod) {</span>
+    <span class="s2">for </span><span class="s0">(const importedFile of mod.imports)</span>
+      <span class="s2">if </span><span class="s0">(mod.importers.has(importedFile))</span>
+        <span class="s2">return </span><span class="s0">!</span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s2">return </span><span class="s0">!</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s0">isCircularImport(importers, moduleUrl, visited = </span><span class="s4">/* @__PURE__ */ </span><span class="s2">new </span><span class="s0">Set()) {</span>
+    <span class="s2">for </span><span class="s0">(const importer of importers) {</span>
+      <span class="s2">if </span><span class="s0">(visited.has(importer))</span>
+        <span class="s2">continue</span><span class="s0">;</span>
+      <span class="s2">if </span><span class="s0">(visited.add(importer), importer === moduleUrl)</span>
+        <span class="s2">return </span><span class="s0">!</span><span class="s3">0</span><span class="s0">;</span>
+      <span class="s0">const mod = </span><span class="s2">this</span><span class="s0">.evaluatedModules.getModuleById(importer);</span>
+      <span class="s2">if </span><span class="s0">(mod &amp;&amp; mod.importers.size &amp;&amp; </span><span class="s2">this</span><span class="s0">.isCircularImport(mod.importers, moduleUrl, visited))</span>
+        <span class="s2">return </span><span class="s0">!</span><span class="s3">0</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s2">return </span><span class="s0">!</span><span class="s3">1</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s0">async cachedRequest(url, mod, callstack = [], metadata) {</span>
+    <span class="s0">const meta = mod.meta, moduleId = meta.id, { importers } = mod, importee = callstack[callstack.length - </span><span class="s3">1</span><span class="s0">];</span>
+    <span class="s2">if </span><span class="s0">(importee &amp;&amp; importers.add(importee), (callstack.includes(moduleId) || </span><span class="s2">this</span><span class="s0">.isCircularModule(mod) || </span><span class="s2">this</span><span class="s0">.isCircularImport(importers, moduleId)) &amp;&amp; mod.exports)</span>
+      <span class="s2">return this</span><span class="s0">.processImport(mod.exports, meta, metadata);</span>
+    <span class="s0">let debugTimer;</span>
+    <span class="s2">this</span><span class="s0">.debug &amp;&amp; (debugTimer = setTimeout(() =&gt; {</span>
+      <span class="s0">const getStack = () =&gt; `stack:</span>
+<span class="s0">${[...callstack, moduleId].reverse().map((p) =&gt; `  - ${p}`).join(`</span>
+<span class="s0">`)}`;</span>
+      <span class="s2">this</span><span class="s0">.debug(</span>
+        <span class="s0">`[module runner] module ${moduleId} takes over </span><span class="s3">2</span><span class="s0">s to load.</span>
+<span class="s0">${getStack()}`</span>
+      <span class="s0">);</span>
+    <span class="s0">}, </span><span class="s3">2</span><span class="s0">e3));</span>
+    <span class="s2">try </span><span class="s0">{</span>
+      <span class="s2">if </span><span class="s0">(mod.promise)</span>
+        <span class="s2">return this</span><span class="s0">.processImport(await mod.promise, meta, metadata);</span>
+      <span class="s0">const promise = </span><span class="s2">this</span><span class="s0">.directRequest(url, mod, callstack);</span>
+      <span class="s2">return </span><span class="s0">mod.promise = promise, mod.evaluated = !</span><span class="s3">1</span><span class="s0">, </span><span class="s2">this</span><span class="s0">.processImport(await promise, meta, metadata);</span>
+    <span class="s0">} </span><span class="s2">finally </span><span class="s0">{</span>
+      <span class="s0">mod.evaluated = !</span><span class="s3">0</span><span class="s0">, debugTimer &amp;&amp; clearTimeout(debugTimer);</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s0">async cachedModule(url, importer) {</span>
+    <span class="s0">let cached = </span><span class="s2">this</span><span class="s0">.concurrentModuleNodePromises.get(url);</span>
+    <span class="s2">if </span><span class="s0">(cached)</span>
+      <span class="s2">this</span><span class="s0">.debug?.(</span><span class="s1">&quot;[module runner] using cached module info for&quot;</span><span class="s0">, url);</span>
+    <span class="s2">else </span><span class="s0">{</span>
+      <span class="s0">const cachedModule = </span><span class="s2">this</span><span class="s0">.evaluatedModules.getModuleByUrl(url);</span>
+      <span class="s0">cached = </span><span class="s2">this</span><span class="s0">.getModuleInformation(url, importer, cachedModule).</span><span class="s2">finally</span><span class="s0">(</span>
+        <span class="s0">() =&gt; {</span>
+          <span class="s2">this</span><span class="s0">.concurrentModuleNodePromises.</span><span class="s2">delete</span><span class="s0">(url);</span>
+        <span class="s0">}</span>
+      <span class="s0">), </span><span class="s2">this</span><span class="s0">.concurrentModuleNodePromises.set(url, cached);</span>
+    <span class="s0">}</span>
+    <span class="s2">return </span><span class="s0">cached;</span>
+  <span class="s0">}</span>
+  <span class="s0">async getModuleInformation(url, importer, cachedModule) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.closed)</span>
+      <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;Vite module runner has been closed.&quot;</span><span class="s0">);</span>
+    <span class="s2">this</span><span class="s0">.debug?.(</span><span class="s1">&quot;[module runner] fetching&quot;</span><span class="s0">, url);</span>
+    <span class="s0">const isCached = !!(</span><span class="s2">typeof </span><span class="s0">cachedModule == </span><span class="s1">&quot;object&quot; </span><span class="s0">&amp;&amp; cachedModule.meta), fetchedModule = (</span>
+      <span class="s4">// fast return for established externalized pattern</span>
+      <span class="s0">url.startsWith(</span><span class="s1">&quot;data:&quot;</span><span class="s0">) ? { externalize: url, type: </span><span class="s1">&quot;builtin&quot; </span><span class="s0">} : await </span><span class="s2">this</span><span class="s0">.transport.invoke(</span><span class="s1">&quot;fetchModule&quot;</span><span class="s0">, [</span>
+        <span class="s0">url,</span>
+        <span class="s0">importer,</span>
+        <span class="s0">{</span>
+          <span class="s0">cached: isCached,</span>
+          <span class="s0">startOffset: </span><span class="s2">this</span><span class="s0">.evaluator.startOffset</span>
+        <span class="s0">}</span>
+      <span class="s0">])</span>
+    <span class="s0">);</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s1">&quot;cache&quot; </span><span class="s2">in </span><span class="s0">fetchedModule) {</span>
+      <span class="s2">if </span><span class="s0">(!cachedModule || !cachedModule.meta)</span>
+        <span class="s2">throw new </span><span class="s0">Error(</span>
+          <span class="s0">`Module </span><span class="s1">&quot;${url}&quot; </span><span class="s0">was mistakenly invalidated during fetch phase.`</span>
+        <span class="s0">);</span>
+      <span class="s2">return </span><span class="s0">cachedModule;</span>
+    <span class="s0">}</span>
+    <span class="s0">const moduleId = </span><span class="s1">&quot;externalize&quot; </span><span class="s2">in </span><span class="s0">fetchedModule ? fetchedModule.externalize : fetchedModule.id, moduleUrl = </span><span class="s1">&quot;url&quot; </span><span class="s2">in </span><span class="s0">fetchedModule ? fetchedModule.url : url, module = </span><span class="s2">this</span><span class="s0">.evaluatedModules.ensureModule(moduleId, moduleUrl);</span>
+    <span class="s2">return </span><span class="s1">&quot;invalidate&quot; </span><span class="s2">in </span><span class="s0">fetchedModule &amp;&amp; fetchedModule.invalidate &amp;&amp; </span><span class="s2">this</span><span class="s0">.evaluatedModules.invalidateModule(module), fetchedModule.url = moduleUrl, fetchedModule.id = moduleId, module.meta = fetchedModule, module;</span>
+  <span class="s0">}</span>
+  <span class="s4">// override is allowed, consider this a public API</span>
+  <span class="s0">async directRequest(url, mod, _callstack) {</span>
+    <span class="s0">const fetchResult = mod.meta, moduleId = fetchResult.id, callstack = [..._callstack, moduleId], request = async (dep, metadata) =&gt; {</span>
+      <span class="s0">const importer = </span><span class="s1">&quot;file&quot; </span><span class="s2">in </span><span class="s0">fetchResult &amp;&amp; fetchResult.file || moduleId, depMod = await </span><span class="s2">this</span><span class="s0">.cachedModule(dep, importer);</span>
+      <span class="s2">return </span><span class="s0">depMod.importers.add(moduleId), mod.imports.add(depMod.id), </span><span class="s2">this</span><span class="s0">.cachedRequest(dep, depMod, callstack, metadata);</span>
+    <span class="s0">}, dynamicRequest = async (dep) =&gt; (dep = String(dep), dep[</span><span class="s3">0</span><span class="s0">] === </span><span class="s1">&quot;.&quot; </span><span class="s0">&amp;&amp; (dep = posixResolve(posixDirname(url), dep)), request(dep, { isDynamicImport: !</span><span class="s3">0 </span><span class="s0">}));</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s1">&quot;externalize&quot; </span><span class="s2">in </span><span class="s0">fetchResult) {</span>
+      <span class="s0">const { externalize } = fetchResult;</span>
+      <span class="s2">this</span><span class="s0">.debug?.(</span><span class="s1">&quot;[module runner] externalizing&quot;</span><span class="s0">, externalize);</span>
+      <span class="s0">const exports2 = await </span><span class="s2">this</span><span class="s0">.evaluator.runExternalModule(externalize);</span>
+      <span class="s2">return </span><span class="s0">mod.exports = exports2, exports2;</span>
+    <span class="s0">}</span>
+    <span class="s0">const { code, file } = fetchResult;</span>
+    <span class="s2">if </span><span class="s0">(code == </span><span class="s2">null</span><span class="s0">) {</span>
+      <span class="s0">const importer = callstack[callstack.length - </span><span class="s3">2</span><span class="s0">];</span>
+      <span class="s2">throw new </span><span class="s0">Error(</span>
+        <span class="s0">`[module runner] Failed to load </span><span class="s1">&quot;${url}&quot;</span><span class="s0">${importer ? ` imported from ${importer}` : </span><span class="s1">&quot;&quot;</span><span class="s0">}`</span>
+      <span class="s0">);</span>
+    <span class="s0">}</span>
+    <span class="s0">const modulePath = cleanUrl(file || moduleId), href = posixPathToFileHref(modulePath), filename = modulePath, dirname2 = posixDirname(modulePath), meta = {</span>
+      <span class="s0">filename: isWindows ? toWindowsPath(filename) : filename,</span>
+      <span class="s0">dirname: isWindows ? toWindowsPath(dirname2) : dirname2,</span>
+      <span class="s0">url: href,</span>
+      <span class="s0">env: </span><span class="s2">this</span><span class="s0">.envProxy,</span>
+      <span class="s0">resolve(_id, _parent) {</span>
+        <span class="s2">throw new </span><span class="s0">Error(</span>
+          <span class="s1">'[module runner] &quot;import.meta.resolve&quot; is not supported.'</span>
+        <span class="s0">);</span>
+      <span class="s0">},</span>
+      <span class="s4">// should be replaced during transformation</span>
+      <span class="s0">glob() {</span>
+        <span class="s2">throw new </span><span class="s0">Error(</span>
+          <span class="s1">'[module runner] &quot;import.meta.glob&quot; is statically replaced during file transformation. Make sure to reference it by the full name.'</span>
+        <span class="s0">);</span>
+      <span class="s0">}</span>
+    <span class="s0">}, exports = </span><span class="s4">/* @__PURE__ */ </span><span class="s0">Object.create(</span><span class="s2">null</span><span class="s0">);</span>
+    <span class="s0">Object.defineProperty(exports, Symbol.toStringTag, {</span>
+      <span class="s0">value: </span><span class="s1">&quot;Module&quot;</span><span class="s0">,</span>
+      <span class="s0">enumerable: !</span><span class="s3">1</span><span class="s0">,</span>
+      <span class="s0">configurable: !</span><span class="s3">1</span>
+    <span class="s0">}), mod.exports = exports;</span>
+    <span class="s0">let hotContext;</span>
+    <span class="s2">this</span><span class="s0">.hmrClient &amp;&amp; Object.defineProperty(meta, </span><span class="s1">&quot;hot&quot;</span><span class="s0">, {</span>
+      <span class="s0">enumerable: !</span><span class="s3">0</span><span class="s0">,</span>
+      <span class="s0">get: () =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.hmrClient)</span>
+          <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;[module runner] HMR client was closed.&quot;</span><span class="s0">);</span>
+        <span class="s2">return this</span><span class="s0">.debug?.(</span><span class="s1">&quot;[module runner] creating hmr context for&quot;</span><span class="s0">, mod.url), hotContext ||= </span><span class="s2">new </span><span class="s0">HMRContext(</span><span class="s2">this</span><span class="s0">.hmrClient, mod.url), hotContext;</span>
+      <span class="s0">},</span>
+      <span class="s0">set: (value) =&gt; {</span>
+        <span class="s0">hotContext = value;</span>
+      <span class="s0">}</span>
+    <span class="s0">});</span>
+    <span class="s0">const context = {</span>
+      <span class="s0">[ssrImportKey]: request,</span>
+      <span class="s0">[ssrDynamicImportKey]: dynamicRequest,</span>
+      <span class="s0">[ssrModuleExportsKey]: exports,</span>
+      <span class="s0">[ssrExportAllKey]: (obj) =&gt; exportAll(exports, obj),</span>
+      <span class="s0">[ssrImportMetaKey]: meta</span>
+    <span class="s0">};</span>
+    <span class="s2">return this</span><span class="s0">.debug?.(</span><span class="s1">&quot;[module runner] executing&quot;</span><span class="s0">, href), await </span><span class="s2">this</span><span class="s0">.evaluator.runInlinedModule(context, code, mod), exports;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">exportAll(exports, sourceModule) {</span>
+  <span class="s2">if </span><span class="s0">(exports !== sourceModule &amp;&amp; !(isPrimitive(sourceModule) || Array.isArray(sourceModule) || sourceModule </span><span class="s2">instanceof </span><span class="s0">Promise)) {</span>
+    <span class="s2">for </span><span class="s0">(const key </span><span class="s2">in </span><span class="s0">sourceModule)</span>
+      <span class="s2">if </span><span class="s0">(key !== </span><span class="s1">&quot;default&quot; </span><span class="s0">&amp;&amp; key !== </span><span class="s1">&quot;__esModule&quot; </span><span class="s0">&amp;&amp; !(key </span><span class="s2">in </span><span class="s0">exports))</span>
+        <span class="s2">try </span><span class="s0">{</span>
+          <span class="s0">Object.defineProperty(exports, key, {</span>
+            <span class="s0">enumerable: !</span><span class="s3">0</span><span class="s0">,</span>
+            <span class="s0">configurable: !</span><span class="s3">0</span><span class="s0">,</span>
+            <span class="s0">get: () =&gt; sourceModule[key]</span>
+          <span class="s0">});</span>
+        <span class="s0">} </span><span class="s2">catch </span><span class="s0">{</span>
+        <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s0">export {</span>
+  <span class="s0">ESModulesEvaluator,</span>
+  <span class="s0">EvaluatedModules,</span>
+  <span class="s0">ModuleRunner,</span>
+  <span class="s0">createWebSocketModuleRunnerTransport,</span>
+  <span class="s0">ssrDynamicImportKey,</span>
+  <span class="s0">ssrExportAllKey,</span>
+  <span class="s0">ssrImportKey,</span>
+  <span class="s0">ssrImportMetaKey,</span>
+  <span class="s0">ssrModuleExportsKey</span>
+<span class="s0">};</span>
+</pre>
+</body>
+</html>

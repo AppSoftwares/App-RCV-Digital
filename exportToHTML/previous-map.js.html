@@ -1,0 +1,182 @@
+<html>
+<head>
+<title>previous-map.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+previous-map.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span>
+
+<span class="s1">let { existsSync, readFileSync } = require(</span><span class="s0">'fs'</span><span class="s1">)</span>
+<span class="s1">let { dirname, join } = require(</span><span class="s0">'path'</span><span class="s1">)</span>
+<span class="s1">let { SourceMapConsumer, SourceMapGenerator } = require(</span><span class="s0">'source-map-js'</span><span class="s1">)</span>
+
+<span class="s2">function </span><span class="s1">fromBase64(str) {</span>
+  <span class="s2">if </span><span class="s1">(Buffer) {</span>
+    <span class="s2">return </span><span class="s1">Buffer.from(str, </span><span class="s0">'base64'</span><span class="s1">).toString()</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s3">/* c8 ignore next 2 */</span>
+    <span class="s2">return </span><span class="s1">window.atob(str)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">class PreviousMap {</span>
+  <span class="s1">constructor(css, opts) {</span>
+    <span class="s2">if </span><span class="s1">(opts.map === </span><span class="s2">false</span><span class="s1">) </span><span class="s2">return</span>
+    <span class="s2">if </span><span class="s1">(opts.unsafeMap) </span><span class="s2">this</span><span class="s1">.unsafeMap = </span><span class="s2">true</span>
+    <span class="s2">this</span><span class="s1">.loadAnnotation(css)</span>
+    <span class="s2">this</span><span class="s1">.inline = </span><span class="s2">this</span><span class="s1">.startWith(</span><span class="s2">this</span><span class="s1">.annotation, </span><span class="s0">'data:'</span><span class="s1">)</span>
+
+    <span class="s1">let prev = opts.map ? opts.map.prev : undefined</span>
+    <span class="s1">let text = </span><span class="s2">this</span><span class="s1">.loadMap(opts.from, prev)</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.mapFile &amp;&amp; opts.from) {</span>
+      <span class="s2">this</span><span class="s1">.mapFile = opts.from</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.mapFile) </span><span class="s2">this</span><span class="s1">.root = dirname(</span><span class="s2">this</span><span class="s1">.mapFile)</span>
+    <span class="s2">if </span><span class="s1">(text) </span><span class="s2">this</span><span class="s1">.text = text</span>
+  <span class="s1">}</span>
+
+  <span class="s1">consumer() {</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.consumerCache) {</span>
+      <span class="s2">this</span><span class="s1">.consumerCache = </span><span class="s2">new </span><span class="s1">SourceMapConsumer(</span><span class="s2">this</span><span class="s1">.json || </span><span class="s2">this</span><span class="s1">.text)</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.consumerCache</span>
+  <span class="s1">}</span>
+
+  <span class="s1">decodeInline(text) {</span>
+    <span class="s1">let baseCharsetUri = /^data:application\/json;charset=utf-?</span><span class="s4">8</span><span class="s1">;base64,/</span>
+    <span class="s1">let baseUri = /^data:application\/json;base64,/</span>
+    <span class="s1">let charsetUri = /^data:application\/json;charset=utf-?</span><span class="s4">8</span><span class="s1">,/</span>
+    <span class="s1">let uri = /^data:application\/json,/</span>
+
+    <span class="s1">let uriMatch = text.match(charsetUri) || text.match(uri)</span>
+    <span class="s2">if </span><span class="s1">(uriMatch) {</span>
+      <span class="s2">return </span><span class="s1">decodeURIComponent(text.substr(uriMatch[</span><span class="s4">0</span><span class="s1">].length))</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let baseUriMatch = text.match(baseCharsetUri) || text.match(baseUri)</span>
+    <span class="s2">if </span><span class="s1">(baseUriMatch) {</span>
+      <span class="s2">return </span><span class="s1">fromBase64(text.substr(baseUriMatch[</span><span class="s4">0</span><span class="s1">].length))</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let encoding = text.slice(</span><span class="s0">'data:application/json;'</span><span class="s1">.length)</span>
+    <span class="s1">encoding = encoding.slice(</span><span class="s4">0</span><span class="s1">, encoding.indexOf(</span><span class="s0">','</span><span class="s1">))</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">'Unsupported source map encoding ' </span><span class="s1">+ encoding)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">getAnnotationURL(sourceMapString) {</span>
+    <span class="s2">return </span><span class="s1">sourceMapString.replace(/^\/\*\s*# sourceMappingURL=/, </span><span class="s0">''</span><span class="s1">).trim()</span>
+  <span class="s1">}</span>
+
+  <span class="s1">isMap(map) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">map !== </span><span class="s0">'object'</span><span class="s1">) </span><span class="s2">return false</span>
+    <span class="s2">return </span><span class="s1">(</span>
+      <span class="s2">typeof </span><span class="s1">map.mappings === </span><span class="s0">'string' </span><span class="s1">||</span>
+      <span class="s2">typeof </span><span class="s1">map._mappings === </span><span class="s0">'string' </span><span class="s1">||</span>
+      <span class="s1">Array.isArray(map.sections)</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">loadAnnotation(css) {</span>
+    <span class="s1">let comments = css.match(/\/\*\s*# sourceMappingURL=/g)</span>
+    <span class="s2">if </span><span class="s1">(!comments) </span><span class="s2">return</span>
+
+    <span class="s3">// sourceMappingURLs from comments, strings, etc.</span>
+    <span class="s1">let start = css.lastIndexOf(comments.pop())</span>
+    <span class="s1">let end = css.indexOf(</span><span class="s0">'*/'</span><span class="s1">, start)</span>
+
+    <span class="s2">if </span><span class="s1">(start &gt; -</span><span class="s4">1 </span><span class="s1">&amp;&amp; end &gt; -</span><span class="s4">1</span><span class="s1">) {</span>
+      <span class="s3">// Locate the last sourceMappingURL to avoid pickin</span>
+      <span class="s2">this</span><span class="s1">.annotation = </span><span class="s2">this</span><span class="s1">.getAnnotationURL(css.substring(start, end))</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">loadFile(path, cssFile, trusted) {</span>
+    <span class="s3">/* c8 ignore next 5 */</span>
+    <span class="s2">if </span><span class="s1">(!trusted &amp;&amp; !</span><span class="s2">this</span><span class="s1">.unsafeMap) {</span>
+      <span class="s2">if </span><span class="s1">(!/\.map$/i.test(path)) {</span>
+        <span class="s2">return </span><span class="s1">undefined</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.root = dirname(path)</span>
+    <span class="s2">if </span><span class="s1">(existsSync(path)) {</span>
+      <span class="s2">this</span><span class="s1">.mapFile = path</span>
+      <span class="s2">return </span><span class="s1">readFileSync(path, </span><span class="s0">'utf-8'</span><span class="s1">).toString().trim()</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">loadMap(file, prev) {</span>
+    <span class="s2">if </span><span class="s1">(prev === </span><span class="s2">false</span><span class="s1">) </span><span class="s2">return false</span>
+
+    <span class="s2">if </span><span class="s1">(prev) {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">prev === </span><span class="s0">'string'</span><span class="s1">) {</span>
+        <span class="s2">return </span><span class="s1">prev</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">prev === </span><span class="s0">'function'</span><span class="s1">) {</span>
+        <span class="s1">let prevPath = prev(file)</span>
+        <span class="s2">if </span><span class="s1">(prevPath) {</span>
+          <span class="s1">let map = </span><span class="s2">this</span><span class="s1">.loadFile(prevPath, file, </span><span class="s2">true</span><span class="s1">)</span>
+          <span class="s2">if </span><span class="s1">(!map) {</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span>
+              <span class="s0">'Unable to load previous source map: ' </span><span class="s1">+ prevPath.toString()</span>
+            <span class="s1">)</span>
+          <span class="s1">}</span>
+          <span class="s2">return </span><span class="s1">map</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(prev </span><span class="s2">instanceof </span><span class="s1">SourceMapConsumer) {</span>
+        <span class="s2">return </span><span class="s1">SourceMapGenerator.fromSourceMap(prev).toString()</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(prev </span><span class="s2">instanceof </span><span class="s1">SourceMapGenerator) {</span>
+        <span class="s2">return </span><span class="s1">prev.toString()</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isMap(prev)) {</span>
+        <span class="s2">return </span><span class="s1">JSON.stringify(prev)</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span>
+          <span class="s0">'Unsupported previous source map format: ' </span><span class="s1">+ prev.toString()</span>
+        <span class="s1">)</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.inline) {</span>
+      <span class="s2">return this</span><span class="s1">.decodeInline(</span><span class="s2">this</span><span class="s1">.annotation)</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.annotation) {</span>
+      <span class="s1">let map = </span><span class="s2">this</span><span class="s1">.annotation</span>
+      <span class="s2">if </span><span class="s1">(file) map = join(dirname(file), map)</span>
+      <span class="s1">let unknown = </span><span class="s2">this</span><span class="s1">.loadFile(map, file, </span><span class="s2">false</span><span class="s1">)</span>
+      <span class="s2">if </span><span class="s1">(unknown) {</span>
+        <span class="s2">try </span><span class="s1">{</span>
+          <span class="s3">/* c8 ignore next 4 */</span>
+          <span class="s2">this</span><span class="s1">.json = JSON.parse(unknown.replace(/^\)]}</span><span class="s0">'[^</span><span class="s2">\n</span><span class="s0">]*</span><span class="s2">\n</span><span class="s0">/, ''))</span>
+        <span class="s1">} </span><span class="s2">catch </span><span class="s1">{</span>
+          <span class="s2">return </span><span class="s1">undefined</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">unknown</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">startWith(string, start) {</span>
+    <span class="s2">if </span><span class="s1">(!string) </span><span class="s2">return false</span>
+    <span class="s2">return </span><span class="s1">string.substr(</span><span class="s4">0</span><span class="s1">, start.length) === start</span>
+  <span class="s1">}</span>
+
+  <span class="s1">withContent() {</span>
+    <span class="s2">return </span><span class="s1">!!(</span>
+      <span class="s2">this</span><span class="s1">.consumer().sourcesContent &amp;&amp;</span>
+      <span class="s2">this</span><span class="s1">.consumer().sourcesContent.length &gt; </span><span class="s4">0</span>
+    <span class="s1">)</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = PreviousMap</span>
+<span class="s1">PreviousMap.</span><span class="s2">default </span><span class="s1">= PreviousMap</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,2160 @@
+<html>
+<head>
+<title>PostgrestFilterBuilder.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PostgrestFilterBuilder.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">PostgrestTransformBuilder </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./PostgrestTransformBuilder</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ JsonPathToAccessor, JsonPathToType } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./select-query-parser/utils</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ ClientServerOptions, GenericSchema } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types/common/common</span><span class="s2">'</span>
+
+<span class="s0">type </span><span class="s2">FilterOperator =</span>
+  <span class="s2">| '</span><span class="s3">eq</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">neq</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">gt</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">gte</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">lt</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">lte</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">like</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">ilike</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">is</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">isdistinct</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">in</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">cs</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">cd</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">sl</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">sr</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">nxl</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">nxr</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">adj</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">ov</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">fts</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">plfts</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">phfts</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">wfts</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">match</span><span class="s2">'</span>
+  <span class="s2">| '</span><span class="s3">imatch</span><span class="s2">'</span>
+
+<span class="s0">export type </span><span class="s2">IsStringOperator&lt;Path </span><span class="s0">extends </span><span class="s2">string&gt; = Path </span><span class="s0">extends </span><span class="s2">`${string}</span><span class="s3">-&gt;&gt;</span><span class="s2">${string}`</span>
+  <span class="s2">? true</span>
+  <span class="s2">: false</span>
+
+<span class="s0">const </span><span class="s2">PostgrestReservedCharsRegexp = new </span><span class="s4">RegExp</span><span class="s1">(</span><span class="s2">'</span><span class="s3">[,()]</span><span class="s2">'</span><span class="s1">)</span>
+
+<span class="s2">// </span><span class="s5">Match relationship filters with `table.column` syntax and resolve underlying</span>
+<span class="s2">// </span><span class="s5">column value. If not matched, fallback to generic type.</span>
+<span class="s2">// </span><span class="s5">TODO: Validate the relationship itself ala select-query-parser. Currently we</span>
+<span class="s2">// </span><span class="s5">assume that all tables have valid relationships to each other, despite</span>
+<span class="s2">// </span><span class="s5">nonexistent foreign keys.</span>
+<span class="s0">type </span><span class="s2">ResolveFilterValue&lt;</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">ColumnName </span><span class="s0">extends </span><span class="s2">string,</span>
+<span class="s2">&gt; = ColumnName </span><span class="s0">extends </span><span class="s2">`${infer RelationshipTable}</span><span class="s3">.</span><span class="s2">${infer Remainder}`</span>
+  <span class="s2">? Remainder </span><span class="s0">extends </span><span class="s2">`${infer _}</span><span class="s3">.</span><span class="s2">${infer _}`</span>
+    <span class="s2">? ResolveFilterValue&lt;Schema, Row, Remainder&gt;</span>
+    <span class="s2">: ResolveFilterRelationshipValue&lt;Schema, RelationshipTable, Remainder&gt;</span>
+  <span class="s2">: ColumnName </span><span class="s0">extends </span><span class="s2">keyof Row</span>
+    <span class="s2">? Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span>
+    <span class="s2">: // </span><span class="s5">If the column selection is a jsonpath like `data-&gt;value` or `data-&gt;&gt;value` we attempt to match</span>
+      <span class="s2">// </span><span class="s5">the expected type with the parsed custom json type</span>
+      <span class="s2">IsStringOperator&lt;ColumnName&gt; </span><span class="s0">extends </span><span class="s2">true</span>
+      <span class="s2">? string</span>
+      <span class="s2">: JsonPathToType&lt;Row, JsonPathToAccessor&lt;ColumnName&gt;&gt; </span><span class="s0">extends </span><span class="s2">infer JsonPathValue</span>
+        <span class="s2">? JsonPathValue </span><span class="s0">extends </span><span class="s2">never</span>
+          <span class="s2">? never</span>
+          <span class="s2">: JsonPathValue</span>
+        <span class="s2">: never</span>
+
+<span class="s0">type </span><span class="s2">ResolveFilterRelationshipValue&lt;</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">RelationshipTable </span><span class="s0">extends </span><span class="s2">string,</span>
+  <span class="s2">RelationshipColumn </span><span class="s0">extends </span><span class="s2">string,</span>
+<span class="s2">&gt; = Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">] </span><span class="s2">&amp; Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">infer TablesAndViews</span>
+  <span class="s2">? RelationshipTable </span><span class="s0">extends </span><span class="s2">keyof TablesAndViews</span>
+    <span class="s2">? '</span><span class="s3">Row</span><span class="s2">' </span><span class="s0">extends </span><span class="s2">keyof TablesAndViews</span><span class="s1">[</span><span class="s2">RelationshipTable</span><span class="s1">]</span>
+      <span class="s2">? RelationshipColumn </span><span class="s0">extends </span><span class="s2">keyof TablesAndViews</span><span class="s1">[</span><span class="s2">RelationshipTable</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span>
+        <span class="s2">? TablesAndViews</span><span class="s1">[</span><span class="s2">RelationshipTable</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">][</span><span class="s2">RelationshipColumn</span><span class="s1">]</span>
+        <span class="s2">: unknown</span>
+      <span class="s2">: unknown</span>
+    <span class="s2">: unknown</span>
+  <span class="s2">: never</span>
+
+<span class="s0">export type </span><span class="s2">InvalidMethodError&lt;S </span><span class="s0">extends </span><span class="s2">string&gt; = { Error: S }</span>
+
+<span class="s0">type </span><span class="s2">NonNullableColumn&lt;T </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;, Col </span><span class="s0">extends </span><span class="s2">string&gt; = Col </span><span class="s0">extends </span><span class="s2">keyof T</span>
+  <span class="s2">? { </span><span class="s1">[</span><span class="s2">K in keyof T</span><span class="s1">]</span><span class="s2">: K </span><span class="s0">extends </span><span class="s2">Col ? NonNullable&lt;T</span><span class="s1">[</span><span class="s2">K</span><span class="s1">]</span><span class="s2">&gt; : T</span><span class="s1">[</span><span class="s2">K</span><span class="s1">] </span><span class="s2">}</span>
+  <span class="s2">: T</span>
+
+<span class="s0">type </span><span class="s2">NarrowResultColumn&lt;T, Col </span><span class="s0">extends </span><span class="s2">string&gt; = T </span><span class="s0">extends </span><span class="s1">(</span><span class="s2">infer Item</span><span class="s1">)[]</span>
+  <span class="s2">? Item </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;</span>
+    <span class="s2">? Col </span><span class="s0">extends </span><span class="s2">keyof Item</span>
+      <span class="s2">? { </span><span class="s1">[</span><span class="s2">K in keyof Item</span><span class="s1">]</span><span class="s2">: K </span><span class="s0">extends </span><span class="s2">Col ? NonNullable&lt;Item</span><span class="s1">[</span><span class="s2">K</span><span class="s1">]</span><span class="s2">&gt; : Item</span><span class="s1">[</span><span class="s2">K</span><span class="s1">] </span><span class="s2">}</span><span class="s1">[]</span>
+      <span class="s2">: T</span>
+    <span class="s2">: T</span>
+  <span class="s2">: T </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;</span>
+    <span class="s2">? Col </span><span class="s0">extends </span><span class="s2">keyof T</span>
+      <span class="s2">? { </span><span class="s1">[</span><span class="s2">K in keyof T</span><span class="s1">]</span><span class="s2">: K </span><span class="s0">extends </span><span class="s2">Col ? NonNullable&lt;T</span><span class="s1">[</span><span class="s2">K</span><span class="s1">]</span><span class="s2">&gt; : T</span><span class="s1">[</span><span class="s2">K</span><span class="s1">] </span><span class="s2">}</span>
+      <span class="s2">: T</span>
+    <span class="s2">: T</span>
+
+<span class="s0">export default class </span><span class="s2">PostgrestFilterBuilder&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Row </span><span class="s0">extends </span><span class="s2">Record&lt;string, unknown&gt;,</span>
+  <span class="s2">Result,</span>
+  <span class="s2">RelationName = unknown,</span>
+  <span class="s2">Relationships = unknown,</span>
+  <span class="s2">Method = unknown,</span>
+<span class="s2">&gt; </span><span class="s0">extends </span><span class="s2">PostgrestTransformBuilder&lt;</span>
+  <span class="s2">ClientOptions,</span>
+  <span class="s2">Schema,</span>
+  <span class="s2">Row,</span>
+  <span class="s2">Result,</span>
+  <span class="s2">RelationName,</span>
+  <span class="s2">Relationships,</span>
+  <span class="s2">Method</span>
+<span class="s2">&gt; {</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is equal to `value`. 
+   * 
+   * To check if the value of `column` is NULL, you should use `.is()` instead. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.eq('name', 'Leia') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">eq</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string&gt;(</span>
+    <span class="s2">column: ColumnName </span><span class="s0">extends </span><span class="s2">keyof Row</span>
+      <span class="s2">? ColumnName</span>
+      <span class="s2">: ColumnName </span><span class="s0">extends </span><span class="s2">`${string}</span><span class="s3">.</span><span class="s2">${string}` | `${string}</span><span class="s3">-&gt;</span><span class="s2">${string}`</span>
+        <span class="s2">? ColumnName</span>
+        <span class="s2">: string </span><span class="s0">extends </span><span class="s2">ColumnName</span>
+          <span class="s2">? string</span>
+          <span class="s2">: keyof Row,</span>
+    <span class="s2">value: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+      <span class="s2">? NonNullable&lt;unknown&gt;</span>
+      <span class="s2">: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">infer ResolvedFilterValue</span>
+        <span class="s2">? NonNullable&lt;ResolvedFilterValue&gt;</span>
+        <span class="s2">: never</span>
+  <span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column </span><span class="s0">as </span><span class="s2">string, `</span><span class="s3">eq.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is not equal to `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.neq('name', 'Leia') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     }, 
+   *     { 
+   *       &quot;id&quot;: 3, 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">neq</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string&gt;(</span>
+    <span class="s2">column: ColumnName </span><span class="s0">extends </span><span class="s2">keyof Row</span>
+      <span class="s2">? ColumnName</span>
+      <span class="s2">: ColumnName </span><span class="s0">extends </span><span class="s2">`${string}</span><span class="s3">.</span><span class="s2">${string}` | `${string}</span><span class="s3">-&gt;</span><span class="s2">${string}`</span>
+        <span class="s2">? ColumnName</span>
+        <span class="s2">: string </span><span class="s0">extends </span><span class="s2">ColumnName</span>
+          <span class="s2">? string</span>
+          <span class="s2">: keyof Row,</span>
+    <span class="s2">value: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+      <span class="s2">? unknown</span>
+      <span class="s2">: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">infer Resolved</span>
+        <span class="s2">? Resolved</span>
+        <span class="s2">: never</span>
+  <span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column </span><span class="s0">as </span><span class="s2">string, `</span><span class="s3">neq.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">gt</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">): this</span>
+  <span class="s4">gt</span><span class="s2">(column: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is greater than `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * When using [reserved words](https://www.postgresql.org/docs/current/sql-keywords-appendix.html) for column names you need 
+   * to add double quotes e.g. `.gt('&quot;order&quot;', 2)` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.gt('id', 2) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 3, 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">gt</span><span class="s2">(column: string, value: unknown): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">gt.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">gte</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">): this</span>
+  <span class="s4">gte</span><span class="s2">(column: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is greater than or equal to `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.gte('id', 2) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     }, 
+   *     { 
+   *       &quot;id&quot;: 3, 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">gte</span><span class="s2">(column: string, value: unknown): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">gte.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">lt</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">): this</span>
+  <span class="s4">lt</span><span class="s2">(column: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is less than `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.lt('id', 2) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">lt</span><span class="s2">(column: string, value: unknown): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">lt.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">lte</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">): this</span>
+  <span class="s4">lte</span><span class="s2">(column: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is less than or equal to `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.lte('id', 2) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     }, 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">lte</span><span class="s2">(column: string, value: unknown): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">lte.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">like</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, pattern: string): this</span>
+  <span class="s4">like</span><span class="s2">(column: string, pattern: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches `pattern` case-sensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">pattern </span><span class="s5">- The pattern to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.like('name', '%Lu%') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">like</span><span class="s2">(column: string, pattern: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">like.</span><span class="s2">${pattern}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">likeAllOf</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span>
+  <span class="s2">): this</span>
+  <span class="s4">likeAllOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches all of `patterns` case-sensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">patterns </span><span class="s5">- The patterns to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   </span><span class="s2">*/</span>
+  <span class="s4">likeAllOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">like(all).{</span><span class="s2">${patterns.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">likeAnyOf</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span>
+  <span class="s2">): this</span>
+  <span class="s4">likeAnyOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches any of `patterns` case-sensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">patterns </span><span class="s5">- The patterns to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   </span><span class="s2">*/</span>
+  <span class="s4">likeAnyOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">like(any).{</span><span class="s2">${patterns.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">ilike</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, pattern: string): this</span>
+  <span class="s4">ilike</span><span class="s2">(column: string, pattern: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches `pattern` case-insensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">pattern </span><span class="s5">- The pattern to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.ilike('name', '%lu%') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">ilike</span><span class="s2">(column: string, pattern: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">ilike.</span><span class="s2">${pattern}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">ilikeAllOf</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span>
+  <span class="s2">): this</span>
+  <span class="s4">ilikeAllOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches all of `patterns` case-insensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">patterns </span><span class="s5">- The patterns to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   </span><span class="s2">*/</span>
+  <span class="s4">ilikeAllOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">ilike(all).{</span><span class="s2">${patterns.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">ilikeAnyOf</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span>
+  <span class="s2">): this</span>
+  <span class="s4">ilikeAnyOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches any of `patterns` case-insensitively. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">patterns </span><span class="s5">- The patterns to match with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   </span><span class="s2">*/</span>
+  <span class="s4">ilikeAnyOf</span><span class="s2">(column: string, patterns: </span><span class="s0">readonly </span><span class="s2">string</span><span class="s1">[]</span><span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">ilike(any).{</span><span class="s2">${patterns.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">regexMatch</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, pattern: string): this</span>
+  <span class="s4">regexMatch</span><span class="s2">(column: string, pattern: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches the PostgreSQL regex `pattern` 
+   * case-sensitively (using the `~` operator). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">pattern </span><span class="s5">- The PostgreSQL regular expression pattern to match with 
+   </span><span class="s2">*/</span>
+  <span class="s4">regexMatch</span><span class="s2">(column: string, pattern: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">match.</span><span class="s2">${pattern}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">regexIMatch</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, pattern: string): this</span>
+  <span class="s4">regexIMatch</span><span class="s2">(column: string, pattern: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` matches the PostgreSQL regex `pattern` 
+   * case-insensitively (using the `~*` operator). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">pattern </span><span class="s5">- The PostgreSQL regular expression pattern to match with 
+   </span><span class="s2">*/</span>
+  <span class="s4">regexIMatch</span><span class="s2">(column: string, pattern: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">imatch.</span><span class="s2">${pattern}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">is</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">] </span><span class="s2">&amp; </span><span class="s1">(</span><span class="s2">boolean | null</span><span class="s1">)</span>
+  <span class="s2">): this</span>
+  <span class="s4">is</span><span class="s2">(column: string, value: boolean | null): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` IS `value`. 
+   * 
+   * For non-boolean columns, this is only relevant for checking if the value of 
+   * `column` is NULL by setting `value` to `null`. 
+   * 
+   * For boolean columns, you can also set `value` to `true` or `false` and it 
+   * will behave the same way as `.eq()`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Checking for nullness, true or false 
+   * Using the `eq()` filter doesn't work when filtering for `null`. 
+   * 
+   * Instead, you need to use `is()`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Checking for nullness, true or false 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('countries') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.is('name', null) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">Checking for nullness, true or false 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'null'), 
+   *   (2, null); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">Checking for nullness, true or false 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;null&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">is</span><span class="s2">(column: string, value: boolean | null): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">is.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` IS DISTINCT FROM `value`. 
+   * 
+   * Unlike `.neq()`, this treats `NULL` as a comparable value. Two `NULL` values 
+   * are considered equal (not distinct), and comparing `NULL` with any non-NULL 
+   * value returns true (distinct). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with 
+   </span><span class="s2">*/</span>
+  <span class="s4">isDistinct</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">value: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+      <span class="s2">? unknown</span>
+      <span class="s2">: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">infer ResolvedFilterValue</span>
+        <span class="s2">? ResolvedFilterValue</span>
+        <span class="s2">: never</span>
+  <span class="s2">): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">isdistinct.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is included in the `values` array. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">values </span><span class="s5">- The values array to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.in('name', ['Leia', 'Han']) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     }, 
+   *     { 
+   *       &quot;id&quot;: 3, 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">in</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">values: ReadonlyArray&lt;</span>
+      <span class="s2">ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+        <span class="s2">? unknown</span>
+        <span class="s2">: // </span><span class="s5">We want to infer the type before wrapping it into a `NonNullable` to avoid too deep</span>
+          <span class="s2">// </span><span class="s5">type resolution error</span>
+          <span class="s2">ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">infer ResolvedFilterValue</span>
+          <span class="s2">? ResolvedFilterValue</span>
+          <span class="s2">: // </span><span class="s5">We should never enter this case as all the branches are covered above</span>
+            <span class="s2">never</span>
+    <span class="s2">&gt;</span>
+  <span class="s2">): this {</span>
+    <span class="s0">const </span><span class="s2">cleanedValues = Array.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">new </span><span class="s4">Set</span><span class="s1">(</span><span class="s2">values</span><span class="s1">))</span>
+      <span class="s2">.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(s) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s5">handle postgrest reserved characters</span>
+        <span class="s2">// </span><span class="s5">https://postgrest.org/en/v7.0.0/api.html#reserved-characters</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof s === '</span><span class="s3">string</span><span class="s2">' &amp;&amp; PostgrestReservedCharsRegexp.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">s</span><span class="s1">)) </span><span class="s0">return </span><span class="s2">`</span><span class="s3">&quot;</span><span class="s2">${s}</span><span class="s3">&quot;</span><span class="s2">`</span>
+        <span class="s0">else return </span><span class="s2">`${s}`</span>
+      <span class="s2">}</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">in.(</span><span class="s2">${cleanedValues}</span><span class="s3">)</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where `column` is NOT included in the `values` array. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">values </span><span class="s5">- The values array to filter with 
+   </span><span class="s2">*/</span>
+  <span class="s4">notIn</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">values: ReadonlyArray&lt;</span>
+      <span class="s2">ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">never</span>
+        <span class="s2">? unknown</span>
+        <span class="s2">: ResolveFilterValue&lt;Schema, Row, ColumnName&gt; </span><span class="s0">extends </span><span class="s2">infer ResolvedFilterValue</span>
+          <span class="s2">? ResolvedFilterValue</span>
+          <span class="s2">: never</span>
+    <span class="s2">&gt;</span>
+  <span class="s2">): this {</span>
+    <span class="s0">const </span><span class="s2">cleanedValues = Array.</span><span class="s4">from</span><span class="s1">(</span><span class="s2">new </span><span class="s4">Set</span><span class="s1">(</span><span class="s2">values</span><span class="s1">))</span>
+      <span class="s2">.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(s) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s5">handle postgrest reserved characters</span>
+        <span class="s2">// </span><span class="s5">https://postgrest.org/en/v7.0.0/api.html#reserved-characters</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof s === '</span><span class="s3">string</span><span class="s2">' &amp;&amp; PostgrestReservedCharsRegexp.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">s</span><span class="s1">)) </span><span class="s0">return </span><span class="s2">`</span><span class="s3">&quot;</span><span class="s2">${s}</span><span class="s3">&quot;</span><span class="s2">`</span>
+        <span class="s0">else return </span><span class="s2">`${s}`</span>
+      <span class="s2">}</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">not.in.(</span><span class="s2">${cleanedValues}</span><span class="s3">)</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">contains</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">value: string | ReadonlyArray&lt;Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">&gt; | Record&lt;string, unknown&gt;</span>
+  <span class="s2">): this</span>
+  <span class="s4">contains</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[] </span><span class="s2">| Record&lt;string, unknown&gt;): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for jsonb, array, and range columns. Match only rows where 
+   * `column` contains every element appearing in `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The jsonb, array, or range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The jsonb, array, or range value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On array columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('issues') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.contains('tags', ['is:open', 'priority:low']) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On array columns 
+   * ```sql 
+   * create table 
+   *   issues ( 
+   *     id int8 primary key, 
+   *     title text, 
+   *     tags text[] 
+   *   ); 
+   * 
+   * insert into 
+   *   issues (id, title, tags) 
+   * values 
+   *   (1, 'Cache invalidation is not working', array['is:open', 'severity:high', 'priority:low']), 
+   *   (2, 'Use better names', array['is:open', 'severity:low', 'priority:medium']); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On array columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;title&quot;: &quot;Cache invalidation is not working&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">On range columns 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On range columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.contains('during', '[2000-01-01 13:00, 2000-01-01 13:30)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On range columns 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On range columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *       &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On `jsonb` columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('users') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.contains('address', { postcode: 90210 }) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On `jsonb` columns 
+   * ```sql 
+   * create table 
+   *   users ( 
+   *     id int8 primary key, 
+   *     name text, 
+   *     address jsonb 
+   *   ); 
+   * 
+   * insert into 
+   *   users (id, name, address) 
+   * values 
+   *   (1, 'Michael', '{ &quot;postcode&quot;: 90210, &quot;street&quot;: &quot;Melrose Place&quot; }'), 
+   *   (2, 'Jane', '{}'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On `jsonb` columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;Michael&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">contains</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[] </span><span class="s2">| Record&lt;string, unknown&gt;): this {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">range types can be inclusive '[', ']' or exclusive '(', ')' so just</span>
+      <span class="s2">// </span><span class="s5">keep it simple and accept a string</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cs.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">array</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cs.{</span><span class="s2">${value.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">json</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cs.</span><span class="s2">${JSON.</span><span class="s4">stringify</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)</span><span class="s2">}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">containedBy</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">value: string | ReadonlyArray&lt;Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">&gt; | Record&lt;string, unknown&gt;</span>
+  <span class="s2">): this</span>
+  <span class="s4">containedBy</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[] </span><span class="s2">| Record&lt;string, unknown&gt;): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for jsonb, array, and range columns. Match only rows where 
+   * every element appearing in `column` is contained by `value`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The jsonb, array, or range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The jsonb, array, or range value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On array columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('classes') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.containedBy('days', ['monday', 'tuesday', 'wednesday', 'friday']) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On array columns 
+   * ```sql 
+   * create table 
+   *   classes ( 
+   *     id int8 primary key, 
+   *     name text, 
+   *     days text[] 
+   *   ); 
+   * 
+   * insert into 
+   *   classes (id, name, days) 
+   * values 
+   *   (1, 'Chemistry', array['monday', 'friday']), 
+   *   (2, 'History', array['monday', 'wednesday', 'thursday']); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On array columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;Chemistry&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">On range columns 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On range columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.containedBy('during', '[2000-01-01 00:00, 2000-01-01 23:59)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On range columns 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On range columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *       &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On `jsonb` columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('users') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.containedBy('address', {}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On `jsonb` columns 
+   * ```sql 
+   * create table 
+   *   users ( 
+   *     id int8 primary key, 
+   *     name text, 
+   *     address jsonb 
+   *   ); 
+   * 
+   * insert into 
+   *   users (id, name, address) 
+   * values 
+   *   (1, 'Michael', '{ &quot;postcode&quot;: 90210, &quot;street&quot;: &quot;Melrose Place&quot; }'), 
+   *   (2, 'Jane', '{}'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On `jsonb` columns 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: [ 
+   *       { 
+   *         &quot;name&quot;: &quot;Jane&quot; 
+   *       } 
+   *     ], 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">containedBy</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[] </span><span class="s2">| Record&lt;string, unknown&gt;): this {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">range</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cd.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">array</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cd.{</span><span class="s2">${value.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">json</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">cd.</span><span class="s2">${JSON.</span><span class="s4">stringify</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)</span><span class="s2">}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">rangeGt</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, range: string): this</span>
+  <span class="s4">rangeGt</span><span class="s2">(column: string, range: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for range columns. Match only rows where every element in 
+   * `column` is greater than any element in `range`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">range </span><span class="s5">- The range to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.rangeGt('during', '[2000-01-02 08:00, 2000-01-02 09:00)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: [ 
+   *       { 
+   *         &quot;id&quot;: 2, 
+   *         &quot;room_name&quot;: &quot;Topaz&quot;, 
+   *         &quot;during&quot;: &quot;[\&quot;2000-01-02 09:00:00\&quot;,\&quot;2000-01-02 10:00:00\&quot;)&quot; 
+   *       } 
+   *     ], 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">rangeGt</span><span class="s2">(column: string, range: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">sr.</span><span class="s2">${range}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">rangeGte</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, range: string): this</span>
+  <span class="s4">rangeGte</span><span class="s2">(column: string, range: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for range columns. Match only rows where every element in 
+   * `column` is either contained in `range` or greater than any element in 
+   * `range`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">range </span><span class="s5">- The range to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.rangeGte('during', '[2000-01-02 08:30, 2000-01-02 09:30)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: [ 
+   *       { 
+   *         &quot;id&quot;: 2, 
+   *         &quot;room_name&quot;: &quot;Topaz&quot;, 
+   *         &quot;during&quot;: &quot;[\&quot;2000-01-02 09:00:00\&quot;,\&quot;2000-01-02 10:00:00\&quot;)&quot; 
+   *       } 
+   *     ], 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">rangeGte</span><span class="s2">(column: string, range: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">nxl.</span><span class="s2">${range}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">rangeLt</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, range: string): this</span>
+  <span class="s4">rangeLt</span><span class="s2">(column: string, range: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for range columns. Match only rows where every element in 
+   * `column` is less than any element in `range`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">range </span><span class="s5">- The range to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.rangeLt('during', '[2000-01-01 15:00, 2000-01-01 16:00)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *       &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">rangeLt</span><span class="s2">(column: string, range: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">sl.</span><span class="s2">${range}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">rangeLte</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, range: string): this</span>
+  <span class="s4">rangeLte</span><span class="s2">(column: string, range: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for range columns. Match only rows where every element in 
+   * `column` is either contained in `range` or less than any element in 
+   * `range`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">range </span><span class="s5">- The range to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.rangeLte('during', '[2000-01-01 14:00, 2000-01-01 16:00)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: [ 
+   *       { 
+   *         &quot;id&quot;: 1, 
+   *         &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *         &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *       } 
+   *     ], 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">rangeLte</span><span class="s2">(column: string, range: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">nxr.</span><span class="s2">${range}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">rangeAdjacent</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(column: ColumnName, range: string): this</span>
+  <span class="s4">rangeAdjacent</span><span class="s2">(column: string, range: string): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for range columns. Match only rows where `column` is 
+   * mutually exclusive to `range` and there can be no element between the two 
+   * ranges. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">range </span><span class="s5">- The range to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">With `select()` 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.rangeAdjacent('during', '[2000-01-01 12:00, 2000-01-01 13:00)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *       &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">rangeAdjacent</span><span class="s2">(column: string, range: string): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">adj.</span><span class="s2">${range}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">overlaps</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">value: string | ReadonlyArray&lt;Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">&gt;</span>
+  <span class="s2">): this</span>
+  <span class="s4">overlaps</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[]</span><span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for array and range columns. Match only rows where 
+   * `column` and `value` have an element in common. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The array or range column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The array or range value to filter with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On array columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('issues') 
+   </span><span class="s5">*   </span><span class="s1">.select('title') 
+   </span><span class="s5">*   </span><span class="s1">.overlaps('tags', ['is:closed', 'severity:high']) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On array columns 
+   * ```sql 
+   * create table 
+   *   issues ( 
+   *     id int8 primary key, 
+   *     title text, 
+   *     tags text[] 
+   *   ); 
+   * 
+   * insert into 
+   *   issues (id, title, tags) 
+   * values 
+   *   (1, 'Cache invalidation is not working', array['is:open', 'severity:high', 'priority:low']), 
+   *   (2, 'Use better names', array['is:open', 'severity:low', 'priority:medium']); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On array columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;title&quot;: &quot;Cache invalidation is not working&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">On range columns 
+   * Postgres supports a number of [range 
+   * types](https://www.postgresql.org/docs/current/rangetypes.html). You 
+   * can filter on range columns using the string representation of range 
+   * values. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On range columns 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('reservations') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.overlaps('during', '[2000-01-01 12:45, 2000-01-01 13:15)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On range columns 
+   * ```sql 
+   * create table 
+   *   reservations ( 
+   *     id int8 primary key, 
+   *     room_name text, 
+   *     during tsrange 
+   *   ); 
+   * 
+   * insert into 
+   *   reservations (id, room_name, during) 
+   * values 
+   *   (1, 'Emerald', '[2000-01-01 13:00, 2000-01-01 15:00)'), 
+   *   (2, 'Topaz', '[2000-01-02 09:00, 2000-01-02 10:00)'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On range columns 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;room_name&quot;: &quot;Emerald&quot;, 
+   *       &quot;during&quot;: &quot;[\&quot;2000-01-01 13:00:00\&quot;,\&quot;2000-01-01 15:00:00\&quot;)&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">overlaps</span><span class="s2">(column: string, value: string | </span><span class="s0">readonly </span><span class="s2">unknown</span><span class="s1">[]</span><span class="s2">): this {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">range</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">ov.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s5">array</span>
+      <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">ov.{</span><span class="s2">${value.</span><span class="s4">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">textSearch</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">query: string,</span>
+    <span class="s2">options?: { config?: string; type?: '</span><span class="s3">plain</span><span class="s2">' | '</span><span class="s3">phrase</span><span class="s2">' | '</span><span class="s3">websearch</span><span class="s2">' }</span>
+  <span class="s2">): this</span>
+  <span class="s4">textSearch</span><span class="s2">(</span>
+    <span class="s2">column: string,</span>
+    <span class="s2">query: string,</span>
+    <span class="s2">options?: { config?: string; type?: '</span><span class="s3">plain</span><span class="s2">' | '</span><span class="s3">phrase</span><span class="s2">' | '</span><span class="s3">websearch</span><span class="s2">' }</span>
+  <span class="s2">): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Only relevant for text and tsvector columns. Match only rows where 
+   * `column` matches the query string in `query`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The text or tsvector column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">query </span><span class="s5">- The query text to match with 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s5">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.config </span><span class="s5">- The text search configuration to use 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.type </span><span class="s5">- Change how the `query` text is interpreted 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - For more information, see [Postgres full text search](/docs/guides/database/full-text-search). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Text search 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const result = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from(&quot;texts&quot;) 
+   </span><span class="s5">*   </span><span class="s1">.select(&quot;content&quot;) 
+   </span><span class="s5">*   </span><span class="s1">.textSearch(&quot;content&quot;, `'eggs' &amp; 'ham'`, { 
+   </span><span class="s5">*     </span><span class="s1">config: &quot;english&quot;, 
+   </span><span class="s5">*   </span><span class="s1">}); 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">Text search 
+   * ```sql 
+   * create table texts ( 
+   *   id      bigint 
+   *           primary key 
+   *           generated always as identity, 
+   *   content text 
+   * ); 
+   * 
+   * insert into texts (content) values 
+   *     ('Four score and seven years ago'), 
+   *     ('The road goes ever on and on'), 
+   *     ('Green eggs and ham') 
+   * ; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">Text search 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;content&quot;: &quot;Green eggs and ham&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Basic normalization 
+   * Uses PostgreSQL's `plainto_tsquery` function. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Basic normalization 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('quotes') 
+   </span><span class="s5">*   </span><span class="s1">.select('catchphrase') 
+   </span><span class="s5">*   </span><span class="s1">.textSearch('catchphrase', `'fat' &amp; 'cat'`, { 
+   </span><span class="s5">*     </span><span class="s1">type: 'plain', 
+   </span><span class="s5">*     </span><span class="s1">config: 'english' 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Full normalization 
+   * Uses PostgreSQL's `phraseto_tsquery` function. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Full normalization 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('quotes') 
+   </span><span class="s5">*   </span><span class="s1">.select('catchphrase') 
+   </span><span class="s5">*   </span><span class="s1">.textSearch('catchphrase', `'fat' &amp; 'cat'`, { 
+   </span><span class="s5">*     </span><span class="s1">type: 'phrase', 
+   </span><span class="s5">*     </span><span class="s1">config: 'english' 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s5">Websearch 
+   * Uses PostgreSQL's `websearch_to_tsquery` function. 
+   * This function will never raise syntax errors, which makes it possible to use raw user-supplied input for search, and can be used 
+   * with advanced operators. 
+   * 
+   * - `unquoted text`: text not inside quote marks will be converted to terms separated by &amp; operators, as if processed by plainto_tsquery. 
+   * - `&quot;quoted text&quot;`: text inside quote marks will be converted to terms separated by `&lt;-&gt;` operators, as if processed by phraseto_tsquery. 
+   * - `OR`: the word “or” will be converted to the | operator. 
+   * - `-`: a dash will be converted to the ! operator. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Websearch 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('quotes') 
+   </span><span class="s5">*   </span><span class="s1">.select('catchphrase') 
+   </span><span class="s5">*   </span><span class="s1">.textSearch('catchphrase', `'fat or cat'`, { 
+   </span><span class="s5">*     </span><span class="s1">type: 'websearch', 
+   </span><span class="s5">*     </span><span class="s1">config: 'english' 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">textSearch</span><span class="s2">(</span>
+    <span class="s2">column: string,</span>
+    <span class="s2">query: string,</span>
+    <span class="s2">{ config, type }: { config?: string; type?: '</span><span class="s3">plain</span><span class="s2">' | '</span><span class="s3">phrase</span><span class="s2">' | '</span><span class="s3">websearch</span><span class="s2">' } = {}</span>
+  <span class="s2">): this {</span>
+    <span class="s0">let </span><span class="s2">typePart = ''</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">type === '</span><span class="s3">plain</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">typePart = '</span><span class="s3">pl</span><span class="s2">'</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">type === '</span><span class="s3">phrase</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">typePart = '</span><span class="s3">ph</span><span class="s2">'</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">type === '</span><span class="s3">websearch</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">typePart = '</span><span class="s3">w</span><span class="s2">'</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">configPart = config === </span><span class="s6">undefined </span><span class="s2">? '' : `</span><span class="s3">(</span><span class="s2">${config}</span><span class="s3">)</span><span class="s2">`</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `${typePart}</span><span class="s3">fts</span><span class="s2">${configPart}</span><span class="s3">.</span><span class="s2">${query}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">match</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(query: Record&lt;ColumnName, Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span><span class="s2">&gt;): this</span>
+  <span class="s4">match</span><span class="s2">(query: Record&lt;string, unknown&gt;): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows where each column in `query` keys is equal to its 
+   * associated value. Shorthand for multiple `.eq()`s. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">query </span><span class="s5">- The object to filter with, with column names as keys mapped 
+   * to their filter values 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.match({ id: 2, name: 'Leia' }) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">match</span><span class="s2">(query: Record&lt;string, unknown&gt;): this {</span>
+    <span class="s2">Object.</span><span class="s4">entries</span><span class="s1">(</span><span class="s2">query</span><span class="s1">)</span>
+      <span class="s2">// </span><span class="s5">columns with `undefined` value needs to be filtered out, otherwise it'll</span>
+      <span class="s2">// </span><span class="s5">show up as `?column=eq.undefined`</span>
+      <span class="s2">.</span><span class="s4">filter</span><span class="s1">(</span><span class="s2">([_, value]) </span><span class="s0">=&gt; </span><span class="s2">value !== </span><span class="s6">undefined</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">([column, value]) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">eq.</span><span class="s2">${value}`</span><span class="s1">)</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">not</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">operator: '</span><span class="s3">is</span><span class="s2">',</span>
+    <span class="s2">value: null</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">NonNullableColumn&lt;Row, ColumnName&gt;,</span>
+    <span class="s2">NarrowResultColumn&lt;Result, ColumnName&gt;,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">Method</span>
+  <span class="s2">&gt; &amp;</span>
+    <span class="s2">this</span>
+  <span class="s4">not</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">operator: FilterOperator,</span>
+    <span class="s2">value: Row</span><span class="s1">[</span><span class="s2">ColumnName</span><span class="s1">]</span>
+  <span class="s2">): this</span>
+  <span class="s4">not</span><span class="s2">(column: string, operator: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows which doesn't satisfy the filter. 
+   * 
+   * Unlike most filters, `opearator` and `value` are used as-is and need to 
+   * follow [PostgREST 
+   * syntax](https://postgrest.org/en/stable/api.html#operators). You also need 
+   * to make sure they are properly sanitized. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">operator </span><span class="s5">- The operator to be negated to filter with, following 
+   * PostgREST syntax 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with, following PostgREST syntax 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* not() expects you to use the raw PostgREST syntax for the filter values. 
+   * 
+   * ```ts 
+   * .not('id', 'in', '(5,6,7)')  // Use `()` for `in` filter 
+   * .not('arraycol', 'cs', '{&quot;a&quot;,&quot;b&quot;}')  // Use `cs` for `contains()`, `{}` for array values 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('countries') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.not('name', 'is', null) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'null'), 
+   *   (2, null); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: [ 
+   *       { 
+   *         &quot;id&quot;: 1, 
+   *         &quot;name&quot;: &quot;null&quot; 
+   *       } 
+   *     ], 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">not</span><span class="s2">(</span>
+    <span class="s2">column: string,</span>
+    <span class="s2">operator: string,</span>
+    <span class="s2">value: unknown</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;ClientOptions, Schema, any, any, RelationName, Relationships, Method&gt; &amp;</span>
+    <span class="s2">this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `</span><span class="s3">not.</span><span class="s2">${operator}</span><span class="s3">.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this </span><span class="s0">as </span><span class="s2">any</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows which satisfy at least one of the filters. 
+   * 
+   * Unlike most filters, `filters` is used as-is and needs to follow [PostgREST 
+   * syntax](https://postgrest.org/en/stable/api.html#operators). You also need 
+   * to make sure it's properly sanitized. 
+   * 
+   * It's currently not possible to do an `.or()` filter across multiple tables. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">filters </span><span class="s5">- The filters to use, following PostgREST syntax 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s5">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.referencedTable </span><span class="s5">- Set this to filter on referenced tables 
+   * instead of the parent table 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.foreignTable </span><span class="s5">- Deprecated, use `referencedTable` instead 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* or() expects you to use the raw PostgREST syntax for the filter names and values. 
+   * 
+   * ```ts 
+   * .or('id.in.(5,6,7), arraycol.cs.{&quot;a&quot;,&quot;b&quot;}')  // Use `()` for `in` filter, `{}` for array values and `cs` for `contains()`. 
+   * .or('id.in.(5,6,7), arraycol.cd.{&quot;a&quot;,&quot;b&quot;}')  // Use `cd` for `containedBy()` 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.or('id.eq.2,name.eq.Han') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;Leia&quot; 
+   *     }, 
+   *     { 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Use `or` with `and` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select('name') 
+   </span><span class="s5">*   </span><span class="s1">.or('id.gt.3,and(id.eq.1,name.eq.Luke)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">Use `or` with `and` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">Use `or` with `and` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;Luke&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Use `or` on referenced tables 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('orchestral_sections') 
+   </span><span class="s5">*   </span><span class="s1">.select(` 
+   </span><span class="s5">*     </span><span class="s1">name, 
+   </span><span class="s5">*     </span><span class="s1">instruments!inner ( 
+   </span><span class="s5">*       </span><span class="s1">name 
+   </span><span class="s5">*     </span><span class="s1">) 
+   </span><span class="s5">*   </span><span class="s1">`) 
+   </span><span class="s5">*   </span><span class="s1">.or('section_id.eq.1,name.eq.guzheng', { referencedTable: 'instruments' }) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">Use `or` on referenced tables 
+   * ```sql 
+   * create table 
+   *   orchestral_sections (id int8 primary key, name text); 
+   * create table 
+   *   instruments ( 
+   *     id int8 primary key, 
+   *     section_id int8 not null references orchestral_sections, 
+   *     name text 
+   *   ); 
+   * 
+   * insert into 
+   *   orchestral_sections (id, name) 
+   * values 
+   *   (1, 'strings'), 
+   *   (2, 'woodwinds'); 
+   * insert into 
+   *   instruments (id, section_id, name) 
+   * values 
+   *   (1, 2, 'flute'), 
+   *   (2, 1, 'violin'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">Use `or` on referenced tables 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;strings&quot;, 
+   *       &quot;instruments&quot;: [ 
+   *         { 
+   *           &quot;name&quot;: &quot;violin&quot; 
+   *         } 
+   *       ] 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">or</span><span class="s2">(</span>
+    <span class="s2">filters: string,</span>
+    <span class="s2">{</span>
+      <span class="s2">foreignTable,</span>
+      <span class="s2">referencedTable = foreignTable,</span>
+    <span class="s2">}: { foreignTable?: string; referencedTable?: string } = {}</span>
+  <span class="s2">): this {</span>
+    <span class="s0">const </span><span class="s2">key = referencedTable ? `${referencedTable}</span><span class="s3">.or</span><span class="s2">` : '</span><span class="s3">or</span><span class="s2">'</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">key, `</span><span class="s3">(</span><span class="s2">${filters}</span><span class="s3">)</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+
+  <span class="s4">filter</span><span class="s2">&lt;ColumnName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Row&gt;(</span>
+    <span class="s2">column: ColumnName,</span>
+    <span class="s2">operator: `${'' | '</span><span class="s3">not.</span><span class="s2">'}${FilterOperator}`,</span>
+    <span class="s2">value: unknown</span>
+  <span class="s2">): this</span>
+  <span class="s4">filter</span><span class="s2">(column: string, operator: string, value: unknown): this</span>
+  <span class="s2">/**</span>
+   <span class="s5">* Match only rows which satisfy the filter. This is an escape hatch - you 
+   * should use the specific filter methods wherever possible. 
+   * 
+   * Unlike most filters, `opearator` and `value` are used as-is and need to 
+   * follow [PostgREST 
+   * syntax](https://postgrest.org/en/stable/api.html#operators). You also need 
+   * to make sure they are properly sanitized. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">column </span><span class="s5">- The column to filter on 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">operator </span><span class="s5">- The operator to filter with, following PostgREST syntax 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s5">- The value to filter with, following PostgREST syntax 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Database 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">Using filters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* filter() expects you to use the raw PostgREST syntax for the filter values. 
+   * 
+   * ```ts 
+   * .filter('id', 'in', '(5,6,7)')  // Use `()` for `in` filter 
+   * .filter('arraycol', 'cs', '{&quot;a&quot;,&quot;b&quot;}')  // Use `cs` for `contains()`, `{}` for array values 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With `select()` 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('characters') 
+   </span><span class="s5">*   </span><span class="s1">.select() 
+   </span><span class="s5">*   </span><span class="s1">.filter('name', 'in', '(&quot;Han&quot;,&quot;Yoda&quot;)') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">With `select()` 
+   * ```sql 
+   * create table 
+   *   characters (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   characters (id, name) 
+   * values 
+   *   (1, 'Luke'), 
+   *   (2, 'Leia'), 
+   *   (3, 'Han'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">With `select()` 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 3, 
+   *       &quot;name&quot;: &quot;Han&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">On a referenced table 
+   </span><span class="s5">* </span><span class="s1">```ts 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.from('orchestral_sections') 
+   </span><span class="s5">*   </span><span class="s1">.select(` 
+   </span><span class="s5">*     </span><span class="s1">name, 
+   </span><span class="s5">*     </span><span class="s1">instruments!inner ( 
+   </span><span class="s5">*       </span><span class="s1">name 
+   </span><span class="s5">*     </span><span class="s1">) 
+   </span><span class="s5">*   </span><span class="s1">`) 
+   </span><span class="s5">*   </span><span class="s1">.filter('instruments.name', 'eq', 'flute') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s5">On a referenced table 
+   * ```sql 
+   * create table 
+   *   orchestral_sections (id int8 primary key, name text); 
+   * create table 
+   *    instruments ( 
+   *     id int8 primary key, 
+   *     section_id int8 not null references orchestral_sections, 
+   *     name text 
+   *   ); 
+   * 
+   * insert into 
+   *   orchestral_sections (id, name) 
+   * values 
+   *   (1, 'strings'), 
+   *   (2, 'woodwinds'); 
+   * insert into 
+   *   instruments (id, section_id, name) 
+   * values 
+   *   (1, 2, 'flute'), 
+   *   (2, 1, 'violin'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s5">On a referenced table 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;name&quot;: &quot;woodwinds&quot;, 
+   *       &quot;instruments&quot;: [ 
+   *         { 
+   *           &quot;name&quot;: &quot;flute&quot; 
+   *         } 
+   *       ] 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s4">filter</span><span class="s2">(column: string, operator: string, value: unknown): this {</span>
+    <span class="s2">this.url.searchParams.</span><span class="s4">append</span><span class="s1">(</span><span class="s2">column, `${operator}</span><span class="s3">.</span><span class="s2">${value}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">this</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

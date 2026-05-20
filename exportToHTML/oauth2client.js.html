@@ -1,0 +1,840 @@
+<html>
+<head>
+<title>oauth2client.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+oauth2client.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2019 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.OAuth2Client = exports.ClientAuthentication = exports.CertificateFormat = exports.CodeChallengeMethod = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s1">const querystring = require(</span><span class="s0">&quot;querystring&quot;</span><span class="s1">);</span>
+<span class="s1">const stream = require(</span><span class="s0">&quot;stream&quot;</span><span class="s1">);</span>
+<span class="s1">const formatEcdsa = require(</span><span class="s0">&quot;ecdsa-sig-formatter&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const crypto_1 = require(</span><span class="s0">&quot;../crypto/crypto&quot;</span><span class="s1">);</span>
+<span class="s1">const authclient_1 = require(</span><span class="s0">&quot;./authclient&quot;</span><span class="s1">);</span>
+<span class="s1">const loginticket_1 = require(</span><span class="s0">&quot;./loginticket&quot;</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">CodeChallengeMethod;</span>
+<span class="s1">(</span><span class="s3">function </span><span class="s1">(CodeChallengeMethod) {</span>
+    <span class="s1">CodeChallengeMethod[</span><span class="s0">&quot;Plain&quot;</span><span class="s1">] = </span><span class="s0">&quot;plain&quot;</span><span class="s1">;</span>
+    <span class="s1">CodeChallengeMethod[</span><span class="s0">&quot;S256&quot;</span><span class="s1">] = </span><span class="s0">&quot;S256&quot;</span><span class="s1">;</span>
+<span class="s1">})(CodeChallengeMethod || (exports.CodeChallengeMethod = CodeChallengeMethod = {}));</span>
+<span class="s3">var </span><span class="s1">CertificateFormat;</span>
+<span class="s1">(</span><span class="s3">function </span><span class="s1">(CertificateFormat) {</span>
+    <span class="s1">CertificateFormat[</span><span class="s0">&quot;PEM&quot;</span><span class="s1">] = </span><span class="s0">&quot;PEM&quot;</span><span class="s1">;</span>
+    <span class="s1">CertificateFormat[</span><span class="s0">&quot;JWK&quot;</span><span class="s1">] = </span><span class="s0">&quot;JWK&quot;</span><span class="s1">;</span>
+<span class="s1">})(CertificateFormat || (exports.CertificateFormat = CertificateFormat = {}));</span>
+<span class="s2">/** 
+ * The client authentication type. Supported values are basic, post, and none. 
+ * https://datatracker.ietf.org/doc/html/rfc7591#section-2 
+ */</span>
+<span class="s3">var </span><span class="s1">ClientAuthentication;</span>
+<span class="s1">(</span><span class="s3">function </span><span class="s1">(ClientAuthentication) {</span>
+    <span class="s1">ClientAuthentication[</span><span class="s0">&quot;ClientSecretPost&quot;</span><span class="s1">] = </span><span class="s0">&quot;ClientSecretPost&quot;</span><span class="s1">;</span>
+    <span class="s1">ClientAuthentication[</span><span class="s0">&quot;ClientSecretBasic&quot;</span><span class="s1">] = </span><span class="s0">&quot;ClientSecretBasic&quot;</span><span class="s1">;</span>
+    <span class="s1">ClientAuthentication[</span><span class="s0">&quot;None&quot;</span><span class="s1">] = </span><span class="s0">&quot;None&quot;</span><span class="s1">;</span>
+<span class="s1">})(ClientAuthentication || (exports.ClientAuthentication = ClientAuthentication = {}));</span>
+<span class="s1">class OAuth2Client extends authclient_1.AuthClient {</span>
+    <span class="s1">redirectUri;</span>
+    <span class="s1">certificateCache = {};</span>
+    <span class="s1">certificateExpiry = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s1">certificateCacheFormat = CertificateFormat.PEM;</span>
+    <span class="s1">refreshTokenPromises = </span><span class="s3">new </span><span class="s1">Map();</span>
+    <span class="s1">endpoints;</span>
+    <span class="s1">issuers;</span>
+    <span class="s1">clientAuthentication;</span>
+    <span class="s2">// TODO: refactor tests to make this private</span>
+    <span class="s1">_clientId;</span>
+    <span class="s2">// TODO: refactor tests to make this private</span>
+    <span class="s1">_clientSecret;</span>
+    <span class="s1">refreshHandler;</span>
+    <span class="s2">/** 
+     * An OAuth2 Client for Google APIs. 
+     * 
+     * @param options The OAuth2 Client Options. Passing an `clientId` directly is **@DEPRECATED**. 
+     * @param clientSecret **@DEPRECATED**. Provide a {@link OAuth2ClientOptions `OAuth2ClientOptions`} object in the first parameter instead. 
+     * @param redirectUri **@DEPRECATED**. Provide a {@link OAuth2ClientOptions `OAuth2ClientOptions`} object in the first parameter instead. 
+     */</span>
+    <span class="s1">constructor(options = {}, </span>
+    <span class="s2">/** 
+     * @deprecated - provide a {@link OAuth2ClientOptions `OAuth2ClientOptions`} object in the first parameter instead 
+     */</span>
+    <span class="s1">clientSecret, </span>
+    <span class="s2">/** 
+     * @deprecated - provide a {@link OAuth2ClientOptions `OAuth2ClientOptions`} object in the first parameter instead 
+     */</span>
+    <span class="s1">redirectUri) {</span>
+        <span class="s1">super(</span><span class="s3">typeof </span><span class="s1">options === </span><span class="s0">'object' </span><span class="s1">? options : {});</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options !== </span><span class="s0">'object'</span><span class="s1">) {</span>
+            <span class="s1">options = {</span>
+                <span class="s1">clientId: options,</span>
+                <span class="s1">clientSecret,</span>
+                <span class="s1">redirectUri,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">._clientId = options.clientId || options.client_id;</span>
+        <span class="s3">this</span><span class="s1">._clientSecret = options.clientSecret || options.client_secret;</span>
+        <span class="s3">this</span><span class="s1">.redirectUri = options.redirectUri || options.redirect_uris?.[</span><span class="s4">0</span><span class="s1">];</span>
+        <span class="s3">this</span><span class="s1">.endpoints = {</span>
+            <span class="s1">tokenInfoUrl: </span><span class="s0">'https://oauth2.googleapis.com/tokeninfo'</span><span class="s1">,</span>
+            <span class="s1">oauth2AuthBaseUrl: </span><span class="s0">'https://accounts.google.com/o/oauth2/v2/auth'</span><span class="s1">,</span>
+            <span class="s1">oauth2TokenUrl: </span><span class="s0">'https://oauth2.googleapis.com/token'</span><span class="s1">,</span>
+            <span class="s1">oauth2RevokeUrl: </span><span class="s0">'https://oauth2.googleapis.com/revoke'</span><span class="s1">,</span>
+            <span class="s1">oauth2FederatedSignonPemCertsUrl: </span><span class="s0">'https://www.googleapis.com/oauth2/v1/certs'</span><span class="s1">,</span>
+            <span class="s1">oauth2FederatedSignonJwkCertsUrl: </span><span class="s0">'https://www.googleapis.com/oauth2/v3/certs'</span><span class="s1">,</span>
+            <span class="s1">oauth2IapPublicKeyUrl: </span><span class="s0">'https://www.gstatic.com/iap/verify/public_key'</span><span class="s1">,</span>
+            <span class="s1">...options.endpoints,</span>
+        <span class="s1">};</span>
+        <span class="s3">this</span><span class="s1">.clientAuthentication =</span>
+            <span class="s1">options.clientAuthentication || ClientAuthentication.ClientSecretPost;</span>
+        <span class="s3">this</span><span class="s1">.issuers = options.issuers || [</span>
+            <span class="s0">'accounts.google.com'</span><span class="s1">,</span>
+            <span class="s0">'https://accounts.google.com'</span><span class="s1">,</span>
+            <span class="s3">this</span><span class="s1">.universeDomain,</span>
+        <span class="s1">];</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * @deprecated use instance's {@link OAuth2Client.endpoints} 
+     */</span>
+    <span class="s1">static GOOGLE_TOKEN_INFO_URL = </span><span class="s0">'https://oauth2.googleapis.com/tokeninfo'</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * Clock skew - five minutes in seconds 
+     */</span>
+    <span class="s1">static CLOCK_SKEW_SECS_ = </span><span class="s4">300</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * The default max Token Lifetime is one day in seconds 
+     */</span>
+    <span class="s1">static DEFAULT_MAX_TOKEN_LIFETIME_SECS_ = </span><span class="s4">86400</span><span class="s1">;</span>
+    <span class="s2">/** 
+     * Generates URL for consent page landing. 
+     * @param opts Options. 
+     * @return URL to consent page. 
+     */</span>
+    <span class="s1">generateAuthUrl(opts = {}) {</span>
+        <span class="s3">if </span><span class="s1">(opts.code_challenge_method &amp;&amp; !opts.code_challenge) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'If a code_challenge_method is provided, code_challenge must be included.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">opts.response_type = opts.response_type || </span><span class="s0">'code'</span><span class="s1">;</span>
+        <span class="s1">opts.client_id = opts.client_id || </span><span class="s3">this</span><span class="s1">._clientId;</span>
+        <span class="s1">opts.redirect_uri = opts.redirect_uri || </span><span class="s3">this</span><span class="s1">.redirectUri;</span>
+        <span class="s2">// Allow scopes to be passed either as array or a string</span>
+        <span class="s3">if </span><span class="s1">(Array.isArray(opts.scope)) {</span>
+            <span class="s1">opts.scope = opts.scope.join(</span><span class="s0">' '</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const rootUrl = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2AuthBaseUrl.toString();</span>
+        <span class="s3">return </span><span class="s1">(rootUrl +</span>
+            <span class="s0">'?' </span><span class="s1">+</span>
+            <span class="s1">querystring.stringify(opts));</span>
+    <span class="s1">}</span>
+    <span class="s1">generateCodeVerifier() {</span>
+        <span class="s2">// To make the code compatible with browser SubtleCrypto we need to make</span>
+        <span class="s2">// this method async.</span>
+        <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'generateCodeVerifier is removed, please use generateCodeVerifierAsync instead.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Convenience method to automatically generate a code_verifier, and its 
+     * resulting SHA256. If used, this must be paired with a S256 
+     * code_challenge_method. 
+     * 
+     * For a full example see: 
+     * https://github.com/googleapis/google-auth-library-nodejs/blob/main/samples/oauth2-codeVerifier.js 
+     */</span>
+    <span class="s1">async generateCodeVerifierAsync() {</span>
+        <span class="s2">// base64 encoding uses 6 bits per character, and we want to generate128</span>
+        <span class="s2">// characters. 6*128/8 = 96.</span>
+        <span class="s1">const crypto = (</span><span class="s4">0</span><span class="s1">, crypto_1.createCrypto)();</span>
+        <span class="s1">const randomString = crypto.randomBytesBase64(</span><span class="s4">96</span><span class="s1">);</span>
+        <span class="s2">// The valid characters in the code_verifier are [A-Z]/[a-z]/[0-9]/</span>
+        <span class="s2">// &quot;-&quot;/&quot;.&quot;/&quot;_&quot;/&quot;~&quot;. Base64 encoded strings are pretty close, so we're just</span>
+        <span class="s2">// swapping out a few chars.</span>
+        <span class="s1">const codeVerifier = randomString</span>
+            <span class="s1">.replace(/\+/g, </span><span class="s0">'~'</span><span class="s1">)</span>
+            <span class="s1">.replace(/=/g, </span><span class="s0">'_'</span><span class="s1">)</span>
+            <span class="s1">.replace(/\</span><span class="s2">//g, '-');</span>
+        <span class="s2">// Generate the base64 encoded SHA256</span>
+        <span class="s1">const unencodedCodeChallenge = await crypto.sha256DigestBase64(codeVerifier);</span>
+        <span class="s2">// We need to use base64UrlEncoding instead of standard base64</span>
+        <span class="s1">const codeChallenge = unencodedCodeChallenge</span>
+            <span class="s1">.split(</span><span class="s0">'='</span><span class="s1">)[</span><span class="s4">0</span><span class="s1">]</span>
+            <span class="s1">.replace(/\+/g, </span><span class="s0">'-'</span><span class="s1">)</span>
+            <span class="s1">.replace(/\</span><span class="s2">//g, '_');</span>
+        <span class="s3">return </span><span class="s1">{ codeVerifier, codeChallenge };</span>
+    <span class="s1">}</span>
+    <span class="s1">getToken(codeOrOptions, callback) {</span>
+        <span class="s1">const options = </span><span class="s3">typeof </span><span class="s1">codeOrOptions === </span><span class="s0">'string' </span><span class="s1">? { code: codeOrOptions } : codeOrOptions;</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getTokenAsync(options).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.tokens, r.res), e =&gt; callback(e, </span><span class="s3">null</span><span class="s1">, e.response));</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getTokenAsync(options);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getTokenAsync(options) {</span>
+        <span class="s1">const url = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2TokenUrl.toString();</span>
+        <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers();</span>
+        <span class="s1">const values = {</span>
+            <span class="s1">client_id: options.client_id || </span><span class="s3">this</span><span class="s1">._clientId,</span>
+            <span class="s1">code_verifier: options.codeVerifier,</span>
+            <span class="s1">code: options.code,</span>
+            <span class="s1">grant_type: </span><span class="s0">'authorization_code'</span><span class="s1">,</span>
+            <span class="s1">redirect_uri: options.redirect_uri || </span><span class="s3">this</span><span class="s1">.redirectUri,</span>
+        <span class="s1">};</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.clientAuthentication === ClientAuthentication.ClientSecretBasic) {</span>
+            <span class="s1">const basic = Buffer.from(`${</span><span class="s3">this</span><span class="s1">._clientId}:${</span><span class="s3">this</span><span class="s1">._clientSecret}`);</span>
+            <span class="s1">headers.set(</span><span class="s0">'authorization'</span><span class="s1">, `Basic ${basic.toString(</span><span class="s0">'base64'</span><span class="s1">)}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.clientAuthentication === ClientAuthentication.ClientSecretPost) {</span>
+            <span class="s1">values.client_secret = </span><span class="s3">this</span><span class="s1">._clientSecret;</span>
+        <span class="s1">}</span>
+        <span class="s1">const opts = {</span>
+            <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+            <span class="s1">url,</span>
+            <span class="s1">data: </span><span class="s3">new </span><span class="s1">URLSearchParams((</span><span class="s4">0</span><span class="s1">, util_1.removeUndefinedValuesInObject)(values)),</span>
+            <span class="s1">headers,</span>
+        <span class="s1">};</span>
+        <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'getTokenAsync'</span><span class="s1">);</span>
+        <span class="s1">const res = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">const tokens = res.data;</span>
+        <span class="s3">if </span><span class="s1">(res.data &amp;&amp; res.data.expires_in) {</span>
+            <span class="s1">tokens.expiry_date = </span><span class="s3">new </span><span class="s1">Date().getTime() + res.data.expires_in * </span><span class="s4">1000</span><span class="s1">;</span>
+            <span class="s3">delete </span><span class="s1">tokens.expires_in;</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.emit(</span><span class="s0">'tokens'</span><span class="s1">, tokens);</span>
+        <span class="s3">return </span><span class="s1">{ tokens, res };</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Refreshes the access token. 
+     * @param refresh_token Existing refresh token. 
+     * @private 
+     */</span>
+    <span class="s1">async refreshToken(refreshToken) {</span>
+        <span class="s3">if </span><span class="s1">(!refreshToken) {</span>
+            <span class="s3">return this</span><span class="s1">.refreshTokenNoCache(refreshToken);</span>
+        <span class="s1">}</span>
+        <span class="s2">// If a request to refresh using the same token has started,</span>
+        <span class="s2">// return the same promise.</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.refreshTokenPromises.has(refreshToken)) {</span>
+            <span class="s3">return this</span><span class="s1">.refreshTokenPromises.get(refreshToken);</span>
+        <span class="s1">}</span>
+        <span class="s1">const p = </span><span class="s3">this</span><span class="s1">.refreshTokenNoCache(refreshToken).then(r =&gt; {</span>
+            <span class="s3">this</span><span class="s1">.refreshTokenPromises.</span><span class="s3">delete</span><span class="s1">(refreshToken);</span>
+            <span class="s3">return </span><span class="s1">r;</span>
+        <span class="s1">}, e =&gt; {</span>
+            <span class="s3">this</span><span class="s1">.refreshTokenPromises.</span><span class="s3">delete</span><span class="s1">(refreshToken);</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">});</span>
+        <span class="s3">this</span><span class="s1">.refreshTokenPromises.set(refreshToken, p);</span>
+        <span class="s3">return </span><span class="s1">p;</span>
+    <span class="s1">}</span>
+    <span class="s1">async refreshTokenNoCache(refreshToken) {</span>
+        <span class="s3">if </span><span class="s1">(!refreshToken) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No refresh token is set.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const url = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2TokenUrl.toString();</span>
+        <span class="s1">const data = {</span>
+            <span class="s1">refresh_token: refreshToken,</span>
+            <span class="s1">client_id: </span><span class="s3">this</span><span class="s1">._clientId,</span>
+            <span class="s1">client_secret: </span><span class="s3">this</span><span class="s1">._clientSecret,</span>
+            <span class="s1">grant_type: </span><span class="s0">'refresh_token'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">let res;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const opts = {</span>
+                <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+                <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+                <span class="s1">url,</span>
+                <span class="s1">data: </span><span class="s3">new </span><span class="s1">URLSearchParams((</span><span class="s4">0</span><span class="s1">, util_1.removeUndefinedValuesInObject)(data)),</span>
+            <span class="s1">};</span>
+            <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'refreshTokenNoCache'</span><span class="s1">);</span>
+            <span class="s2">// request for new token</span>
+            <span class="s1">res = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">gaxios_1.GaxiosError &amp;&amp;</span>
+                <span class="s1">e.message === </span><span class="s0">'invalid_grant' </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">e.response?.data &amp;&amp;</span>
+                <span class="s1">/ReAuth/i.test(e.response.data.error_description)) {</span>
+                <span class="s1">e.message = JSON.stringify(e.response.data);</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+        <span class="s1">const tokens = res.data;</span>
+        <span class="s2">// TODO: de-duplicate this code from a few spots</span>
+        <span class="s3">if </span><span class="s1">(res.data &amp;&amp; res.data.expires_in) {</span>
+            <span class="s1">tokens.expiry_date = </span><span class="s3">new </span><span class="s1">Date().getTime() + res.data.expires_in * </span><span class="s4">1000</span><span class="s1">;</span>
+            <span class="s3">delete </span><span class="s1">tokens.expires_in;</span>
+        <span class="s1">}</span>
+        <span class="s3">this</span><span class="s1">.emit(</span><span class="s0">'tokens'</span><span class="s1">, tokens);</span>
+        <span class="s3">return </span><span class="s1">{ tokens, res };</span>
+    <span class="s1">}</span>
+    <span class="s1">refreshAccessToken(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.refreshAccessTokenAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.credentials, r.res), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.refreshAccessTokenAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async refreshAccessTokenAsync() {</span>
+        <span class="s1">const r = await </span><span class="s3">this</span><span class="s1">.refreshToken(</span><span class="s3">this</span><span class="s1">.credentials.refresh_token);</span>
+        <span class="s1">const tokens = r.tokens;</span>
+        <span class="s1">tokens.refresh_token = </span><span class="s3">this</span><span class="s1">.credentials.refresh_token;</span>
+        <span class="s3">this</span><span class="s1">.credentials = tokens;</span>
+        <span class="s3">return </span><span class="s1">{ credentials: </span><span class="s3">this</span><span class="s1">.credentials, res: r.res };</span>
+    <span class="s1">}</span>
+    <span class="s1">getAccessToken(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getAccessTokenAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.token, r.res), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getAccessTokenAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getAccessTokenAsync() {</span>
+        <span class="s1">const shouldRefresh = !</span><span class="s3">this</span><span class="s1">.credentials.access_token || </span><span class="s3">this</span><span class="s1">.isTokenExpiring();</span>
+        <span class="s3">if </span><span class="s1">(shouldRefresh) {</span>
+            <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.credentials.refresh_token) {</span>
+                <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.refreshHandler) {</span>
+                    <span class="s1">const refreshedAccessToken = await </span><span class="s3">this</span><span class="s1">.processAndValidateRefreshHandler();</span>
+                    <span class="s3">if </span><span class="s1">(refreshedAccessToken?.access_token) {</span>
+                        <span class="s3">this</span><span class="s1">.setCredentials(refreshedAccessToken);</span>
+                        <span class="s3">return </span><span class="s1">{ token: </span><span class="s3">this</span><span class="s1">.credentials.access_token };</span>
+                    <span class="s1">}</span>
+                <span class="s1">}</span>
+                <span class="s3">else </span><span class="s1">{</span>
+                    <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No refresh token or refresh handler callback is set.'</span><span class="s1">);</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s1">const r = await </span><span class="s3">this</span><span class="s1">.refreshAccessTokenAsync();</span>
+            <span class="s3">if </span><span class="s1">(!r.credentials || (r.credentials &amp;&amp; !r.credentials.access_token)) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Could not refresh access token.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">{ token: r.credentials.access_token, res: r.res };</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return </span><span class="s1">{ token: </span><span class="s3">this</span><span class="s1">.credentials.access_token };</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * The main authentication interface.  It takes an optional url which when 
+     * present is the endpoint being accessed, and returns a Promise which 
+     * resolves with authorization header fields. 
+     * 
+     * In OAuth2Client, the result has the form: 
+     * { authorization: 'Bearer &lt;access_token_value&gt;' } 
+     */</span>
+    <span class="s1">async getRequestHeaders(url) {</span>
+        <span class="s1">const headers = (await </span><span class="s3">this</span><span class="s1">.getRequestMetadataAsync(url)).headers;</span>
+        <span class="s3">return </span><span class="s1">headers;</span>
+    <span class="s1">}</span>
+    <span class="s1">async getRequestMetadataAsync(url) {</span>
+        <span class="s1">url;</span>
+        <span class="s1">const thisCreds = </span><span class="s3">this</span><span class="s1">.credentials;</span>
+        <span class="s3">if </span><span class="s1">(!thisCreds.access_token &amp;&amp;</span>
+            <span class="s1">!thisCreds.refresh_token &amp;&amp;</span>
+            <span class="s1">!</span><span class="s3">this</span><span class="s1">.apiKey &amp;&amp;</span>
+            <span class="s1">!</span><span class="s3">this</span><span class="s1">.refreshHandler) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No access, refresh token, API key or refresh handler callback is set.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(thisCreds.access_token &amp;&amp; !</span><span class="s3">this</span><span class="s1">.isTokenExpiring()) {</span>
+            <span class="s1">thisCreds.token_type = thisCreds.token_type || </span><span class="s0">'Bearer'</span><span class="s1">;</span>
+            <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s1">authorization: thisCreds.token_type + </span><span class="s0">' ' </span><span class="s1">+ thisCreds.access_token,</span>
+            <span class="s1">});</span>
+            <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">this</span><span class="s1">.addSharedMetadataHeaders(headers) };</span>
+        <span class="s1">}</span>
+        <span class="s2">// If refreshHandler exists, call processAndValidateRefreshHandler().</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.refreshHandler) {</span>
+            <span class="s1">const refreshedAccessToken = await </span><span class="s3">this</span><span class="s1">.processAndValidateRefreshHandler();</span>
+            <span class="s3">if </span><span class="s1">(refreshedAccessToken?.access_token) {</span>
+                <span class="s3">this</span><span class="s1">.setCredentials(refreshedAccessToken);</span>
+                <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers({</span>
+                    <span class="s1">authorization: </span><span class="s0">'Bearer ' </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">.credentials.access_token,</span>
+                <span class="s1">});</span>
+                <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">this</span><span class="s1">.addSharedMetadataHeaders(headers) };</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.apiKey) {</span>
+            <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">new </span><span class="s1">Headers({ </span><span class="s0">'X-Goog-Api-Key'</span><span class="s1">: </span><span class="s3">this</span><span class="s1">.apiKey }) };</span>
+        <span class="s1">}</span>
+        <span class="s1">let r = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s1">let tokens = </span><span class="s3">null</span><span class="s1">;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">r = await </span><span class="s3">this</span><span class="s1">.refreshToken(thisCreds.refresh_token);</span>
+            <span class="s1">tokens = r.tokens;</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s1">const e = err;</span>
+            <span class="s3">if </span><span class="s1">(e.response &amp;&amp;</span>
+                <span class="s1">(e.response.status === </span><span class="s4">403 </span><span class="s1">|| e.response.status === </span><span class="s4">404</span><span class="s1">)) {</span>
+                <span class="s1">e.message = `Could not refresh access token: ${e.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+        <span class="s1">const credentials = </span><span class="s3">this</span><span class="s1">.credentials;</span>
+        <span class="s1">credentials.token_type = credentials.token_type || </span><span class="s0">'Bearer'</span><span class="s1">;</span>
+        <span class="s1">tokens.refresh_token = credentials.refresh_token;</span>
+        <span class="s3">this</span><span class="s1">.credentials = tokens;</span>
+        <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers({</span>
+            <span class="s1">authorization: credentials.token_type + </span><span class="s0">' ' </span><span class="s1">+ tokens.access_token,</span>
+        <span class="s1">});</span>
+        <span class="s3">return </span><span class="s1">{ headers: </span><span class="s3">this</span><span class="s1">.addSharedMetadataHeaders(headers), res: r.res };</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Generates an URL to revoke the given token. 
+     * @param token The existing token to be revoked. 
+     * 
+     * @deprecated use instance method {@link OAuth2Client.getRevokeTokenURL} 
+     */</span>
+    <span class="s1">static getRevokeTokenUrl(token) {</span>
+        <span class="s3">return new </span><span class="s1">OAuth2Client().getRevokeTokenURL(token).toString();</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Generates a URL to revoke the given token. 
+     * 
+     * @param token The existing token to be revoked. 
+     */</span>
+    <span class="s1">getRevokeTokenURL(token) {</span>
+        <span class="s1">const url = </span><span class="s3">new </span><span class="s1">URL(</span><span class="s3">this</span><span class="s1">.endpoints.oauth2RevokeUrl);</span>
+        <span class="s1">url.searchParams.append(</span><span class="s0">'token'</span><span class="s1">, token);</span>
+        <span class="s3">return </span><span class="s1">url;</span>
+    <span class="s1">}</span>
+    <span class="s1">revokeToken(token, callback) {</span>
+        <span class="s1">const opts = {</span>
+            <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+            <span class="s1">url: </span><span class="s3">this</span><span class="s1">.getRevokeTokenURL(token).toString(),</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'revokeToken'</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.transporter</span>
+                <span class="s1">.request(opts)</span>
+                <span class="s1">.then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">revokeCredentials(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.revokeCredentialsAsync().then(res =&gt; callback(</span><span class="s3">null</span><span class="s1">, res), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.revokeCredentialsAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async revokeCredentialsAsync() {</span>
+        <span class="s1">const token = </span><span class="s3">this</span><span class="s1">.credentials.access_token;</span>
+        <span class="s3">this</span><span class="s1">.credentials = {};</span>
+        <span class="s3">if </span><span class="s1">(token) {</span>
+            <span class="s3">return this</span><span class="s1">.revokeToken(token);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No access token to revoke.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">request(opts, callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.requestAsync(opts).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), e =&gt; {</span>
+                <span class="s3">return </span><span class="s1">callback(e, e.response);</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.requestAsync(opts);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async requestAsync(opts, reAuthRetried = </span><span class="s3">false</span><span class="s1">) {</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const r = await </span><span class="s3">this</span><span class="s1">.getRequestMetadataAsync();</span>
+            <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers);</span>
+            <span class="s3">this</span><span class="s1">.addUserProjectAndAuthHeaders(opts.headers, r.headers);</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.apiKey) {</span>
+                <span class="s1">opts.headers.set(</span><span class="s0">'X-Goog-Api-Key'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.apiKey);</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s1">const res = e.response;</span>
+            <span class="s3">if </span><span class="s1">(res) {</span>
+                <span class="s1">const statusCode = res.status;</span>
+                <span class="s2">// Retry the request for metadata if the following criteria are true:</span>
+                <span class="s2">// - We haven't already retried.  It only makes sense to retry once.</span>
+                <span class="s2">// - The response was a 401 or a 403</span>
+                <span class="s2">// - The request didn't send a readableStream</span>
+                <span class="s2">// - An access_token and refresh_token were available, but either no</span>
+                <span class="s2">//   expiry_date was available or the forceRefreshOnFailure flag is set.</span>
+                <span class="s2">//   The absent expiry_date case can happen when developers stash the</span>
+                <span class="s2">//   access_token and refresh_token for later use, but the access_token</span>
+                <span class="s2">//   fails on the first try because it's expired. Some developers may</span>
+                <span class="s2">//   choose to enable forceRefreshOnFailure to mitigate time-related</span>
+                <span class="s2">//   errors.</span>
+                <span class="s2">// Or the following criteria are true:</span>
+                <span class="s2">// - We haven't already retried.  It only makes sense to retry once.</span>
+                <span class="s2">// - The response was a 401 or a 403</span>
+                <span class="s2">// - The request didn't send a readableStream</span>
+                <span class="s2">// - No refresh_token was available</span>
+                <span class="s2">// - An access_token and a refreshHandler callback were available, but</span>
+                <span class="s2">//   either no expiry_date was available or the forceRefreshOnFailure</span>
+                <span class="s2">//   flag is set. The access_token fails on the first try because it's</span>
+                <span class="s2">//   expired. Some developers may choose to enable forceRefreshOnFailure</span>
+                <span class="s2">//   to mitigate time-related errors.</span>
+                <span class="s1">const mayRequireRefresh = </span><span class="s3">this</span><span class="s1">.credentials &amp;&amp;</span>
+                    <span class="s3">this</span><span class="s1">.credentials.access_token &amp;&amp;</span>
+                    <span class="s3">this</span><span class="s1">.credentials.refresh_token &amp;&amp;</span>
+                    <span class="s1">(!</span><span class="s3">this</span><span class="s1">.credentials.expiry_date || </span><span class="s3">this</span><span class="s1">.forceRefreshOnFailure);</span>
+                <span class="s1">const mayRequireRefreshWithNoRefreshToken = </span><span class="s3">this</span><span class="s1">.credentials &amp;&amp;</span>
+                    <span class="s3">this</span><span class="s1">.credentials.access_token &amp;&amp;</span>
+                    <span class="s1">!</span><span class="s3">this</span><span class="s1">.credentials.refresh_token &amp;&amp;</span>
+                    <span class="s1">(!</span><span class="s3">this</span><span class="s1">.credentials.expiry_date || </span><span class="s3">this</span><span class="s1">.forceRefreshOnFailure) &amp;&amp;</span>
+                    <span class="s3">this</span><span class="s1">.refreshHandler;</span>
+                <span class="s1">const isReadableStream = res.config.data </span><span class="s3">instanceof </span><span class="s1">stream.Readable;</span>
+                <span class="s1">const isAuthErr = statusCode === </span><span class="s4">401 </span><span class="s1">|| statusCode === </span><span class="s4">403</span><span class="s1">;</span>
+                <span class="s3">if </span><span class="s1">(!reAuthRetried &amp;&amp;</span>
+                    <span class="s1">isAuthErr &amp;&amp;</span>
+                    <span class="s1">!isReadableStream &amp;&amp;</span>
+                    <span class="s1">mayRequireRefresh) {</span>
+                    <span class="s1">await </span><span class="s3">this</span><span class="s1">.refreshAccessTokenAsync();</span>
+                    <span class="s3">return this</span><span class="s1">.requestAsync(opts, </span><span class="s3">true</span><span class="s1">);</span>
+                <span class="s1">}</span>
+                <span class="s3">else if </span><span class="s1">(!reAuthRetried &amp;&amp;</span>
+                    <span class="s1">isAuthErr &amp;&amp;</span>
+                    <span class="s1">!isReadableStream &amp;&amp;</span>
+                    <span class="s1">mayRequireRefreshWithNoRefreshToken) {</span>
+                    <span class="s1">const refreshedAccessToken = await </span><span class="s3">this</span><span class="s1">.processAndValidateRefreshHandler();</span>
+                    <span class="s3">if </span><span class="s1">(refreshedAccessToken?.access_token) {</span>
+                        <span class="s3">this</span><span class="s1">.setCredentials(refreshedAccessToken);</span>
+                    <span class="s1">}</span>
+                    <span class="s3">return this</span><span class="s1">.requestAsync(opts, </span><span class="s3">true</span><span class="s1">);</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">verifyIdToken(options, callback) {</span>
+        <span class="s2">// This function used to accept two arguments instead of an options object.</span>
+        <span class="s2">// Check the types to help users upgrade with less pain.</span>
+        <span class="s2">// This check can be removed after a 2.0 release.</span>
+        <span class="s3">if </span><span class="s1">(callback &amp;&amp; </span><span class="s3">typeof </span><span class="s1">callback !== </span><span class="s0">'function'</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'This method accepts an options object as the first parameter, which includes the idToken, audience, and maxExpiry.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.verifyIdTokenAsync(options).then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.verifyIdTokenAsync(options);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async verifyIdTokenAsync(options) {</span>
+        <span class="s3">if </span><span class="s1">(!options.idToken) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The verifyIdToken method requires an ID Token'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const response = await </span><span class="s3">this</span><span class="s1">.getFederatedSignonCertsAsync();</span>
+        <span class="s1">const login = await </span><span class="s3">this</span><span class="s1">.verifySignedJwtWithCertsAsync(options.idToken, response.certs, options.audience, </span><span class="s3">this</span><span class="s1">.issuers, options.maxExpiry);</span>
+        <span class="s3">return </span><span class="s1">login;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Obtains information about the provisioned access token.  Especially useful 
+     * if you want to check the scopes that were provisioned to a given token. 
+     * 
+     * @param accessToken Required.  The Access Token for which you want to get 
+     * user info. 
+     */</span>
+    <span class="s1">async getTokenInfo(accessToken) {</span>
+        <span class="s1">const { data } = await </span><span class="s3">this</span><span class="s1">.transporter.request({</span>
+            <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+            <span class="s1">method: </span><span class="s0">'POST'</span><span class="s1">,</span>
+            <span class="s1">headers: {</span>
+                <span class="s0">'content-type'</span><span class="s1">: </span><span class="s0">'application/x-www-form-urlencoded;charset=UTF-8'</span><span class="s1">,</span>
+                <span class="s1">authorization: `Bearer ${accessToken}`,</span>
+            <span class="s1">},</span>
+            <span class="s1">url: </span><span class="s3">this</span><span class="s1">.endpoints.tokenInfoUrl.toString(),</span>
+        <span class="s1">});</span>
+        <span class="s1">const info = Object.assign({</span>
+            <span class="s1">expiry_date: </span><span class="s3">new </span><span class="s1">Date().getTime() + data.expires_in * </span><span class="s4">1000</span><span class="s1">,</span>
+            <span class="s1">scopes: data.scope.split(</span><span class="s0">' '</span><span class="s1">),</span>
+        <span class="s1">}, data);</span>
+        <span class="s3">delete </span><span class="s1">info.expires_in;</span>
+        <span class="s3">delete </span><span class="s1">info.scope;</span>
+        <span class="s3">return </span><span class="s1">info;</span>
+    <span class="s1">}</span>
+    <span class="s1">getFederatedSignonCerts(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getFederatedSignonCertsAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.certs, r.res), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getFederatedSignonCertsAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getFederatedSignonCertsAsync() {</span>
+        <span class="s1">const nowTime = </span><span class="s3">new </span><span class="s1">Date().getTime();</span>
+        <span class="s1">const format = (</span><span class="s4">0</span><span class="s1">, crypto_1.hasBrowserCrypto)()</span>
+            <span class="s1">? CertificateFormat.JWK</span>
+            <span class="s1">: CertificateFormat.PEM;</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.certificateExpiry &amp;&amp;</span>
+            <span class="s1">nowTime &lt; </span><span class="s3">this</span><span class="s1">.certificateExpiry.getTime() &amp;&amp;</span>
+            <span class="s3">this</span><span class="s1">.certificateCacheFormat === format) {</span>
+            <span class="s3">return </span><span class="s1">{ certs: </span><span class="s3">this</span><span class="s1">.certificateCache, format };</span>
+        <span class="s1">}</span>
+        <span class="s1">let res;</span>
+        <span class="s1">let url;</span>
+        <span class="s3">switch </span><span class="s1">(format) {</span>
+            <span class="s3">case </span><span class="s1">CertificateFormat.PEM:</span>
+                <span class="s1">url = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2FederatedSignonPemCertsUrl.toString();</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s1">CertificateFormat.JWK:</span>
+                <span class="s1">url = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2FederatedSignonJwkCertsUrl.toString();</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">default</span><span class="s1">:</span>
+                <span class="s3">throw new </span><span class="s1">Error(`Unsupported certificate format ${format}`);</span>
+        <span class="s1">}</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const opts = {</span>
+                <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+                <span class="s1">url,</span>
+            <span class="s1">};</span>
+            <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'getFederatedSignonCertsAsync'</span><span class="s1">);</span>
+            <span class="s1">res = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">e.message = `Failed to retrieve verification certificates: ${e.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+        <span class="s1">const cacheControl = res?.headers.get(</span><span class="s0">'cache-control'</span><span class="s1">);</span>
+        <span class="s1">let cacheAge = -</span><span class="s4">1</span><span class="s1">;</span>
+        <span class="s3">if </span><span class="s1">(cacheControl) {</span>
+            <span class="s1">const maxAge = /max-age=(?&lt;maxAge&gt;[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">]+)/.exec(cacheControl)?.groups</span>
+                <span class="s1">?.maxAge;</span>
+            <span class="s3">if </span><span class="s1">(maxAge) {</span>
+                <span class="s2">// Cache results with max-age (in seconds)</span>
+                <span class="s1">cacheAge = Number(maxAge) * </span><span class="s4">1000</span><span class="s1">; </span><span class="s2">// milliseconds</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s1">let certificates = {};</span>
+        <span class="s3">switch </span><span class="s1">(format) {</span>
+            <span class="s3">case </span><span class="s1">CertificateFormat.PEM:</span>
+                <span class="s1">certificates = res.data;</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s1">CertificateFormat.JWK:</span>
+                <span class="s3">for </span><span class="s1">(const key of res.data.keys) {</span>
+                    <span class="s1">certificates[key.kid] = key;</span>
+                <span class="s1">}</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">default</span><span class="s1">:</span>
+                <span class="s3">throw new </span><span class="s1">Error(`Unsupported certificate format ${format}`);</span>
+        <span class="s1">}</span>
+        <span class="s1">const now = </span><span class="s3">new </span><span class="s1">Date();</span>
+        <span class="s3">this</span><span class="s1">.certificateExpiry =</span>
+            <span class="s1">cacheAge === -</span><span class="s4">1 </span><span class="s1">? </span><span class="s3">null </span><span class="s1">: </span><span class="s3">new </span><span class="s1">Date(now.getTime() + cacheAge);</span>
+        <span class="s3">this</span><span class="s1">.certificateCache = certificates;</span>
+        <span class="s3">this</span><span class="s1">.certificateCacheFormat = format;</span>
+        <span class="s3">return </span><span class="s1">{ certs: certificates, format, res };</span>
+    <span class="s1">}</span>
+    <span class="s1">getIapPublicKeys(callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.getIapPublicKeysAsync().then(r =&gt; callback(</span><span class="s3">null</span><span class="s1">, r.pubkeys, r.res), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.getIapPublicKeysAsync();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">async getIapPublicKeysAsync() {</span>
+        <span class="s1">let res;</span>
+        <span class="s1">const url = </span><span class="s3">this</span><span class="s1">.endpoints.oauth2IapPublicKeyUrl.toString();</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">const opts = {</span>
+                <span class="s1">...OAuth2Client.RETRY_CONFIG,</span>
+                <span class="s1">url,</span>
+            <span class="s1">};</span>
+            <span class="s1">authclient_1.AuthClient.setMethodName(opts, </span><span class="s0">'getIapPublicKeysAsync'</span><span class="s1">);</span>
+            <span class="s1">res = await </span><span class="s3">this</span><span class="s1">.transporter.request(opts);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s3">if </span><span class="s1">(e </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">e.message = `Failed to retrieve verification certificates: ${e.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">e;</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">{ pubkeys: res.data, res };</span>
+    <span class="s1">}</span>
+    <span class="s1">verifySignedJwtWithCerts() {</span>
+        <span class="s2">// To make the code compatible with browser SubtleCrypto we need to make</span>
+        <span class="s2">// this method async.</span>
+        <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'verifySignedJwtWithCerts is removed, please use verifySignedJwtWithCertsAsync instead.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Verify the id token is signed with the correct certificate 
+     * and is from the correct audience. 
+     * @param jwt The jwt to verify (The ID Token in this case). 
+     * @param certs The array of certs to test the jwt against. 
+     * @param requiredAudience The audience to test the jwt against. 
+     * @param issuers The allowed issuers of the jwt (Optional). 
+     * @param maxExpiry The max expiry the certificate can be (Optional). 
+     * @return Returns a promise resolving to LoginTicket on verification. 
+     */</span>
+    <span class="s1">async verifySignedJwtWithCertsAsync(jwt, certs, requiredAudience, issuers, maxExpiry) {</span>
+        <span class="s1">const crypto = (</span><span class="s4">0</span><span class="s1">, crypto_1.createCrypto)();</span>
+        <span class="s3">if </span><span class="s1">(!maxExpiry) {</span>
+            <span class="s1">maxExpiry = OAuth2Client.DEFAULT_MAX_TOKEN_LIFETIME_SECS_;</span>
+        <span class="s1">}</span>
+        <span class="s1">const segments = jwt.split(</span><span class="s0">'.'</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(segments.length !== </span><span class="s4">3</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Wrong number of segments in token: ' </span><span class="s1">+ jwt);</span>
+        <span class="s1">}</span>
+        <span class="s1">const signed = segments[</span><span class="s4">0</span><span class="s1">] + </span><span class="s0">'.' </span><span class="s1">+ segments[</span><span class="s4">1</span><span class="s1">];</span>
+        <span class="s1">let signature = segments[</span><span class="s4">2</span><span class="s1">];</span>
+        <span class="s1">let envelope;</span>
+        <span class="s1">let payload;</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">envelope = JSON.parse(crypto.decodeBase64StringUtf8(segments[</span><span class="s4">0</span><span class="s1">]));</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s3">if </span><span class="s1">(err </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">err.message = `Can</span><span class="s0">'t parse token envelope: ${segments[0]}'</span><span class="s1">: ${err.message}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">err;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!envelope) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Can't parse token envelope: &quot; </span><span class="s1">+ segments[</span><span class="s4">0</span><span class="s1">]);</span>
+        <span class="s1">}</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">payload = JSON.parse(crypto.decodeBase64StringUtf8(segments[</span><span class="s4">1</span><span class="s1">]));</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(err) {</span>
+            <span class="s3">if </span><span class="s1">(err </span><span class="s3">instanceof </span><span class="s1">Error) {</span>
+                <span class="s1">err.message = `Can</span><span class="s0">'t parse token payload '</span><span class="s1">${segments[</span><span class="s4">0</span><span class="s1">]}`;</span>
+            <span class="s1">}</span>
+            <span class="s3">throw </span><span class="s1">err;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!payload) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Can't parse token payload: &quot; </span><span class="s1">+ segments[</span><span class="s4">1</span><span class="s1">]);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!Object.prototype.hasOwnProperty.call(certs, envelope.kid)) {</span>
+            <span class="s2">// If this is not present, then there's no reason to attempt verification</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No pem found for envelope: ' </span><span class="s1">+ JSON.stringify(envelope));</span>
+        <span class="s1">}</span>
+        <span class="s1">const cert = certs[envelope.kid];</span>
+        <span class="s3">if </span><span class="s1">(envelope.alg === </span><span class="s0">'ES256'</span><span class="s1">) {</span>
+            <span class="s1">signature = formatEcdsa.joseToDer(signature, </span><span class="s0">'ES256'</span><span class="s1">).toString(</span><span class="s0">'base64'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">const verified = await crypto.verify(cert, signed, signature);</span>
+        <span class="s3">if </span><span class="s1">(!verified) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Invalid token signature: ' </span><span class="s1">+ jwt);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!payload.iat) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No issue time in token: ' </span><span class="s1">+ JSON.stringify(payload));</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!payload.exp) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No expiration time in token: ' </span><span class="s1">+ JSON.stringify(payload));</span>
+        <span class="s1">}</span>
+        <span class="s1">const iat = Number(payload.iat);</span>
+        <span class="s3">if </span><span class="s1">(isNaN(iat))</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'iat field using invalid format'</span><span class="s1">);</span>
+        <span class="s1">const exp = Number(payload.exp);</span>
+        <span class="s3">if </span><span class="s1">(isNaN(exp))</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'exp field using invalid format'</span><span class="s1">);</span>
+        <span class="s1">const now = </span><span class="s3">new </span><span class="s1">Date().getTime() / </span><span class="s4">1000</span><span class="s1">;</span>
+        <span class="s3">if </span><span class="s1">(exp &gt;= now + maxExpiry) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Expiration time too far in future: ' </span><span class="s1">+ JSON.stringify(payload));</span>
+        <span class="s1">}</span>
+        <span class="s1">const earliest = iat - OAuth2Client.CLOCK_SKEW_SECS_;</span>
+        <span class="s1">const latest = exp + OAuth2Client.CLOCK_SKEW_SECS_;</span>
+        <span class="s3">if </span><span class="s1">(now &lt; earliest) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Token used too early, ' </span><span class="s1">+</span>
+                <span class="s1">now +</span>
+                <span class="s0">' &lt; ' </span><span class="s1">+</span>
+                <span class="s1">earliest +</span>
+                <span class="s0">': ' </span><span class="s1">+</span>
+                <span class="s1">JSON.stringify(payload));</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(now &gt; latest) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Token used too late, ' </span><span class="s1">+</span>
+                <span class="s1">now +</span>
+                <span class="s0">' &gt; ' </span><span class="s1">+</span>
+                <span class="s1">latest +</span>
+                <span class="s0">': ' </span><span class="s1">+</span>
+                <span class="s1">JSON.stringify(payload));</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(issuers &amp;&amp; issuers.indexOf(payload.iss) &lt; </span><span class="s4">0</span><span class="s1">) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Invalid issuer, expected one of [' </span><span class="s1">+</span>
+                <span class="s1">issuers +</span>
+                <span class="s0">'], but got ' </span><span class="s1">+</span>
+                <span class="s1">payload.iss);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Check the audience matches if we have one</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">requiredAudience !== </span><span class="s0">'undefined' </span><span class="s1">&amp;&amp; requiredAudience !== </span><span class="s3">null</span><span class="s1">) {</span>
+            <span class="s1">const aud = payload.aud;</span>
+            <span class="s1">let audVerified = </span><span class="s3">false</span><span class="s1">;</span>
+            <span class="s2">// If the requiredAudience is an array, check if it contains token</span>
+            <span class="s2">// audience</span>
+            <span class="s3">if </span><span class="s1">(requiredAudience.constructor === Array) {</span>
+                <span class="s1">audVerified = requiredAudience.indexOf(aud) &gt; -</span><span class="s4">1</span><span class="s1">;</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s1">audVerified = aud === requiredAudience;</span>
+            <span class="s1">}</span>
+            <span class="s3">if </span><span class="s1">(!audVerified) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Wrong recipient, payload audience != requiredAudience'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s3">return new </span><span class="s1">loginticket_1.LoginTicket(envelope, payload);</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Returns a promise that resolves with AccessTokenResponse type if 
+     * refreshHandler is defined. 
+     * If not, nothing is returned. 
+     */</span>
+    <span class="s1">async processAndValidateRefreshHandler() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.refreshHandler) {</span>
+            <span class="s1">const accessTokenResponse = await </span><span class="s3">this</span><span class="s1">.refreshHandler();</span>
+            <span class="s3">if </span><span class="s1">(!accessTokenResponse.access_token) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'No access token is returned by the refreshHandler callback.'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s3">return </span><span class="s1">accessTokenResponse;</span>
+        <span class="s1">}</span>
+        <span class="s3">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Returns true if a token is expired or will expire within 
+     * eagerRefreshThresholdMillismilliseconds. 
+     * If there is no expiry time, assumes the token is not expired or expiring. 
+     */</span>
+    <span class="s1">isTokenExpiring() {</span>
+        <span class="s1">const expiryDate = </span><span class="s3">this</span><span class="s1">.credentials.expiry_date;</span>
+        <span class="s3">return </span><span class="s1">expiryDate</span>
+            <span class="s1">? expiryDate &lt;= </span><span class="s3">new </span><span class="s1">Date().getTime() + </span><span class="s3">this</span><span class="s1">.eagerRefreshThresholdMillis</span>
+            <span class="s1">: </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.OAuth2Client = OAuth2Client;</span>
+<span class="s2">//# sourceMappingURL=oauth2client.js.map</span></pre>
+</body>
+</html>

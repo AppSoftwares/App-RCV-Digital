@@ -1,0 +1,649 @@
+<html>
+<head>
+<title>SupabaseClient.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SupabaseClient.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import type </span><span class="s2">{ AuthChangeEvent } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/auth-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ FunctionsClient } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/functions-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">PostgrestClient,</span>
+  <span class="s0">type </span><span class="s2">PostgrestFilterBuilder,</span>
+  <span class="s0">type </span><span class="s2">PostgrestQueryBuilder,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/postgrest-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s0">type </span><span class="s2">RealtimeChannel,</span>
+  <span class="s0">type </span><span class="s2">RealtimeChannelOptions,</span>
+  <span class="s2">RealtimeClient,</span>
+  <span class="s0">type </span><span class="s2">RealtimeClientOptions,</span>
+  <span class="s0">type </span><span class="s2">RealtimeRemoveChannelResponse,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/realtime-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ StorageClient </span><span class="s0">as </span><span class="s2">SupabaseStorageClient } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/storage-js</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">DEFAULT_AUTH_OPTIONS,</span>
+  <span class="s2">DEFAULT_DB_OPTIONS,</span>
+  <span class="s2">DEFAULT_GLOBAL_OPTIONS,</span>
+  <span class="s2">DEFAULT_REALTIME_OPTIONS,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/constants</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ fetchWithAuth } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/fetch</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ applySettingDefaults, validateSupabaseUrl } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/helpers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ SupabaseAuthClient } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/SupabaseAuthClient</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">Fetch,</span>
+  <span class="s2">GenericSchema,</span>
+  <span class="s2">SupabaseAuthClientOptions,</span>
+  <span class="s2">SupabaseClientOptions,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/types</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ GetRpcFunctionFilterBuilderByArgs } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./lib/rest/types/common/rpc</span><span class="s2">'</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Supabase Client. 
+ * 
+ * An isomorphic Javascript client for interacting with Postgres. 
+ </span><span class="s2">*/</span>
+<span class="s0">export default class </span><span class="s2">SupabaseClient&lt;</span>
+  <span class="s2">Database = any,</span>
+  <span class="s2">// </span><span class="s4">The second type parameter is also used for specifying db_schema, so we</span>
+  <span class="s2">// </span><span class="s4">support both cases.</span>
+  <span class="s2">// </span><span class="s4">TODO: Allow setting db_schema from ClientOptions.</span>
+  <span class="s2">SchemaNameOrClientOptions </span><span class="s0">extends</span>
+    <span class="s2">| </span><span class="s1">(</span><span class="s2">string &amp; keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">)</span>
+    <span class="s2">| { PostgrestVersion: string } = '</span><span class="s3">public</span><span class="s2">' </span><span class="s0">extends </span><span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span>
+    <span class="s2">? '</span><span class="s3">public</span><span class="s2">'</span>
+    <span class="s2">: string &amp; keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;,</span>
+  <span class="s2">SchemaName </span><span class="s0">extends </span><span class="s2">string &amp;</span>
+    <span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt; = SchemaNameOrClientOptions </span><span class="s0">extends </span><span class="s2">string &amp;</span>
+    <span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span>
+    <span class="s2">? SchemaNameOrClientOptions</span>
+    <span class="s2">: '</span><span class="s3">public</span><span class="s2">' </span><span class="s0">extends </span><span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span>
+      <span class="s2">? '</span><span class="s3">public</span><span class="s2">'</span>
+      <span class="s2">: string &amp; keyof Omit&lt;Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">GenericSchema</span>
+    <span class="s2">? Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">]</span>
+    <span class="s2">: never = Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">GenericSchema</span>
+    <span class="s2">? Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">]</span>
+    <span class="s2">: never,</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">{ PostgrestVersion: string } = SchemaNameOrClientOptions </span><span class="s0">extends </span><span class="s2">string &amp;</span>
+    <span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span>
+    <span class="s2">? // </span><span class="s4">If the version isn't explicitly set, look for it in the __InternalSupabase object to infer the right version</span>
+      <span class="s2">Database </span><span class="s0">extends </span><span class="s2">{ __InternalSupabase: { PostgrestVersion: string } }</span>
+      <span class="s2">? Database</span><span class="s1">[</span><span class="s2">'</span><span class="s3">__InternalSupabase</span><span class="s2">'</span><span class="s1">]</span>
+      <span class="s2">: // </span><span class="s4">otherwise default to 12</span>
+        <span class="s2">{ PostgrestVersion: '</span><span class="s3">12</span><span class="s2">' }</span>
+    <span class="s2">: SchemaNameOrClientOptions </span><span class="s0">extends </span><span class="s2">{ PostgrestVersion: string }</span>
+      <span class="s2">? SchemaNameOrClientOptions</span>
+      <span class="s2">: never,</span>
+<span class="s2">&gt; {</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Supabase Auth allows you to create and manage user sessions for access to data that is secured by access policies. 
+   </span><span class="s2">*/</span>
+  <span class="s2">auth: SupabaseAuthClient</span>
+  <span class="s2">realtime: RealtimeClient</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Supabase Storage allows you to manage user-generated content, such as photos or videos. 
+   </span><span class="s2">*/</span>
+  <span class="s2">storage: SupabaseStorageClient</span>
+
+  <span class="s0">protected </span><span class="s2">realtimeUrl: URL</span>
+  <span class="s0">protected </span><span class="s2">authUrl: URL</span>
+  <span class="s0">protected </span><span class="s2">storageUrl: URL</span>
+  <span class="s0">protected </span><span class="s2">functionsUrl: URL</span>
+  <span class="s0">protected </span><span class="s2">rest: PostgrestClient&lt;Database, ClientOptions, SchemaName&gt;</span>
+  <span class="s0">protected </span><span class="s2">storageKey: string</span>
+  <span class="s0">protected </span><span class="s2">fetch?: Fetch</span>
+  <span class="s0">protected </span><span class="s2">changedAccessToken?: string</span>
+  <span class="s0">protected </span><span class="s5">accessToken</span><span class="s2">?: () </span><span class="s0">=&gt; </span><span class="s2">Promise&lt;string | null&gt;</span>
+
+  <span class="s0">protected </span><span class="s2">headers: Record&lt;string, string&gt;</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Create a new client for use in the browser. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Initializing 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">supabaseUrl </span><span class="s4">The unique Supabase URL which is supplied when you create a new project in your project dashboard. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">supabaseKey </span><span class="s4">The unique Supabase Key which is supplied when you create a new project in your project dashboard. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.db.schema </span><span class="s4">You can switch in between schemas. The schema needs to be on the list of exposed schemas inside Supabase. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.auth.autoRefreshToken </span><span class="s4">Set to &quot;true&quot; if you want to automatically refresh the token before expiring. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.auth.persistSession </span><span class="s4">Set to &quot;true&quot; if you want to automatically save the user session into local storage. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.auth.detectSessionInUrl </span><span class="s4">Set to &quot;true&quot; if you want to automatically detects OAuth grants in the URL and signs in the user. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.realtime </span><span class="s4">Options passed along to realtime-js constructor. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.storage </span><span class="s4">Options passed along to the storage-js constructor. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.global.fetch </span><span class="s4">A custom fetch implementation. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.global.headers </span><span class="s4">Any additional headers to send with each network request. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Creating a client 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Create a single supabase client for interacting with your database 
+   </span><span class="s4">* </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With a custom domain 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Use a custom domain as the supabase URL 
+   </span><span class="s4">* </span><span class="s1">const supabase = createClient('https://my-custom-domain.com', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With additional parameters 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const options = { 
+   </span><span class="s4">*   </span><span class="s1">db: { 
+   </span><span class="s4">*     </span><span class="s1">schema: 'public', 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">*   </span><span class="s1">auth: { 
+   </span><span class="s4">*     </span><span class="s1">autoRefreshToken: true, 
+   </span><span class="s4">*     </span><span class="s1">persistSession: true, 
+   </span><span class="s4">*     </span><span class="s1">detectSessionInUrl: true 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">*   </span><span class="s1">global: { 
+   </span><span class="s4">*     </span><span class="s1">headers: { 'x-my-custom-header': 'my-app-name' }, 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">const supabase = createClient(&quot;https://xyzcompany.supabase.co&quot;, &quot;your-publishable-key&quot;, options) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">With custom schemas 
+   * By default the API server points to the `public` schema. You can enable other database schemas within the Dashboard. 
+   * Go to [Settings &gt; API &gt; Exposed schemas](/dashboard/project/_/settings/api) and add the schema which you want to expose to the API. 
+   * 
+   * Note: each client connection can only access a single schema, so the code above can access the `other_schema` schema but cannot access the `public` schema. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With custom schemas 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key', { 
+   </span><span class="s4">*   </span><span class="s1">// Provide a custom schema. Defaults to &quot;public&quot;. 
+   </span><span class="s4">*   </span><span class="s1">db: { schema: 'other_schema' } 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Custom fetch implementation 
+   * `supabase-js` uses the [`cross-fetch`](https://www.npmjs.com/package/cross-fetch) library to make HTTP requests, 
+   * but an alternative `fetch` implementation can be provided as an option. 
+   * This is most useful in environments where `cross-fetch` is not compatible (for instance Cloudflare Workers). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Custom fetch implementation 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key', { 
+   </span><span class="s4">*   </span><span class="s1">global: { fetch: fetch.bind(globalThis) } 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">React Native options with AsyncStorage 
+   * For React Native we recommend using `AsyncStorage` as the storage implementation for Supabase Auth. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">React Native options with AsyncStorage 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">import 'react-native-url-polyfill/auto' 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* </span><span class="s1">import AsyncStorage from &quot;@react-native-async-storage/async-storage&quot;; 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient(&quot;https://xyzcompany.supabase.co&quot;, &quot;your-publishable-key&quot;, { 
+   </span><span class="s4">*   </span><span class="s1">auth: { 
+   </span><span class="s4">*     </span><span class="s1">storage: AsyncStorage, 
+   </span><span class="s4">*     </span><span class="s1">autoRefreshToken: true, 
+   </span><span class="s4">*     </span><span class="s1">persistSession: true, 
+   </span><span class="s4">*     </span><span class="s1">detectSessionInUrl: false, 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">* </span><span class="s1">}); 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">React Native options with Expo SecureStore 
+   * If you wish to encrypt the user's session information, you can use `aes-js` and store the encryption key in Expo SecureStore. 
+   * The `aes-js` library, a reputable JavaScript-only implementation of the AES encryption algorithm in CTR mode. 
+   * A new 256-bit encryption key is generated using the `react-native-get-random-values` library. 
+   * This key is stored inside Expo's SecureStore, while the value is encrypted and placed inside AsyncStorage. 
+   * 
+   * Please make sure that: 
+   * - You keep the `expo-secure-store`, `aes-js` and `react-native-get-random-values` libraries up-to-date. 
+   * - Choose the correct [`SecureStoreOptions`](https://docs.expo.dev/versions/latest/sdk/securestore/#securestoreoptions) for your app's needs. 
+   *   E.g. [`SecureStore.WHEN_UNLOCKED`](https://docs.expo.dev/versions/latest/sdk/securestore/#securestorewhen_unlocked) regulates when the data can be accessed. 
+   * - Carefully consider optimizations or other modifications to the above example, as those can lead to introducing subtle security vulnerabilities. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">React Native options with Expo SecureStore 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import 'react-native-url-polyfill/auto' 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* </span><span class="s1">import AsyncStorage from '@react-native-async-storage/async-storage'; 
+   </span><span class="s4">* </span><span class="s1">import * as SecureStore from 'expo-secure-store'; 
+   </span><span class="s4">* </span><span class="s1">import * as aesjs from 'aes-js'; 
+   </span><span class="s4">* </span><span class="s1">import 'react-native-get-random-values'; 
+   </span><span class="s4">* 
+   * </span><span class="s1">// As Expo's SecureStore does not support values larger than 2048 
+   </span><span class="s4">* </span><span class="s1">// bytes, an AES-256 key is generated and stored in SecureStore, while 
+   </span><span class="s4">* </span><span class="s1">// it is used to encrypt/decrypt values stored in AsyncStorage. 
+   </span><span class="s4">* </span><span class="s1">class LargeSecureStore { 
+   </span><span class="s4">*   </span><span class="s1">private async _encrypt(key: string, value: string) { 
+   </span><span class="s4">*     </span><span class="s1">const encryptionKey = crypto.getRandomValues(new Uint8Array(256 / 8)); 
+   </span><span class="s4">* 
+   *     </span><span class="s1">const cipher = new aesjs.ModeOfOperation.ctr(encryptionKey, new aesjs.Counter(1)); 
+   </span><span class="s4">*     </span><span class="s1">const encryptedBytes = cipher.encrypt(aesjs.utils.utf8.toBytes(value)); 
+   </span><span class="s4">* 
+   *     </span><span class="s1">await SecureStore.setItemAsync(key, aesjs.utils.hex.fromBytes(encryptionKey)); 
+   </span><span class="s4">* 
+   *     </span><span class="s1">return aesjs.utils.hex.fromBytes(encryptedBytes); 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* 
+   *   </span><span class="s1">private async _decrypt(key: string, value: string) { 
+   </span><span class="s4">*     </span><span class="s1">const encryptionKeyHex = await SecureStore.getItemAsync(key); 
+   </span><span class="s4">*     </span><span class="s1">if (!encryptionKeyHex) { 
+   </span><span class="s4">*       </span><span class="s1">return encryptionKeyHex; 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">* 
+   *     </span><span class="s1">const cipher = new aesjs.ModeOfOperation.ctr(aesjs.utils.hex.toBytes(encryptionKeyHex), new aesjs.Counter(1)); 
+   </span><span class="s4">*     </span><span class="s1">const decryptedBytes = cipher.decrypt(aesjs.utils.hex.toBytes(value)); 
+   </span><span class="s4">* 
+   *     </span><span class="s1">return aesjs.utils.utf8.fromBytes(decryptedBytes); 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* 
+   *   </span><span class="s1">async getItem(key: string) { 
+   </span><span class="s4">*     </span><span class="s1">const encrypted = await AsyncStorage.getItem(key); 
+   </span><span class="s4">*     </span><span class="s1">if (!encrypted) { return encrypted; } 
+   </span><span class="s4">* 
+   *     </span><span class="s1">return await this._decrypt(key, encrypted); 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* 
+   *   </span><span class="s1">async removeItem(key: string) { 
+   </span><span class="s4">*     </span><span class="s1">await AsyncStorage.removeItem(key); 
+   </span><span class="s4">*     </span><span class="s1">await SecureStore.deleteItemAsync(key); 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* 
+   *   </span><span class="s1">async setItem(key: string, value: string) { 
+   </span><span class="s4">*     </span><span class="s1">const encrypted = await this._encrypt(key, value); 
+   </span><span class="s4">* 
+   *     </span><span class="s1">await AsyncStorage.setItem(key, encrypted); 
+   </span><span class="s4">*   </span><span class="s1">} 
+   </span><span class="s4">* </span><span class="s1">} 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient(&quot;https://xyzcompany.supabase.co&quot;, &quot;your-publishable-key&quot;, { 
+   </span><span class="s4">*   </span><span class="s1">auth: { 
+   </span><span class="s4">*     </span><span class="s1">storage: new LargeSecureStore(), 
+   </span><span class="s4">*     </span><span class="s1">autoRefreshToken: true, 
+   </span><span class="s4">*     </span><span class="s1">persistSession: true, 
+   </span><span class="s4">*     </span><span class="s1">detectSessionInUrl: false, 
+   </span><span class="s4">*   </span><span class="s1">}, 
+   </span><span class="s4">* </span><span class="s1">}); 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">With a database query 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* 
+   * </span><span class="s1">const { data } = await supabase.from('profiles').select('*') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s0">protected </span><span class="s2">supabaseUrl: string,</span>
+    <span class="s0">protected </span><span class="s2">supabaseKey: string,</span>
+    <span class="s2">options?: SupabaseClientOptions&lt;SchemaName&gt;</span>
+  <span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">baseUrl = </span><span class="s5">validateSupabaseUrl</span><span class="s1">(</span><span class="s2">supabaseUrl</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!supabaseKey</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">supabaseKey is required.</span><span class="s2">'</span><span class="s1">)</span>
+
+    <span class="s2">this.realtimeUrl = new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">'</span><span class="s3">realtime/v1</span><span class="s2">', baseUrl</span><span class="s1">)</span>
+    <span class="s2">this.realtimeUrl.protocol = this.realtimeUrl.protocol.</span><span class="s5">replace</span><span class="s1">(</span><span class="s2">'</span><span class="s3">http</span><span class="s2">', '</span><span class="s3">ws</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">this.authUrl = new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">'</span><span class="s3">auth/v1</span><span class="s2">', baseUrl</span><span class="s1">)</span>
+    <span class="s2">this.storageUrl = new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">'</span><span class="s3">storage/v1</span><span class="s2">', baseUrl</span><span class="s1">)</span>
+    <span class="s2">this.functionsUrl = new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">'</span><span class="s3">functions/v1</span><span class="s2">', baseUrl</span><span class="s1">)</span>
+
+    <span class="s2">// </span><span class="s4">default storage key uses the supabase project ref as a namespace</span>
+    <span class="s0">const </span><span class="s2">defaultStorageKey = `</span><span class="s3">sb-</span><span class="s2">${baseUrl.hostname.</span><span class="s5">split</span><span class="s1">(</span><span class="s2">'</span><span class="s3">.</span><span class="s2">'</span><span class="s1">)[</span><span class="s6">0</span><span class="s1">]</span><span class="s2">}</span><span class="s3">-auth-token</span><span class="s2">`</span>
+    <span class="s0">const </span><span class="s2">DEFAULTS = {</span>
+      <span class="s1">db</span><span class="s2">: DEFAULT_DB_OPTIONS,</span>
+      <span class="s1">realtime</span><span class="s2">: DEFAULT_REALTIME_OPTIONS,</span>
+      <span class="s1">auth</span><span class="s2">: { ...DEFAULT_AUTH_OPTIONS, </span><span class="s1">storageKey</span><span class="s2">: defaultStorageKey },</span>
+      <span class="s1">global</span><span class="s2">: DEFAULT_GLOBAL_OPTIONS,</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">settings = </span><span class="s5">applySettingDefaults</span><span class="s1">(</span><span class="s2">options ?? {}, DEFAULTS</span><span class="s1">)</span>
+
+    <span class="s2">this.storageKey = settings.auth.storageKey ?? ''</span>
+    <span class="s2">this.headers = settings.global.headers ?? {}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!settings.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.auth = this.</span><span class="s5">_initSupabaseAuthClient</span><span class="s1">(</span>
+        <span class="s2">settings.auth ?? {},</span>
+        <span class="s2">this.headers,</span>
+        <span class="s2">settings.global.fetch</span>
+      <span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">this.accessToken = settings.accessToken</span>
+
+      <span class="s2">this.auth = new </span><span class="s5">Proxy</span><span class="s2">&lt;SupabaseAuthClient&gt;</span><span class="s1">(</span><span class="s2">{} </span><span class="s0">as </span><span class="s2">any, {</span>
+        <span class="s5">get</span><span class="s2">: (_, prop) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span>
+            <span class="s2">`</span><span class="s3">@supabase/supabase-js: Supabase Client is configured with the accessToken option, accessing supabase.auth.</span><span class="s2">${</span><span class="s5">String</span><span class="s1">(</span>
+              <span class="s2">prop</span>
+            <span class="s1">)</span><span class="s2">} </span><span class="s3">is not possible</span><span class="s2">`</span>
+          <span class="s1">)</span>
+        <span class="s2">},</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.fetch = </span><span class="s5">fetchWithAuth</span><span class="s1">(</span><span class="s2">supabaseKey, this._getAccessToken.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">, settings.global.fetch</span><span class="s1">)</span>
+    <span class="s2">this.realtime = this.</span><span class="s5">_initRealtimeClient</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s1">accessToken</span><span class="s2">: this._getAccessToken.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+      <span class="s2">...settings.realtime,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">Start auth immediately to avoid race condition with channel subscriptions</span>
+      <span class="s2">// </span><span class="s4">Wrap Promise to avoid Firefox extension cross-context Promise access errors</span>
+      <span class="s1">Promise</span><span class="s2">.</span><span class="s5">resolve</span><span class="s1">(</span><span class="s2">this.</span><span class="s5">accessToken</span><span class="s1">())</span>
+        <span class="s2">.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">(token) </span><span class="s0">=&gt; </span><span class="s2">this.realtime.</span><span class="s5">setAuth</span><span class="s1">(</span><span class="s2">token</span><span class="s1">))</span>
+        <span class="s2">.</span><span class="s5">catch</span><span class="s1">(</span><span class="s2">(e) </span><span class="s0">=&gt; </span><span class="s2">console.</span><span class="s5">warn</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Failed to set initial Realtime auth token:</span><span class="s2">', e</span><span class="s1">))</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this.rest = new </span><span class="s5">PostgrestClient</span><span class="s1">(</span><span class="s2">new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">'</span><span class="s3">rest/v1</span><span class="s2">', baseUrl</span><span class="s1">)</span><span class="s2">.href, {</span>
+      <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s1">schema</span><span class="s2">: settings.db.schema,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+      <span class="s1">timeout</span><span class="s2">: settings.db.timeout,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: settings.db.urlLengthLimit,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s2">this.storage = new </span><span class="s5">SupabaseStorageClient</span><span class="s1">(</span>
+      <span class="s2">this.storageUrl.href,</span>
+      <span class="s2">this.headers,</span>
+      <span class="s2">this.fetch,</span>
+      <span class="s2">options?.storage</span>
+    <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!settings.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s5">_listenForAuthEvents</span><span class="s1">()</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Supabase Functions allows you to deploy and invoke edge functions. 
+   </span><span class="s2">*/</span>
+  <span class="s0">get </span><span class="s5">functions</span><span class="s2">(): FunctionsClient {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s5">FunctionsClient</span><span class="s1">(</span><span class="s2">this.functionsUrl.href, {</span>
+      <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s1">customFetch</span><span class="s2">: this.fetch,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">NOTE: signatures must be kept in sync with PostgrestClient.from</span>
+  <span class="s2">from&lt;</span>
+    <span class="s2">TableName extends string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Table extends Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">][</span><span class="s2">TableName</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s2">&gt;(relation: TableName): PostgrestQueryBuilder&lt;ClientOptions, Schema, Table, TableName&gt;</span>
+  <span class="s5">from</span><span class="s2">&lt;ViewName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">]</span><span class="s2">, View </span><span class="s0">extends </span><span class="s2">Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">][</span><span class="s2">ViewName</span><span class="s1">]</span><span class="s2">&gt;(</span>
+    <span class="s2">relation: ViewName</span>
+  <span class="s2">): PostgrestQueryBuilder&lt;ClientOptions, Schema, View, ViewName&gt;</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Perform a query on a table or a view. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">relation </span><span class="s4">- The table or view name to query 
+   </span><span class="s2">*/</span>
+  <span class="s5">from</span><span class="s2">(relation: string): PostgrestQueryBuilder&lt;ClientOptions, Schema, any&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.rest.</span><span class="s5">from</span><span class="s1">(</span><span class="s2">relation</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">NOTE: signatures must be kept in sync with PostgrestClient.schema</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Select a schema to query or perform an function (rpc) call. 
+   * 
+   * The schema needs to be on the list of exposed schemas inside Supabase. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">schema </span><span class="s4">- The schema to query 
+   </span><span class="s2">*/</span>
+  <span class="s5">schema</span><span class="s2">&lt;DynamicSchema </span><span class="s0">extends </span><span class="s2">string &amp; keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;&gt;(</span>
+    <span class="s2">schema: DynamicSchema</span>
+  <span class="s2">): PostgrestClient&lt;</span>
+    <span class="s2">Database,</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">DynamicSchema,</span>
+    <span class="s2">Database</span><span class="s1">[</span><span class="s2">DynamicSchema</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">GenericSchema ? Database</span><span class="s1">[</span><span class="s2">DynamicSchema</span><span class="s1">] </span><span class="s2">: any</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.rest.</span><span class="s5">schema</span><span class="s2">&lt;DynamicSchema&gt;</span><span class="s1">(</span><span class="s2">schema</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">NOTE: signatures must be kept in sync with PostgrestClient.rpc</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Perform a function call. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fn </span><span class="s4">- The function name to call 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args </span><span class="s4">- The arguments to pass to the function call 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.head </span><span class="s4">- When set to `true`, `data` will not be returned. 
+   * Useful if you only need the count. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.get </span><span class="s4">- When set to `true`, the function will be called with 
+   * read-only access mode. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count rows returned by the 
+   * function. Only applicable for [set-returning 
+   * functions](https://www.postgresql.org/docs/current/functions-srf.html). 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   </span><span class="s2">*/</span>
+  <span class="s2">rpc&lt;</span>
+    <span class="s2">FnName extends string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Functions</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Args extends Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Functions</span><span class="s2">'</span><span class="s1">][</span><span class="s2">FnName</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Args</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= never,</span>
+    <span class="s2">FilterBuilder extends GetRpcFunctionFilterBuilderByArgs&lt;</span>
+      <span class="s2">Schema,</span>
+      <span class="s2">FnName,</span>
+      <span class="s2">Args</span>
+    <span class="s2">&gt; = GetRpcFunctionFilterBuilderByArgs&lt;Schema, FnName, Args&gt;,</span>
+  <span class="s2">&gt;(</span>
+    <span class="s2">fn: FnName,</span>
+    <span class="s2">args: Args = {} </span><span class="s0">as </span><span class="s2">Args,</span>
+    <span class="s2">options: {</span>
+      <span class="s2">head?: boolean</span>
+      <span class="s2">get?: boolean</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">'</span>
+    <span class="s2">} = {</span>
+      <span class="s1">head</span><span class="s2">: </span><span class="s7">false</span><span class="s2">,</span>
+      <span class="s1">get</span><span class="s2">: </span><span class="s7">false</span><span class="s2">,</span>
+      <span class="s1">count</span><span class="s2">: </span><span class="s7">undefined</span><span class="s2">,</span>
+    <span class="s2">}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Result</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">RelationName</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Relationships</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">'</span><span class="s3">RPC</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.rest.</span><span class="s5">rpc</span><span class="s1">(</span><span class="s2">fn, args, options</span><span class="s1">) </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">PostgrestFilterBuilder&lt;</span>
+      <span class="s2">ClientOptions,</span>
+      <span class="s2">Schema,</span>
+      <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Result</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">RelationName</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Relationships</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">'</span><span class="s3">RPC</span><span class="s2">'</span>
+    <span class="s2">&gt;</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Creates a Realtime channel with Broadcast, Presence, and Postgres Changes. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} name </span><span class="s4">- The name of the Realtime channel. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} opts </span><span class="s4">- The options to pass to the Realtime channel. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   </span><span class="s2">*/</span>
+  <span class="s5">channel</span><span class="s2">(name: string, opts: RealtimeChannelOptions = { </span><span class="s1">config</span><span class="s2">: {} }): RealtimeChannel {</span>
+    <span class="s0">return </span><span class="s2">this.realtime.</span><span class="s5">channel</span><span class="s1">(</span><span class="s2">name, opts</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Returns all Realtime channels. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get all channels 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">const channels = supabase.getChannels() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s5">getChannels</span><span class="s2">(): RealtimeChannel</span><span class="s1">[] </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">this.realtime.</span><span class="s5">getChannels</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Unsubscribes and removes Realtime channel from Realtime client. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{RealtimeChannel} channel </span><span class="s4">- The name of the Realtime channel. 
+   * 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Removing a channel is a great way to maintain the performance of your project's Realtime service as well as your database if you're listening to Postgres changes. Supabase will automatically handle cleanup 30 seconds after a client is disconnected, but unused channels may cause degradation as more clients are simultaneously subscribed. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Removes a channel 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">supabase.removeChannel(myChannel) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s5">removeChannel</span><span class="s2">(channel: RealtimeChannel): Promise&lt;RealtimeRemoveChannelResponse&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.realtime.</span><span class="s5">removeChannel</span><span class="s1">(</span><span class="s2">channel</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Unsubscribes and removes all Realtime channels from Realtime client. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Realtime 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Removing channels is a great way to maintain the performance of your project's Realtime service as well as your database if you're listening to Postgres changes. Supabase will automatically handle cleanup 30 seconds after a client is disconnected, but unused channels may cause degradation as more clients are simultaneously subscribed. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Remove all channels 
+   </span><span class="s4">* </span><span class="s1">```js 
+   </span><span class="s4">* </span><span class="s1">supabase.removeAllChannels() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s5">removeAllChannels</span><span class="s2">(): Promise&lt;RealtimeRemoveChannelResponse</span><span class="s1">[]</span><span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.realtime.</span><span class="s5">removeAllChannels</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private async </span><span class="s5">_getAccessToken</span><span class="s2">() {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.accessToken</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s2">this.</span><span class="s5">accessToken</span><span class="s1">()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">{ data } = </span><span class="s0">await </span><span class="s2">this.auth.</span><span class="s5">getSession</span><span class="s1">()</span>
+
+    <span class="s0">return </span><span class="s2">data.session?.access_token ?? this.supabaseKey</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s5">_initSupabaseAuthClient</span><span class="s2">(</span>
+    <span class="s2">{</span>
+      <span class="s2">autoRefreshToken,</span>
+      <span class="s2">persistSession,</span>
+      <span class="s2">detectSessionInUrl,</span>
+      <span class="s2">storage,</span>
+      <span class="s2">userStorage,</span>
+      <span class="s2">storageKey,</span>
+      <span class="s2">flowType,</span>
+      <span class="s2">lock,</span>
+      <span class="s2">debug,</span>
+      <span class="s2">throwOnError,</span>
+      <span class="s2">experimental,</span>
+      <span class="s2">lockAcquireTimeout,</span>
+      <span class="s2">skipAutoInitialize,</span>
+    <span class="s2">}: SupabaseAuthClientOptions,</span>
+    <span class="s2">headers?: Record&lt;string, string&gt;,</span>
+    <span class="s2">fetch?: Fetch</span>
+  <span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">authHeaders = {</span>
+      <span class="s1">Authorization</span><span class="s2">: `</span><span class="s3">Bearer </span><span class="s2">${this.supabaseKey}`,</span>
+      <span class="s1">apikey</span><span class="s2">: `${this.supabaseKey}`,</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s5">SupabaseAuthClient</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s1">url</span><span class="s2">: this.authUrl.href,</span>
+      <span class="s1">headers</span><span class="s2">: { ...authHeaders, ...headers },</span>
+      <span class="s1">storageKey</span><span class="s2">: storageKey,</span>
+      <span class="s2">autoRefreshToken,</span>
+      <span class="s2">persistSession,</span>
+      <span class="s2">detectSessionInUrl,</span>
+      <span class="s2">storage,</span>
+      <span class="s2">userStorage,</span>
+      <span class="s2">flowType,</span>
+      <span class="s2">lock,</span>
+      <span class="s2">debug,</span>
+      <span class="s2">throwOnError,</span>
+      <span class="s2">experimental,</span>
+      <span class="s2">fetch,</span>
+      <span class="s2">lockAcquireTimeout,</span>
+      <span class="s2">skipAutoInitialize,</span>
+      <span class="s2">// </span><span class="s4">auth checks if there is a custom authorizaiton header using this flag</span>
+      <span class="s2">// </span><span class="s4">so it knows whether to return an error when getUser is called with no session</span>
+      <span class="s1">hasCustomAuthorizationHeader</span><span class="s2">: Object.</span><span class="s5">keys</span><span class="s1">(</span><span class="s2">this.headers</span><span class="s1">)</span><span class="s2">.</span><span class="s5">some</span><span class="s1">(</span>
+        <span class="s2">(key) </span><span class="s0">=&gt; </span><span class="s2">key.</span><span class="s5">toLowerCase</span><span class="s1">() </span><span class="s2">=== '</span><span class="s3">authorization</span><span class="s2">'</span>
+      <span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s5">_initRealtimeClient</span><span class="s2">(options: RealtimeClientOptions) {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s5">RealtimeClient</span><span class="s1">(</span><span class="s2">this.realtimeUrl.href, {</span>
+      <span class="s2">...options,</span>
+      <span class="s1">params</span><span class="s2">: { ...{ </span><span class="s1">apikey</span><span class="s2">: this.supabaseKey }, ...options?.params },</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s5">_listenForAuthEvents</span><span class="s2">() {</span>
+    <span class="s0">const </span><span class="s2">data = this.auth.</span><span class="s5">onAuthStateChange</span><span class="s1">(</span><span class="s2">(event, session) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s5">_handleTokenChanged</span><span class="s1">(</span><span class="s2">event, '</span><span class="s3">CLIENT</span><span class="s2">', session?.access_token</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">data</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s5">_handleTokenChanged</span><span class="s2">(</span>
+    <span class="s2">event: AuthChangeEvent,</span>
+    <span class="s2">source: '</span><span class="s3">CLIENT</span><span class="s2">' | '</span><span class="s3">STORAGE</span><span class="s2">',</span>
+    <span class="s2">token?: string</span>
+  <span class="s2">) {</span>
+    <span class="s0">if </span><span class="s1">(</span>
+      <span class="s1">(</span><span class="s2">event === '</span><span class="s3">TOKEN_REFRESHED</span><span class="s2">' || event === '</span><span class="s3">SIGNED_IN</span><span class="s2">'</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+      <span class="s2">this.changedAccessToken !== token</span>
+    <span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.changedAccessToken = token</span>
+      <span class="s2">this.realtime.</span><span class="s5">setAuth</span><span class="s1">(</span><span class="s2">token</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">event === '</span><span class="s3">SIGNED_OUT</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.realtime.</span><span class="s5">setAuth</span><span class="s1">()</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">source == '</span><span class="s3">STORAGE</span><span class="s2">'</span><span class="s1">) </span><span class="s2">this.auth.</span><span class="s5">signOut</span><span class="s1">()</span>
+      <span class="s2">this.changedAccessToken = </span><span class="s7">undefined</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

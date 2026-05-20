@@ -1,0 +1,181 @@
+<html>
+<head>
+<title>response.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+response.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * Response.js 
+ * 
+ * Response class provides content decoding 
+ */</span>
+
+<span class="s1">import Headers from </span><span class="s2">'./headers.js'</span><span class="s1">;</span>
+<span class="s1">import Body, {clone, extractContentType} from </span><span class="s2">'./body.js'</span><span class="s1">;</span>
+<span class="s1">import {isRedirect} from </span><span class="s2">'./utils/is-redirect.js'</span><span class="s1">;</span>
+
+<span class="s1">const INTERNALS = Symbol(</span><span class="s2">'Response internals'</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Response class 
+ * 
+ * Ref: https://fetch.spec.whatwg.org/#response-class 
+ * 
+ * @param   Stream  body  Readable stream 
+ * @param   Object  opts  Response options 
+ * @return  Void 
+ */</span>
+<span class="s1">export </span><span class="s3">default </span><span class="s1">class Response extends Body {</span>
+	<span class="s1">constructor(body = </span><span class="s3">null</span><span class="s1">, options = {}) {</span>
+		<span class="s1">super(body, options);</span>
+
+		<span class="s0">// eslint-disable-next-line no-eq-null, eqeqeq, no-negated-condition</span>
+		<span class="s1">const status = options.status != </span><span class="s3">null </span><span class="s1">? options.status : </span><span class="s4">200</span><span class="s1">;</span>
+
+		<span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers(options.headers);</span>
+
+		<span class="s3">if </span><span class="s1">(body !== </span><span class="s3">null </span><span class="s1">&amp;&amp; !headers.has(</span><span class="s2">'Content-Type'</span><span class="s1">)) {</span>
+			<span class="s1">const contentType = extractContentType(body, </span><span class="s3">this</span><span class="s1">);</span>
+			<span class="s3">if </span><span class="s1">(contentType) {</span>
+				<span class="s1">headers.append(</span><span class="s2">'Content-Type'</span><span class="s1">, contentType);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s3">this</span><span class="s1">[INTERNALS] = {</span>
+			<span class="s1">type: </span><span class="s2">'default'</span><span class="s1">,</span>
+			<span class="s1">url: options.url,</span>
+			<span class="s1">status,</span>
+			<span class="s1">statusText: options.statusText || </span><span class="s2">''</span><span class="s1">,</span>
+			<span class="s1">headers,</span>
+			<span class="s1">counter: options.counter,</span>
+			<span class="s1">highWaterMark: options.highWaterMark</span>
+		<span class="s1">};</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get type() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].type;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get url() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].url || </span><span class="s2">''</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get status() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].status;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Convenience property representing if the request ended normally 
+     */</span>
+	<span class="s1">get ok() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].status &gt;= </span><span class="s4">200 </span><span class="s1">&amp;&amp; </span><span class="s3">this</span><span class="s1">[INTERNALS].status &lt; </span><span class="s4">300</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get redirected() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].counter &gt; </span><span class="s4">0</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get statusText() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].statusText;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get headers() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].headers;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get highWaterMark() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].highWaterMark;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Clone this response 
+     * 
+     * @return  Response 
+     */</span>
+	<span class="s1">clone() {</span>
+		<span class="s3">return new </span><span class="s1">Response(clone(</span><span class="s3">this</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.highWaterMark), {</span>
+			<span class="s1">type: </span><span class="s3">this</span><span class="s1">.type,</span>
+			<span class="s1">url: </span><span class="s3">this</span><span class="s1">.url,</span>
+			<span class="s1">status: </span><span class="s3">this</span><span class="s1">.status,</span>
+			<span class="s1">statusText: </span><span class="s3">this</span><span class="s1">.statusText,</span>
+			<span class="s1">headers: </span><span class="s3">this</span><span class="s1">.headers,</span>
+			<span class="s1">ok: </span><span class="s3">this</span><span class="s1">.ok,</span>
+			<span class="s1">redirected: </span><span class="s3">this</span><span class="s1">.redirected,</span>
+			<span class="s1">size: </span><span class="s3">this</span><span class="s1">.size,</span>
+			<span class="s1">highWaterMark: </span><span class="s3">this</span><span class="s1">.highWaterMark</span>
+		<span class="s1">});</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {string} url    The URL that the new response is to originate from. 
+     * @param {number} status An optional status code for the response (e.g., 302.) 
+     * @returns {Response}    A Response object. 
+     */</span>
+	<span class="s1">static redirect(url, status = </span><span class="s4">302</span><span class="s1">) {</span>
+		<span class="s3">if </span><span class="s1">(!isRedirect(status)) {</span>
+			<span class="s3">throw new </span><span class="s1">RangeError(</span><span class="s2">'Failed to execute &quot;redirect&quot; on &quot;response&quot;: Invalid status code'</span><span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s3">return new </span><span class="s1">Response(</span><span class="s3">null</span><span class="s1">, {</span>
+			<span class="s1">headers: {</span>
+				<span class="s1">location: </span><span class="s3">new </span><span class="s1">URL(url).toString()</span>
+			<span class="s1">},</span>
+			<span class="s1">status</span>
+		<span class="s1">});</span>
+	<span class="s1">}</span>
+
+	<span class="s1">static error() {</span>
+		<span class="s1">const response = </span><span class="s3">new </span><span class="s1">Response(</span><span class="s3">null</span><span class="s1">, {status: </span><span class="s4">0</span><span class="s1">, statusText: </span><span class="s2">''</span><span class="s1">});</span>
+		<span class="s1">response[INTERNALS].type = </span><span class="s2">'error'</span><span class="s1">;</span>
+		<span class="s3">return </span><span class="s1">response;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">static json(data = undefined, init = {}) {</span>
+		<span class="s1">const body = JSON.stringify(data);</span>
+
+		<span class="s3">if </span><span class="s1">(body === undefined) {</span>
+			<span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'data is not JSON serializable'</span><span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers(init &amp;&amp; init.headers);</span>
+
+		<span class="s3">if </span><span class="s1">(!headers.has(</span><span class="s2">'content-type'</span><span class="s1">)) {</span>
+			<span class="s1">headers.set(</span><span class="s2">'content-type'</span><span class="s1">, </span><span class="s2">'application/json'</span><span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s3">return new </span><span class="s1">Response(body, {</span>
+			<span class="s1">...init,</span>
+			<span class="s1">headers</span>
+		<span class="s1">});</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get [Symbol.toStringTag]() {</span>
+		<span class="s3">return </span><span class="s2">'Response'</span><span class="s1">;</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">Object.defineProperties(Response.prototype, {</span>
+	<span class="s1">type: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">url: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">status: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">ok: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">redirected: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">statusText: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">headers: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">clone: {enumerable: </span><span class="s3">true</span><span class="s1">}</span>
+<span class="s1">});</span>
+</pre>
+</body>
+</html>

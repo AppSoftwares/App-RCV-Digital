@@ -1,0 +1,148 @@
+<html>
+<head>
+<title>jiti-hooks.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+jiti-hooks.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ dirname, join } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">node:path</span><span class="s2">&quot;;</span>
+<span class="s0">import </span><span class="s2">{ fileURLToPath } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">node:url</span><span class="s2">&quot;;</span>
+<span class="s0">import </span><span class="s2">{ existsSync } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">node:fs</span><span class="s2">&quot;;</span>
+<span class="s0">import </span><span class="s2">{ readFile } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">node:fs/promises</span><span class="s2">&quot;;</span>
+<span class="s0">import </span><span class="s2">{ isBuiltin } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">node:module</span><span class="s2">&quot;;</span>
+<span class="s0">import </span><span class="s2">{ createJiti } </span><span class="s0">from </span><span class="s2">&quot;</span><span class="s3">./jiti.mjs</span><span class="s2">&quot;;</span>
+
+<span class="s0">let </span><span class="s2">jiti;</span>
+
+<span class="s2">// </span><span class="s4">https://nodejs.org/api/module.html#initialize</span>
+<span class="s0">export async function </span><span class="s5">initialize</span><span class="s2">() {</span>
+  <span class="s2">jiti = </span><span class="s5">createJiti</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">// </span><span class="s4">https://nodejs.org/api/module.html#resolvespecifier-context-nextresolve</span>
+<span class="s0">export async function </span><span class="s5">resolve</span><span class="s2">(specifier, context, nextResolve) {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s5">_shouldSkip</span><span class="s1">(</span><span class="s2">specifier</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s5">nextResolve</span><span class="s1">(</span><span class="s2">specifier, context</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+  <span class="s0">const </span><span class="s2">resolvedPath = jiti.</span><span class="s5">esmResolve</span><span class="s1">(</span><span class="s2">specifier, {</span>
+    <span class="s1">parentURL</span><span class="s2">: context?.parentURL,</span>
+    <span class="s1">conditions</span><span class="s2">: context?.conditions,</span>
+  <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">{</span>
+    <span class="s1">url</span><span class="s2">: resolvedPath,</span>
+    <span class="s1">shortCircuit</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+  <span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s2">// </span><span class="s4">https://nodejs.org/api/module.html#loadurl-context-nextload</span>
+<span class="s0">export async function </span><span class="s5">load</span><span class="s2">(url, context, nextLoad) {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s5">_shouldSkip</span><span class="s1">(</span><span class="s2">url</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s5">nextLoad</span><span class="s1">(</span><span class="s2">url, context</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">const </span><span class="s2">filename = </span><span class="s5">fileURLToPath</span><span class="s1">(</span><span class="s2">url</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">.js</span><span class="s2">&quot;</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">pkg = </span><span class="s0">await </span><span class="s5">_findClosestPackageJson</span><span class="s1">(</span><span class="s5">dirname</span><span class="s1">(</span><span class="s2">filename</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">pkg &amp;&amp; pkg.type === &quot;</span><span class="s3">module</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s5">nextLoad</span><span class="s1">(</span><span class="s2">url, context</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">const </span><span class="s2">rawSource = </span><span class="s0">await </span><span class="s5">readFile</span><span class="s1">(</span><span class="s2">filename, &quot;</span><span class="s3">utf8</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">.json</span><span class="s2">&quot;</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">pkg = </span><span class="s0">await </span><span class="s5">_findClosestPackageJson</span><span class="s1">(</span><span class="s5">dirname</span><span class="s1">(</span><span class="s2">filename</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">pkg &amp;&amp; pkg.type === &quot;</span><span class="s3">module</span><span class="s2">&quot;</span>
+      <span class="s2">? {</span>
+          <span class="s1">source</span><span class="s2">: `</span><span class="s3">export default </span><span class="s2">${rawSource}`,</span>
+          <span class="s1">format</span><span class="s2">: &quot;</span><span class="s3">module</span><span class="s2">&quot;,</span>
+          <span class="s1">shortCircuit</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+        <span class="s2">}</span>
+      <span class="s2">: {</span>
+          <span class="s1">source</span><span class="s2">: `</span><span class="s3">module.exports = </span><span class="s2">${rawSource}`,</span>
+          <span class="s1">format</span><span class="s2">: &quot;</span><span class="s3">commonjs</span><span class="s2">&quot;,</span>
+          <span class="s1">shortCircuit</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+        <span class="s2">};</span>
+  <span class="s2">}</span>
+
+  <span class="s0">const </span><span class="s2">transpiledSource = jiti.</span><span class="s5">transform</span><span class="s1">(</span><span class="s2">{</span>
+    <span class="s1">source</span><span class="s2">: rawSource,</span>
+    <span class="s1">filename</span><span class="s2">: filename,</span>
+    <span class="s1">ts</span><span class="s2">: url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">ts</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s1">retainLines</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+    <span class="s1">async</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+    <span class="s1">jsx</span><span class="s2">: jiti.options.jsx,</span>
+  <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">.js</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">&amp;&amp; !transpiledSource.</span><span class="s5">includes</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">jitiImport</span><span class="s2">&quot;</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">source</span><span class="s2">: transpiledSource,</span>
+      <span class="s1">format</span><span class="s2">: &quot;</span><span class="s3">commonjs</span><span class="s2">&quot;,</span>
+      <span class="s1">shortCircuit</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+    <span class="s2">};</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">{</span>
+    <span class="s1">source</span><span class="s2">: </span><span class="s5">_wrapSource</span><span class="s1">(</span><span class="s2">transpiledSource, filename</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s1">format</span><span class="s2">: &quot;</span><span class="s3">module</span><span class="s2">&quot;,</span>
+    <span class="s1">shortCircuit</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+  <span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">_wrapSource</span><span class="s2">(source, filename) {</span>
+  <span class="s0">const </span><span class="s2">_jitiPath = new </span><span class="s5">URL</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">jiti.mjs</span><span class="s2">&quot;, </span><span class="s0">import</span><span class="s2">.</span><span class="s1">meta</span><span class="s2">.url</span><span class="s1">)</span><span class="s2">.href;</span>
+  <span class="s0">return </span><span class="s2">/*</span><span class="s4">js</span><span class="s2">*/ `</span><span class="s3">import { createJiti as __createJiti__ } from </span><span class="s2">${JSON.</span><span class="s5">stringify</span><span class="s1">(</span><span class="s2">_jitiPath</span><span class="s1">)</span><span class="s2">}</span><span class="s3">;async function _module(exports, require, module, __filename, __dirname, jitiImport) { </span><span class="s2">${source}</span><span class="s7">\n</span><span class="s3">}; 
+// GENERATED BY JITI ESM LOADER 
+const filename = </span><span class="s2">${JSON.</span><span class="s5">stringify</span><span class="s1">(</span><span class="s2">filename</span><span class="s1">)</span><span class="s2">}</span><span class="s3">; 
+const dirname = </span><span class="s2">${JSON.</span><span class="s5">stringify</span><span class="s1">(</span><span class="s5">dirname</span><span class="s1">(</span><span class="s2">filename</span><span class="s1">))</span><span class="s2">}</span><span class="s3">; 
+const jiti = __createJiti__(filename); 
+const module = { exports: Object.create(null) }; 
+await _module(module.exports, jiti, module, filename, dirname, jiti.import); 
+if (module.exports &amp;&amp; module.exports.__JITI_ERROR__) { 
+  const { filename, line, column, code, message } = 
+  module.exports.__JITI_ERROR__; 
+  const loc = [filename, line, column].join(':'); 
+  const err = new Error(code + &quot;: &quot; + message + &quot; &quot; + loc); 
+  Error.captureStackTrace(err, _module); 
+  throw err; 
+} 
+export default module.exports; 
+  </span><span class="s2">`;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">_shouldSkip</span><span class="s2">(url) {</span>
+  <span class="s0">return </span><span class="s1">(</span>
+    <span class="s2">!jiti ||</span>
+    <span class="s2">url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">.mjs</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">||</span>
+    <span class="s2">url.</span><span class="s5">endsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">.cjs</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">||</span>
+    <span class="s1">(</span><span class="s2">!url.</span><span class="s5">startsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">./</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">&amp;&amp; !url.</span><span class="s5">startsWith</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">file://</span><span class="s2">&quot;</span><span class="s1">)) </span><span class="s2">||</span>
+    <span class="s5">isBuiltin</span><span class="s1">(</span><span class="s2">url</span><span class="s1">)</span>
+  <span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">async function </span><span class="s5">_findClosestPackageJson</span><span class="s2">(dir) {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">dir === &quot;</span><span class="s3">/</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s0">return </span><span class="s6">null</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">packageJsonPath = </span><span class="s5">join</span><span class="s1">(</span><span class="s2">dir, &quot;</span><span class="s3">package.json</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s5">existsSync</span><span class="s1">(</span><span class="s2">packageJsonPath</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">JSON.</span><span class="s5">parse</span><span class="s1">(</span><span class="s0">await </span><span class="s5">readFile</span><span class="s1">(</span><span class="s2">packageJsonPath, &quot;</span><span class="s3">utf8</span><span class="s2">&quot;</span><span class="s1">))</span><span class="s2">;</span>
+  <span class="s2">}</span>
+  <span class="s0">return </span><span class="s5">_findClosestPackageJson</span><span class="s1">(</span><span class="s5">dirname</span><span class="s1">(</span><span class="s2">dir</span><span class="s1">))</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

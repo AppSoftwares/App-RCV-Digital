@@ -1,0 +1,182 @@
+<html>
+<head>
+<title>retry.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #6aab73;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+retry.js</font>
+</center></td></tr></table>
+<pre><span class="s0">// Copyright 2018 Google LLC</span>
+<span class="s0">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s0">// you may not use this file except in compliance with the License.</span>
+<span class="s0">// You may obtain a copy of the License at</span>
+<span class="s0">//</span>
+<span class="s0">//    http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s0">//</span>
+<span class="s0">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s0">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s0">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s0">// See the License for the specific language governing permissions and</span>
+<span class="s0">// limitations under the License.</span>
+<span class="s1">export async </span><span class="s2">function </span><span class="s1">getRetryConfig(err) {</span>
+    <span class="s1">let config = getConfig(err);</span>
+    <span class="s2">if </span><span class="s1">(!err || !err.config || (!config &amp;&amp; !err.config.retry)) {</span>
+        <span class="s2">return </span><span class="s1">{ shouldRetry: </span><span class="s2">false </span><span class="s1">};</span>
+    <span class="s1">}</span>
+    <span class="s1">config = config || {};</span>
+    <span class="s1">config.currentRetryAttempt = config.currentRetryAttempt || </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s1">config.retry =</span>
+        <span class="s1">config.retry === undefined || config.retry === </span><span class="s2">null </span><span class="s1">? </span><span class="s3">3 </span><span class="s1">: config.retry;</span>
+    <span class="s1">config.httpMethodsToRetry = config.httpMethodsToRetry || [</span>
+        <span class="s4">'GET'</span><span class="s1">,</span>
+        <span class="s4">'HEAD'</span><span class="s1">,</span>
+        <span class="s4">'PUT'</span><span class="s1">,</span>
+        <span class="s4">'OPTIONS'</span><span class="s1">,</span>
+        <span class="s4">'DELETE'</span><span class="s1">,</span>
+    <span class="s1">];</span>
+    <span class="s1">config.noResponseRetries =</span>
+        <span class="s1">config.noResponseRetries === undefined || config.noResponseRetries === </span><span class="s2">null</span>
+            <span class="s1">? </span><span class="s3">2</span>
+            <span class="s1">: config.noResponseRetries;</span>
+    <span class="s1">config.retryDelayMultiplier = config.retryDelayMultiplier</span>
+        <span class="s1">? config.retryDelayMultiplier</span>
+        <span class="s1">: </span><span class="s3">2</span><span class="s1">;</span>
+    <span class="s1">config.timeOfFirstRequest = config.timeOfFirstRequest</span>
+        <span class="s1">? config.timeOfFirstRequest</span>
+        <span class="s1">: Date.now();</span>
+    <span class="s1">config.totalTimeout = config.totalTimeout</span>
+        <span class="s1">? config.totalTimeout</span>
+        <span class="s1">: Number.MAX_SAFE_INTEGER;</span>
+    <span class="s1">config.maxRetryDelay = config.maxRetryDelay</span>
+        <span class="s1">? config.maxRetryDelay</span>
+        <span class="s1">: Number.MAX_SAFE_INTEGER;</span>
+    <span class="s0">// If this wasn't in the list of status codes where we want</span>
+    <span class="s0">// to automatically retry, return.</span>
+    <span class="s1">const retryRanges = [</span>
+        <span class="s0">// https://en.wikipedia.org/wiki/List_of_HTTP_status_codes</span>
+        <span class="s0">// 1xx - Retry (Informational, request still processing)</span>
+        <span class="s0">// 2xx - Do not retry (Success)</span>
+        <span class="s0">// 3xx - Do not retry (Redirect)</span>
+        <span class="s0">// 4xx - Do not retry (Client errors)</span>
+        <span class="s0">// 408 - Retry (&quot;Request Timeout&quot;)</span>
+        <span class="s0">// 429 - Retry (&quot;Too Many Requests&quot;)</span>
+        <span class="s0">// 5xx - Retry (Server errors)</span>
+        <span class="s1">[</span><span class="s3">100</span><span class="s1">, </span><span class="s3">199</span><span class="s1">],</span>
+        <span class="s1">[</span><span class="s3">408</span><span class="s1">, </span><span class="s3">408</span><span class="s1">],</span>
+        <span class="s1">[</span><span class="s3">429</span><span class="s1">, </span><span class="s3">429</span><span class="s1">],</span>
+        <span class="s1">[</span><span class="s3">500</span><span class="s1">, </span><span class="s3">599</span><span class="s1">],</span>
+    <span class="s1">];</span>
+    <span class="s1">config.statusCodesToRetry = config.statusCodesToRetry || retryRanges;</span>
+    <span class="s0">// Put the config back into the err</span>
+    <span class="s1">err.config.retryConfig = config;</span>
+    <span class="s0">// Determine if we should retry the request</span>
+    <span class="s1">const shouldRetryFn = config.shouldRetry || shouldRetryRequest;</span>
+    <span class="s2">if </span><span class="s1">(!(await shouldRetryFn(err))) {</span>
+        <span class="s2">return </span><span class="s1">{ shouldRetry: </span><span class="s2">false</span><span class="s1">, config: err.config };</span>
+    <span class="s1">}</span>
+    <span class="s1">const delay = getNextRetryDelay(config);</span>
+    <span class="s0">// We're going to retry!  Increment the counter.</span>
+    <span class="s1">err.config.retryConfig.currentRetryAttempt += </span><span class="s3">1</span><span class="s1">;</span>
+    <span class="s0">// Create a promise that invokes the retry after the backOffDelay</span>
+    <span class="s1">const backoff = config.retryBackoff</span>
+        <span class="s1">? config.retryBackoff(err, delay)</span>
+        <span class="s1">: </span><span class="s2">new </span><span class="s1">Promise(resolve =&gt; {</span>
+            <span class="s1">setTimeout(resolve, delay);</span>
+        <span class="s1">});</span>
+    <span class="s0">// Notify the user if they added an `onRetryAttempt` handler</span>
+    <span class="s2">if </span><span class="s1">(config.onRetryAttempt) {</span>
+        <span class="s1">await config.onRetryAttempt(err);</span>
+    <span class="s1">}</span>
+    <span class="s0">// Return the promise in which recalls Gaxios to retry the request</span>
+    <span class="s1">await backoff;</span>
+    <span class="s2">return </span><span class="s1">{ shouldRetry: </span><span class="s2">true</span><span class="s1">, config: err.config };</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Determine based on config if we should retry the request. 
+ * @param err The GaxiosError passed to the interceptor. 
+ */</span>
+<span class="s2">function </span><span class="s1">shouldRetryRequest(err) {</span>
+    <span class="s1">const config = getConfig(err);</span>
+    <span class="s2">if </span><span class="s1">((err.config.signal?.aborted &amp;&amp; err.code !== </span><span class="s4">'TimeoutError'</span><span class="s1">) ||</span>
+        <span class="s1">err.code === </span><span class="s4">'AbortError'</span><span class="s1">) {</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">// If there's no config, or retries are disabled, return.</span>
+    <span class="s2">if </span><span class="s1">(!config || config.retry === </span><span class="s3">0</span><span class="s1">) {</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">// Check if this error has no response (ETIMEDOUT, ENOTFOUND, etc)</span>
+    <span class="s2">if </span><span class="s1">(!err.response &amp;&amp;</span>
+        <span class="s1">(config.currentRetryAttempt || </span><span class="s3">0</span><span class="s1">) &gt;= config.noResponseRetries) {</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">// Only retry with configured HttpMethods.</span>
+    <span class="s2">if </span><span class="s1">(!config.httpMethodsToRetry ||</span>
+        <span class="s1">!config.httpMethodsToRetry.includes(err.config.method?.toUpperCase() || </span><span class="s4">'GET'</span><span class="s1">)) {</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s0">// If this wasn't in the list of status codes where we want</span>
+    <span class="s0">// to automatically retry, return.</span>
+    <span class="s2">if </span><span class="s1">(err.response &amp;&amp; err.response.status) {</span>
+        <span class="s1">let isInRange = </span><span class="s2">false</span><span class="s1">;</span>
+        <span class="s2">for </span><span class="s1">(const [min, max] of config.statusCodesToRetry) {</span>
+            <span class="s1">const status = err.response.status;</span>
+            <span class="s2">if </span><span class="s1">(status &gt;= min &amp;&amp; status &lt;= max) {</span>
+                <span class="s1">isInRange = </span><span class="s2">true</span><span class="s1">;</span>
+                <span class="s2">break</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(!isInRange) {</span>
+            <span class="s2">return false</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s0">// If we are out of retry attempts, return</span>
+    <span class="s1">config.currentRetryAttempt = config.currentRetryAttempt || </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(config.currentRetryAttempt &gt;= config.retry) {</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return true</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Acquire the raxConfig object from an GaxiosError if available. 
+ * @param err The Gaxios error with a config object. 
+ */</span>
+<span class="s2">function </span><span class="s1">getConfig(err) {</span>
+    <span class="s2">if </span><span class="s1">(err &amp;&amp; err.config &amp;&amp; err.config.retryConfig) {</span>
+        <span class="s2">return </span><span class="s1">err.config.retryConfig;</span>
+    <span class="s1">}</span>
+    <span class="s2">return</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Gets the delay to wait before the next retry. 
+ * 
+ * @param {RetryConfig} config The current set of retry options 
+ * @returns {number} the amount of ms to wait before the next retry attempt. 
+ */</span>
+<span class="s2">function </span><span class="s1">getNextRetryDelay(config) {</span>
+    <span class="s0">// Calculate time to wait with exponential backoff.</span>
+    <span class="s0">// If this is the first retry, look for a configured retryDelay.</span>
+    <span class="s1">const retryDelay = config.currentRetryAttempt</span>
+        <span class="s1">? </span><span class="s3">0</span>
+        <span class="s1">: (config.retryDelay ?? </span><span class="s3">100</span><span class="s1">);</span>
+    <span class="s0">// Formula: retryDelay + ((retryDelayMultiplier^currentRetryAttempt - 1 / 2) * 1000)</span>
+    <span class="s1">const calculatedDelay = retryDelay +</span>
+        <span class="s1">((Math.pow(config.retryDelayMultiplier, config.currentRetryAttempt) - </span><span class="s3">1</span><span class="s1">) /</span>
+            <span class="s3">2</span><span class="s1">) *</span>
+            <span class="s3">1000</span><span class="s1">;</span>
+    <span class="s1">const maxAllowableDelay = config.totalTimeout - (Date.now() - config.timeOfFirstRequest);</span>
+    <span class="s2">return </span><span class="s1">Math.min(calculatedDelay, maxAllowableDelay, config.maxRetryDelay);</span>
+<span class="s1">}</span>
+<span class="s0">//# sourceMappingURL=retry.js.map</span></pre>
+</body>
+</html>

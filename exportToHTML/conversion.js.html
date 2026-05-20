@@ -1,0 +1,629 @@
+<html>
+<head>
+<title>conversion.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+conversion.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.arrowFunctionToExpression = arrowFunctionToExpression;</span>
+<span class="s1">exports.ensureBlock = ensureBlock;</span>
+<span class="s1">exports.ensureFunctionName = ensureFunctionName;</span>
+<span class="s1">exports.splitExportDeclaration = splitExportDeclaration;</span>
+<span class="s1">exports.toComputedKey = toComputedKey;</span>
+<span class="s1">exports.unwrapFunctionEnvironment = unwrapFunctionEnvironment;</span>
+<span class="s2">var </span><span class="s1">_t = require(</span><span class="s0">&quot;@babel/types&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_template = require(</span><span class="s0">&quot;@babel/template&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_visitors = require(</span><span class="s0">&quot;../visitors.js&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_context = require(</span><span class="s0">&quot;./context.js&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+  <span class="s1">arrowFunctionExpression,</span>
+  <span class="s1">assignmentExpression,</span>
+  <span class="s1">binaryExpression,</span>
+  <span class="s1">blockStatement,</span>
+  <span class="s1">callExpression,</span>
+  <span class="s1">conditionalExpression,</span>
+  <span class="s1">expressionStatement,</span>
+  <span class="s1">identifier,</span>
+  <span class="s1">isIdentifier,</span>
+  <span class="s1">jsxIdentifier,</span>
+  <span class="s1">logicalExpression,</span>
+  <span class="s1">LOGICAL_OPERATORS,</span>
+  <span class="s1">memberExpression,</span>
+  <span class="s1">metaProperty,</span>
+  <span class="s1">numericLiteral,</span>
+  <span class="s1">objectExpression,</span>
+  <span class="s1">restElement,</span>
+  <span class="s1">returnStatement,</span>
+  <span class="s1">sequenceExpression,</span>
+  <span class="s1">spreadElement,</span>
+  <span class="s1">stringLiteral,</span>
+  <span class="s1">super: _super,</span>
+  <span class="s1">thisExpression,</span>
+  <span class="s1">toExpression,</span>
+  <span class="s1">unaryExpression,</span>
+  <span class="s1">toBindingIdentifierName,</span>
+  <span class="s1">isFunction,</span>
+  <span class="s1">isAssignmentPattern,</span>
+  <span class="s1">isRestElement,</span>
+  <span class="s1">getFunctionName,</span>
+  <span class="s1">cloneNode,</span>
+  <span class="s1">variableDeclaration,</span>
+  <span class="s1">variableDeclarator,</span>
+  <span class="s1">exportNamedDeclaration,</span>
+  <span class="s1">exportSpecifier,</span>
+  <span class="s1">inherits</span>
+<span class="s1">} = _t;</span>
+<span class="s2">function </span><span class="s1">toComputedKey() {</span>
+  <span class="s1">let key;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isMemberExpression()) {</span>
+    <span class="s1">key = </span><span class="s2">this</span><span class="s1">.node.property;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isProperty() || </span><span class="s2">this</span><span class="s1">.isMethod()) {</span>
+    <span class="s1">key = </span><span class="s2">this</span><span class="s1">.node.key;</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s2">throw new </span><span class="s1">ReferenceError(</span><span class="s0">&quot;todo&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.node.computed) {</span>
+    <span class="s2">if </span><span class="s1">(isIdentifier(key)) key = stringLiteral(key.name);</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">key;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">ensureBlock() {</span>
+  <span class="s1">const body = </span><span class="s2">this</span><span class="s1">.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">);</span>
+  <span class="s1">const bodyNode = body.node;</span>
+  <span class="s2">if </span><span class="s1">(Array.isArray(body)) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Can't convert array path to a block statement&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!bodyNode) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Can't convert node without a body&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(body.isBlockStatement()) {</span>
+    <span class="s2">return </span><span class="s1">bodyNode;</span>
+  <span class="s1">}</span>
+  <span class="s1">const statements = [];</span>
+  <span class="s1">let stringPath = </span><span class="s0">&quot;body&quot;</span><span class="s1">;</span>
+  <span class="s1">let key;</span>
+  <span class="s1">let listKey;</span>
+  <span class="s2">if </span><span class="s1">(body.isStatement()) {</span>
+    <span class="s1">listKey = </span><span class="s0">&quot;body&quot;</span><span class="s1">;</span>
+    <span class="s1">key = </span><span class="s3">0</span><span class="s1">;</span>
+    <span class="s1">statements.push(body.node);</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">stringPath += </span><span class="s0">&quot;.body.0&quot;</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isFunction()) {</span>
+      <span class="s1">key = </span><span class="s0">&quot;argument&quot;</span><span class="s1">;</span>
+      <span class="s1">statements.push(returnStatement(body.node));</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">key = </span><span class="s0">&quot;expression&quot;</span><span class="s1">;</span>
+      <span class="s1">statements.push(expressionStatement(body.node));</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">this</span><span class="s1">.node.body = blockStatement(statements);</span>
+  <span class="s1">const parentPath = </span><span class="s2">this</span><span class="s1">.get(stringPath);</span>
+  <span class="s1">_context.setup.call(body, parentPath, listKey ? parentPath.node[listKey] : parentPath.node, listKey, key);</span>
+  <span class="s2">return this</span><span class="s1">.node;</span>
+<span class="s1">}</span>
+<span class="s1">exports.arrowFunctionToShadowed = </span><span class="s2">function </span><span class="s1">() {</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.isArrowFunctionExpression()) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">this</span><span class="s1">.arrowFunctionToExpression();</span>
+<span class="s1">};</span>
+<span class="s2">function </span><span class="s1">unwrapFunctionEnvironment() {</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.isArrowFunctionExpression() &amp;&amp; !</span><span class="s2">this</span><span class="s1">.isFunctionExpression() &amp;&amp; !</span><span class="s2">this</span><span class="s1">.isFunctionDeclaration()) {</span>
+    <span class="s2">throw this</span><span class="s1">.buildCodeFrameError(</span><span class="s0">&quot;Can only unwrap the environment of a function.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">hoistFunctionEnvironment(</span><span class="s2">this</span><span class="s1">);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">setType(path, type) {</span>
+  <span class="s1">path.node.type = type;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">arrowFunctionToExpression({</span>
+  <span class="s1">allowInsertArrow = </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">allowInsertArrowWithRest = allowInsertArrow,</span>
+  <span class="s1">noNewArrows = !(_arguments$ =&gt; (_arguments$ = arguments[</span><span class="s3">0</span><span class="s1">]) == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: _arguments$.specCompliant)()</span>
+<span class="s1">} = {}) {</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.isArrowFunctionExpression()) {</span>
+    <span class="s2">throw this</span><span class="s1">.buildCodeFrameError(</span><span class="s0">&quot;Cannot convert non-arrow function to a function expression.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">let self = </span><span class="s2">this</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(!noNewArrows) {</span>
+    <span class="s2">var </span><span class="s1">_self$ensureFunctionN;</span>
+    <span class="s1">self = (_self$ensureFunctionN = self.ensureFunctionName(</span><span class="s2">false</span><span class="s1">)) != </span><span class="s2">null </span><span class="s1">? _self$ensureFunctionN : self;</span>
+  <span class="s1">}</span>
+  <span class="s1">const {</span>
+    <span class="s1">thisBinding,</span>
+    <span class="s1">fnPath: fn</span>
+  <span class="s1">} = hoistFunctionEnvironment(self, noNewArrows, allowInsertArrow, allowInsertArrowWithRest);</span>
+  <span class="s1">fn.ensureBlock();</span>
+  <span class="s1">setType(fn, </span><span class="s0">&quot;FunctionExpression&quot;</span><span class="s1">);</span>
+  <span class="s2">if </span><span class="s1">(!noNewArrows) {</span>
+    <span class="s1">const checkBinding = thisBinding ? </span><span class="s2">null </span><span class="s1">: fn.scope.generateUidIdentifier(</span><span class="s0">&quot;arrowCheckId&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(checkBinding) {</span>
+      <span class="s1">fn.parentPath.scope.push({</span>
+        <span class="s1">id: checkBinding,</span>
+        <span class="s1">init: objectExpression([])</span>
+      <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s1">fn.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).unshiftContainer(</span><span class="s0">&quot;body&quot;</span><span class="s1">, expressionStatement(callExpression(</span><span class="s2">this</span><span class="s1">.hub.addHelper(</span><span class="s0">&quot;newArrowCheck&quot;</span><span class="s1">), [thisExpression(), checkBinding ? identifier(checkBinding.name) : identifier(thisBinding)])));</span>
+    <span class="s1">fn.replaceWith(callExpression(memberExpression(fn.node, identifier(</span><span class="s0">&quot;bind&quot;</span><span class="s1">)), [checkBinding ? identifier(checkBinding.name) : thisExpression()]));</span>
+    <span class="s2">return </span><span class="s1">fn.get(</span><span class="s0">&quot;callee.object&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">fn;</span>
+<span class="s1">}</span>
+<span class="s1">const getSuperCallsVisitor = (</span><span class="s3">0</span><span class="s1">, _visitors.environmentVisitor)({</span>
+  <span class="s1">CallExpression(child, {</span>
+    <span class="s1">allSuperCalls</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(!child.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">).isSuper()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">allSuperCalls.push(child);</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+<span class="s2">function </span><span class="s1">hoistFunctionEnvironment(fnPath, noNewArrows = </span><span class="s2">true</span><span class="s1">, allowInsertArrow = </span><span class="s2">true</span><span class="s1">, allowInsertArrowWithRest = </span><span class="s2">true</span><span class="s1">) {</span>
+  <span class="s1">let arrowParent;</span>
+  <span class="s1">let thisEnvFn = fnPath.findParent(p =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(p.isArrowFunctionExpression()) {</span>
+      <span class="s1">arrowParent != </span><span class="s2">null </span><span class="s1">? arrowParent : arrowParent = p;</span>
+      <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">p.isFunction() || p.isProgram() || p.isClassProperty({</span>
+      <span class="s1">static: </span><span class="s2">false</span>
+    <span class="s1">}) || p.isClassPrivateProperty({</span>
+      <span class="s1">static: </span><span class="s2">false</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+  <span class="s1">const inConstructor = thisEnvFn.isClassMethod({</span>
+    <span class="s1">kind: </span><span class="s0">&quot;constructor&quot;</span>
+  <span class="s1">});</span>
+  <span class="s2">if </span><span class="s1">(thisEnvFn.isClassProperty() || thisEnvFn.isClassPrivateProperty()) {</span>
+    <span class="s2">if </span><span class="s1">(arrowParent) {</span>
+      <span class="s1">thisEnvFn = arrowParent;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(allowInsertArrow) {</span>
+      <span class="s1">fnPath.replaceWith(callExpression(arrowFunctionExpression([], toExpression(fnPath.node)), []));</span>
+      <span class="s1">thisEnvFn = fnPath.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">);</span>
+      <span class="s1">fnPath = thisEnvFn.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">throw </span><span class="s1">fnPath.buildCodeFrameError(</span><span class="s0">&quot;Unable to transform arrow inside class property&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s1">const {</span>
+    <span class="s1">thisPaths,</span>
+    <span class="s1">argumentsPaths,</span>
+    <span class="s1">newTargetPaths,</span>
+    <span class="s1">superProps,</span>
+    <span class="s1">superCalls</span>
+  <span class="s1">} = getScopeInformation(fnPath);</span>
+  <span class="s2">if </span><span class="s1">(inConstructor &amp;&amp; superCalls.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s2">if </span><span class="s1">(!allowInsertArrow) {</span>
+      <span class="s2">throw </span><span class="s1">superCalls[</span><span class="s3">0</span><span class="s1">].buildCodeFrameError(</span><span class="s0">&quot;When using '@babel/plugin-transform-arrow-functions', &quot; </span><span class="s1">+ </span><span class="s0">&quot;it's not possible to compile `super()` in an arrow function without compiling classes.</span><span class="s2">\n</span><span class="s0">&quot; </span><span class="s1">+ </span><span class="s0">&quot;Please add '@babel/plugin-transform-classes' to your Babel configuration.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(!allowInsertArrowWithRest) {</span>
+      <span class="s2">throw </span><span class="s1">superCalls[</span><span class="s3">0</span><span class="s1">].buildCodeFrameError(</span><span class="s0">&quot;When using '@babel/plugin-transform-parameters', &quot; </span><span class="s1">+ </span><span class="s0">&quot;it's not possible to compile `super()` in an arrow function with default or rest parameters without compiling classes.</span><span class="s2">\n</span><span class="s0">&quot; </span><span class="s1">+ </span><span class="s0">&quot;Please add '@babel/plugin-transform-classes' to your Babel configuration.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s1">const allSuperCalls = [];</span>
+    <span class="s1">thisEnvFn.traverse(getSuperCallsVisitor, {</span>
+      <span class="s1">allSuperCalls</span>
+    <span class="s1">});</span>
+    <span class="s1">const superBinding = getSuperBinding(thisEnvFn);</span>
+    <span class="s1">allSuperCalls.forEach(superCall =&gt; {</span>
+      <span class="s1">const callee = identifier(superBinding);</span>
+      <span class="s1">callee.loc = superCall.node.callee.loc;</span>
+      <span class="s1">superCall.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">).replaceWith(callee);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(argumentsPaths.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s1">const argumentsBinding = getBinding(thisEnvFn, </span><span class="s0">&quot;arguments&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">const args = () =&gt; identifier(</span><span class="s0">&quot;arguments&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(thisEnvFn.scope.path.isProgram()) {</span>
+        <span class="s2">return </span><span class="s1">conditionalExpression(binaryExpression(</span><span class="s0">&quot;===&quot;</span><span class="s1">, unaryExpression(</span><span class="s0">&quot;typeof&quot;</span><span class="s1">, args()), stringLiteral(</span><span class="s0">&quot;undefined&quot;</span><span class="s1">)), thisEnvFn.scope.buildUndefinedNode(), args());</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">return </span><span class="s1">args();</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">argumentsPaths.forEach(argumentsChild =&gt; {</span>
+      <span class="s1">const argsRef = identifier(argumentsBinding);</span>
+      <span class="s1">argsRef.loc = argumentsChild.node.loc;</span>
+      <span class="s1">argumentsChild.replaceWith(argsRef);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(newTargetPaths.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s1">const newTargetBinding = getBinding(thisEnvFn, </span><span class="s0">&quot;newtarget&quot;</span><span class="s1">, () =&gt; metaProperty(identifier(</span><span class="s0">&quot;new&quot;</span><span class="s1">), identifier(</span><span class="s0">&quot;target&quot;</span><span class="s1">)));</span>
+    <span class="s1">newTargetPaths.forEach(targetChild =&gt; {</span>
+      <span class="s1">const targetRef = identifier(newTargetBinding);</span>
+      <span class="s1">targetRef.loc = targetChild.node.loc;</span>
+      <span class="s1">targetChild.replaceWith(targetRef);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(superProps.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s2">if </span><span class="s1">(!allowInsertArrow) {</span>
+      <span class="s2">throw </span><span class="s1">superProps[</span><span class="s3">0</span><span class="s1">].buildCodeFrameError(</span><span class="s0">&quot;When using '@babel/plugin-transform-arrow-functions', &quot; </span><span class="s1">+ </span><span class="s0">&quot;it's not possible to compile `super.prop` in an arrow function without compiling classes.</span><span class="s2">\n</span><span class="s0">&quot; </span><span class="s1">+ </span><span class="s0">&quot;Please add '@babel/plugin-transform-classes' to your Babel configuration.&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s1">const flatSuperProps = superProps.reduce((acc, superProp) =&gt; acc.concat(standardizeSuperProperty(superProp)), []);</span>
+    <span class="s1">flatSuperProps.forEach(superProp =&gt; {</span>
+      <span class="s1">const key = superProp.node.computed ? </span><span class="s0">&quot;&quot; </span><span class="s1">: superProp.get(</span><span class="s0">&quot;property&quot;</span><span class="s1">).node.name;</span>
+      <span class="s1">const superParentPath = superProp.parentPath;</span>
+      <span class="s1">const isAssignment = superParentPath.isAssignmentExpression({</span>
+        <span class="s1">left: superProp.node</span>
+      <span class="s1">});</span>
+      <span class="s1">const isCall = superParentPath.isCallExpression({</span>
+        <span class="s1">callee: superProp.node</span>
+      <span class="s1">});</span>
+      <span class="s1">const isTaggedTemplate = superParentPath.isTaggedTemplateExpression({</span>
+        <span class="s1">tag: superProp.node</span>
+      <span class="s1">});</span>
+      <span class="s1">const superBinding = getSuperPropBinding(thisEnvFn, isAssignment, key);</span>
+      <span class="s1">const args = [];</span>
+      <span class="s2">if </span><span class="s1">(superProp.node.computed) {</span>
+        <span class="s1">args.push(superProp.get(</span><span class="s0">&quot;property&quot;</span><span class="s1">).node);</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(isAssignment) {</span>
+        <span class="s1">const value = superParentPath.node.right;</span>
+        <span class="s1">args.push(value);</span>
+      <span class="s1">}</span>
+      <span class="s1">const call = callExpression(identifier(superBinding), args);</span>
+      <span class="s2">if </span><span class="s1">(isCall) {</span>
+        <span class="s1">superParentPath.unshiftContainer(</span><span class="s0">&quot;arguments&quot;</span><span class="s1">, thisExpression());</span>
+        <span class="s1">superProp.replaceWith(memberExpression(call, identifier(</span><span class="s0">&quot;call&quot;</span><span class="s1">)));</span>
+        <span class="s1">thisPaths.push(superParentPath.get(</span><span class="s0">&quot;arguments.0&quot;</span><span class="s1">));</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isAssignment) {</span>
+        <span class="s1">superParentPath.replaceWith(call);</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isTaggedTemplate) {</span>
+        <span class="s1">superProp.replaceWith(callExpression(memberExpression(call, identifier(</span><span class="s0">&quot;bind&quot;</span><span class="s1">), </span><span class="s2">false</span><span class="s1">), [thisExpression()]));</span>
+        <span class="s1">thisPaths.push(superProp.get(</span><span class="s0">&quot;arguments.0&quot;</span><span class="s1">));</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">superProp.replaceWith(call);</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s1">let thisBinding;</span>
+  <span class="s2">if </span><span class="s1">(thisPaths.length &gt; </span><span class="s3">0 </span><span class="s1">|| !noNewArrows) {</span>
+    <span class="s1">thisBinding = getThisBinding(thisEnvFn, inConstructor);</span>
+    <span class="s2">if </span><span class="s1">(noNewArrows || inConstructor &amp;&amp; hasSuperClass(thisEnvFn)) {</span>
+      <span class="s1">thisPaths.forEach(thisChild =&gt; {</span>
+        <span class="s1">const thisRef = thisChild.isJSX() ? jsxIdentifier(thisBinding) : identifier(thisBinding);</span>
+        <span class="s1">thisRef.loc = thisChild.node.loc;</span>
+        <span class="s1">thisChild.replaceWith(thisRef);</span>
+      <span class="s1">});</span>
+      <span class="s2">if </span><span class="s1">(!noNewArrows) thisBinding = </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">thisBinding: thisBinding,</span>
+    <span class="s1">fnPath</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">isLogicalOp(op) {</span>
+  <span class="s2">return </span><span class="s1">LOGICAL_OPERATORS.includes(op);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">standardizeSuperProperty(superProp) {</span>
+  <span class="s2">if </span><span class="s1">(superProp.parentPath.isAssignmentExpression() &amp;&amp; superProp.parentPath.node.operator !== </span><span class="s0">&quot;=&quot;</span><span class="s1">) {</span>
+    <span class="s1">const assignmentPath = superProp.parentPath;</span>
+    <span class="s1">const op = assignmentPath.node.operator.slice(</span><span class="s3">0</span><span class="s1">, -</span><span class="s3">1</span><span class="s1">);</span>
+    <span class="s1">const value = assignmentPath.node.right;</span>
+    <span class="s1">const isLogicalAssignment = isLogicalOp(op);</span>
+    <span class="s2">if </span><span class="s1">(superProp.node.computed) {</span>
+      <span class="s1">const tmp = superProp.scope.generateDeclaredUidIdentifier(</span><span class="s0">&quot;tmp&quot;</span><span class="s1">);</span>
+      <span class="s1">const {</span>
+        <span class="s1">object,</span>
+        <span class="s1">property</span>
+      <span class="s1">} = superProp.node;</span>
+      <span class="s1">assignmentPath.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">).replaceWith(memberExpression(object, assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, tmp, property), </span><span class="s2">true</span><span class="s1">));</span>
+      <span class="s1">assignmentPath.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">).replaceWith(rightExpression(isLogicalAssignment ? </span><span class="s0">&quot;=&quot; </span><span class="s1">: op, memberExpression(object, identifier(tmp.name), </span><span class="s2">true</span><span class="s1">), value));</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">const object = superProp.node.object;</span>
+      <span class="s1">const property = superProp.node.property;</span>
+      <span class="s1">assignmentPath.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">).replaceWith(memberExpression(object, property));</span>
+      <span class="s1">assignmentPath.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">).replaceWith(rightExpression(isLogicalAssignment ? </span><span class="s0">&quot;=&quot; </span><span class="s1">: op, memberExpression(object, identifier(property.name)), value));</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(isLogicalAssignment) {</span>
+      <span class="s1">assignmentPath.replaceWith(logicalExpression(op, assignmentPath.node.left, assignmentPath.node.right));</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">assignmentPath.node.operator = </span><span class="s0">&quot;=&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">[assignmentPath.get(</span><span class="s0">&quot;left&quot;</span><span class="s1">), assignmentPath.get(</span><span class="s0">&quot;right&quot;</span><span class="s1">).get(</span><span class="s0">&quot;left&quot;</span><span class="s1">)];</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(superProp.parentPath.isUpdateExpression()) {</span>
+    <span class="s1">const updateExpr = superProp.parentPath;</span>
+    <span class="s1">const tmp = superProp.scope.generateDeclaredUidIdentifier(</span><span class="s0">&quot;tmp&quot;</span><span class="s1">);</span>
+    <span class="s1">const computedKey = superProp.node.computed ? superProp.scope.generateDeclaredUidIdentifier(</span><span class="s0">&quot;prop&quot;</span><span class="s1">) : </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s1">const parts = [assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, tmp, memberExpression(superProp.node.object, computedKey ? assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, computedKey, superProp.node.property) : superProp.node.property, superProp.node.computed)), assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, memberExpression(superProp.node.object, computedKey ? identifier(computedKey.name) : superProp.node.property, superProp.node.computed), binaryExpression(superProp.parentPath.node.operator[</span><span class="s3">0</span><span class="s1">], identifier(tmp.name), numericLiteral(</span><span class="s3">1</span><span class="s1">)))];</span>
+    <span class="s2">if </span><span class="s1">(!superProp.parentPath.node.prefix) {</span>
+      <span class="s1">parts.push(identifier(tmp.name));</span>
+    <span class="s1">}</span>
+    <span class="s1">updateExpr.replaceWith(sequenceExpression(parts));</span>
+    <span class="s1">const left = updateExpr.get(</span><span class="s0">&quot;expressions.0.right&quot;</span><span class="s1">);</span>
+    <span class="s1">const right = updateExpr.get(</span><span class="s0">&quot;expressions.1.left&quot;</span><span class="s1">);</span>
+    <span class="s2">return </span><span class="s1">[left, right];</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">[superProp];</span>
+  <span class="s2">function </span><span class="s1">rightExpression(op, left, right) {</span>
+    <span class="s2">if </span><span class="s1">(op === </span><span class="s0">&quot;=&quot;</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, left, right);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">return </span><span class="s1">binaryExpression(op, left, right);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">hasSuperClass(thisEnvFn) {</span>
+  <span class="s2">return </span><span class="s1">thisEnvFn.isClassMethod() &amp;&amp; !!thisEnvFn.parentPath.parentPath.node.superClass;</span>
+<span class="s1">}</span>
+<span class="s1">const assignSuperThisVisitor = (</span><span class="s3">0</span><span class="s1">, _visitors.environmentVisitor)({</span>
+  <span class="s1">CallExpression(child, {</span>
+    <span class="s1">supers,</span>
+    <span class="s1">thisBinding</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(!child.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">).isSuper()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(supers.has(child.node)) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">supers.add(child.node);</span>
+    <span class="s1">child.replaceWithMultiple([child.node, assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, identifier(thisBinding), identifier(</span><span class="s0">&quot;this&quot;</span><span class="s1">))]);</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+<span class="s2">function </span><span class="s1">getThisBinding(thisEnvFn, inConstructor) {</span>
+  <span class="s2">return </span><span class="s1">getBinding(thisEnvFn, </span><span class="s0">&quot;this&quot;</span><span class="s1">, thisBinding =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(!inConstructor || !hasSuperClass(thisEnvFn)) </span><span class="s2">return </span><span class="s1">thisExpression();</span>
+    <span class="s1">thisEnvFn.traverse(assignSuperThisVisitor, {</span>
+      <span class="s1">supers: </span><span class="s2">new </span><span class="s1">WeakSet(),</span>
+      <span class="s1">thisBinding</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getSuperBinding(thisEnvFn) {</span>
+  <span class="s2">return </span><span class="s1">getBinding(thisEnvFn, </span><span class="s0">&quot;supercall&quot;</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">const argsBinding = thisEnvFn.scope.generateUidIdentifier(</span><span class="s0">&quot;args&quot;</span><span class="s1">);</span>
+    <span class="s2">return </span><span class="s1">arrowFunctionExpression([restElement(argsBinding)], callExpression(_super(), [spreadElement(identifier(argsBinding.name))]));</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getSuperPropBinding(thisEnvFn, isAssignment, propName) {</span>
+  <span class="s1">const op = isAssignment ? </span><span class="s0">&quot;set&quot; </span><span class="s1">: </span><span class="s0">&quot;get&quot;</span><span class="s1">;</span>
+  <span class="s2">return </span><span class="s1">getBinding(thisEnvFn, `superprop_${op}:${propName || </span><span class="s0">&quot;&quot;</span><span class="s1">}`, () =&gt; {</span>
+    <span class="s1">const argsList = [];</span>
+    <span class="s1">let fnBody;</span>
+    <span class="s2">if </span><span class="s1">(propName) {</span>
+      <span class="s1">fnBody = memberExpression(_super(), identifier(propName));</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">const method = thisEnvFn.scope.generateUidIdentifier(</span><span class="s0">&quot;prop&quot;</span><span class="s1">);</span>
+      <span class="s1">argsList.unshift(method);</span>
+      <span class="s1">fnBody = memberExpression(_super(), identifier(method.name), </span><span class="s2">true</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(isAssignment) {</span>
+      <span class="s1">const valueIdent = thisEnvFn.scope.generateUidIdentifier(</span><span class="s0">&quot;value&quot;</span><span class="s1">);</span>
+      <span class="s1">argsList.push(valueIdent);</span>
+      <span class="s1">fnBody = assignmentExpression(</span><span class="s0">&quot;=&quot;</span><span class="s1">, fnBody, identifier(valueIdent.name));</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">arrowFunctionExpression(argsList, fnBody);</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getBinding(thisEnvFn, key, init) {</span>
+  <span class="s1">const cacheKey = </span><span class="s0">&quot;binding:&quot; </span><span class="s1">+ key;</span>
+  <span class="s1">let data = thisEnvFn.getData(cacheKey);</span>
+  <span class="s2">if </span><span class="s1">(!data) {</span>
+    <span class="s1">const id = thisEnvFn.scope.generateUidIdentifier(key);</span>
+    <span class="s1">data = id.name;</span>
+    <span class="s1">thisEnvFn.setData(cacheKey, data);</span>
+    <span class="s1">thisEnvFn.scope.push({</span>
+      <span class="s1">id: id,</span>
+      <span class="s1">init: init(data)</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">data;</span>
+<span class="s1">}</span>
+<span class="s1">const getScopeInformationVisitor = (</span><span class="s3">0</span><span class="s1">, _visitors.environmentVisitor)({</span>
+  <span class="s1">ThisExpression(child, {</span>
+    <span class="s1">thisPaths</span>
+  <span class="s1">}) {</span>
+    <span class="s1">thisPaths.push(child);</span>
+  <span class="s1">},</span>
+  <span class="s1">JSXIdentifier(child, {</span>
+    <span class="s1">thisPaths</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(child.node.name !== </span><span class="s0">&quot;this&quot;</span><span class="s1">) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!child.parentPath.isJSXMemberExpression({</span>
+      <span class="s1">object: child.node</span>
+    <span class="s1">}) &amp;&amp; !child.parentPath.isJSXOpeningElement({</span>
+      <span class="s1">name: child.node</span>
+    <span class="s1">})) {</span>
+      <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">thisPaths.push(child);</span>
+  <span class="s1">},</span>
+  <span class="s1">CallExpression(child, {</span>
+    <span class="s1">superCalls</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(child.get(</span><span class="s0">&quot;callee&quot;</span><span class="s1">).isSuper()) superCalls.push(child);</span>
+  <span class="s1">},</span>
+  <span class="s1">MemberExpression(child, {</span>
+    <span class="s1">superProps</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(child.get(</span><span class="s0">&quot;object&quot;</span><span class="s1">).isSuper()) superProps.push(child);</span>
+  <span class="s1">},</span>
+  <span class="s1">Identifier(child, {</span>
+    <span class="s1">argumentsPaths</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(!child.isReferencedIdentifier({</span>
+      <span class="s1">name: </span><span class="s0">&quot;arguments&quot;</span>
+    <span class="s1">})) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">let curr = child.scope;</span>
+    <span class="s2">do </span><span class="s1">{</span>
+      <span class="s2">if </span><span class="s1">(curr.hasOwnBinding(</span><span class="s0">&quot;arguments&quot;</span><span class="s1">)) {</span>
+        <span class="s1">curr.rename(</span><span class="s0">&quot;arguments&quot;</span><span class="s1">);</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(curr.path.isFunction() &amp;&amp; !curr.path.isArrowFunctionExpression()) {</span>
+        <span class="s2">break</span><span class="s1">;</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">while </span><span class="s1">(curr = curr.parent);</span>
+    <span class="s1">argumentsPaths.push(child);</span>
+  <span class="s1">},</span>
+  <span class="s1">MetaProperty(child, {</span>
+    <span class="s1">newTargetPaths</span>
+  <span class="s1">}) {</span>
+    <span class="s2">if </span><span class="s1">(!child.get(</span><span class="s0">&quot;meta&quot;</span><span class="s1">).isIdentifier({</span>
+      <span class="s1">name: </span><span class="s0">&quot;new&quot;</span>
+    <span class="s1">})) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!child.get(</span><span class="s0">&quot;property&quot;</span><span class="s1">).isIdentifier({</span>
+      <span class="s1">name: </span><span class="s0">&quot;target&quot;</span>
+    <span class="s1">})) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">newTargetPaths.push(child);</span>
+  <span class="s1">}</span>
+<span class="s1">});</span>
+<span class="s2">function </span><span class="s1">getScopeInformation(fnPath) {</span>
+  <span class="s1">const thisPaths = [];</span>
+  <span class="s1">const argumentsPaths = [];</span>
+  <span class="s1">const newTargetPaths = [];</span>
+  <span class="s1">const superProps = [];</span>
+  <span class="s1">const superCalls = [];</span>
+  <span class="s1">fnPath.traverse(getScopeInformationVisitor, {</span>
+    <span class="s1">thisPaths,</span>
+    <span class="s1">argumentsPaths,</span>
+    <span class="s1">newTargetPaths,</span>
+    <span class="s1">superProps,</span>
+    <span class="s1">superCalls</span>
+  <span class="s1">});</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">thisPaths,</span>
+    <span class="s1">argumentsPaths,</span>
+    <span class="s1">newTargetPaths,</span>
+    <span class="s1">superProps,</span>
+    <span class="s1">superCalls</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">splitExportDeclaration() {</span>
+  <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.isExportDeclaration() || </span><span class="s2">this</span><span class="s1">.isExportAllDeclaration()) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Only default and named export declarations can be split.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isExportNamedDeclaration() &amp;&amp; </span><span class="s2">this</span><span class="s1">.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;It doesn't make sense to split exported specifiers.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">const declaration = </span><span class="s2">this</span><span class="s1">.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.isExportDefaultDeclaration()) {</span>
+    <span class="s1">const standaloneDeclaration = declaration.isFunctionDeclaration() || declaration.isClassDeclaration();</span>
+    <span class="s1">const exportExpr = declaration.isFunctionExpression() || declaration.isClassExpression();</span>
+    <span class="s1">const scope = declaration.isScope() ? declaration.scope.parent : declaration.scope;</span>
+    <span class="s1">let id = declaration.node.id;</span>
+    <span class="s1">let needBindingRegistration = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!id) {</span>
+      <span class="s1">needBindingRegistration = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">id = scope.generateUidIdentifier(</span><span class="s0">&quot;default&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(standaloneDeclaration || exportExpr) {</span>
+        <span class="s1">declaration.node.id = cloneNode(id);</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(exportExpr &amp;&amp; scope.hasBinding(id.name)) {</span>
+      <span class="s1">needBindingRegistration = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">id = scope.generateUidIdentifier(id.name);</span>
+    <span class="s1">}</span>
+    <span class="s1">const updatedDeclaration = standaloneDeclaration ? declaration.node : variableDeclaration(</span><span class="s0">&quot;var&quot;</span><span class="s1">, [variableDeclarator(cloneNode(id), declaration.node)]);</span>
+    <span class="s1">const updatedExportDeclaration = exportNamedDeclaration(</span><span class="s2">null</span><span class="s1">, [exportSpecifier(cloneNode(id), identifier(</span><span class="s0">&quot;default&quot;</span><span class="s1">))]);</span>
+    <span class="s2">this</span><span class="s1">.insertAfter(updatedExportDeclaration);</span>
+    <span class="s2">this</span><span class="s1">.replaceWith(updatedDeclaration);</span>
+    <span class="s2">if </span><span class="s1">(needBindingRegistration) {</span>
+      <span class="s1">scope.registerDeclaration(</span><span class="s2">this</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;It doesn't make sense to split exported specifiers.&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">const bindingIdentifiers = declaration.getOuterBindingIdentifiers();</span>
+  <span class="s1">const specifiers = Object.keys(bindingIdentifiers).map(name =&gt; {</span>
+    <span class="s2">return </span><span class="s1">exportSpecifier(identifier(name), identifier(name));</span>
+  <span class="s1">});</span>
+  <span class="s1">const aliasDeclar = exportNamedDeclaration(</span><span class="s2">null</span><span class="s1">, specifiers);</span>
+  <span class="s2">this</span><span class="s1">.insertAfter(aliasDeclar);</span>
+  <span class="s2">this</span><span class="s1">.replaceWith(declaration.node);</span>
+  <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s1">const refersOuterBindingVisitor = {</span>
+  <span class="s0">&quot;ReferencedIdentifier|BindingIdentifier&quot;</span><span class="s1">(path, state) {</span>
+    <span class="s2">if </span><span class="s1">(path.node.name !== state.name) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">state.needsRename = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">path.stop();</span>
+  <span class="s1">},</span>
+  <span class="s1">Scope(path, state) {</span>
+    <span class="s2">if </span><span class="s1">(path.scope.hasOwnBinding(state.name)) {</span>
+      <span class="s1">path.skip();</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+<span class="s2">function </span><span class="s1">ensureFunctionName(supportUnicodeId) {</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.node.id) </span><span class="s2">return this</span><span class="s1">;</span>
+  <span class="s1">const res = getFunctionName(</span><span class="s2">this</span><span class="s1">.node, </span><span class="s2">this</span><span class="s1">.parent);</span>
+  <span class="s2">if </span><span class="s1">(res == </span><span class="s2">null</span><span class="s1">) </span><span class="s2">return this</span><span class="s1">;</span>
+  <span class="s1">let {</span>
+    <span class="s1">name</span>
+  <span class="s1">} = res;</span>
+  <span class="s2">if </span><span class="s1">(!supportUnicodeId &amp;&amp; /[\uD800-\uDFFF]/.test(name)) {</span>
+    <span class="s2">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(name.startsWith(</span><span class="s0">&quot;get &quot;</span><span class="s1">) || name.startsWith(</span><span class="s0">&quot;set &quot;</span><span class="s1">)) {</span>
+    <span class="s2">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">name = toBindingIdentifierName(name.replace(/[/ ]/g, </span><span class="s0">&quot;_&quot;</span><span class="s1">));</span>
+  <span class="s1">const id = identifier(name);</span>
+  <span class="s1">inherits(id, res.originalNode);</span>
+  <span class="s1">const state = {</span>
+    <span class="s1">needsRename: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">name</span>
+  <span class="s1">};</span>
+  <span class="s1">const {</span>
+    <span class="s1">scope</span>
+  <span class="s1">} = </span><span class="s2">this</span><span class="s1">;</span>
+  <span class="s1">const binding = scope.getOwnBinding(name);</span>
+  <span class="s2">if </span><span class="s1">(binding) {</span>
+    <span class="s2">if </span><span class="s1">(binding.kind === </span><span class="s0">&quot;param&quot;</span><span class="s1">) {</span>
+      <span class="s1">state.needsRename = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{}</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(scope.parent.hasBinding(name) || scope.hasGlobal(name)) {</span>
+    <span class="s2">this</span><span class="s1">.traverse(refersOuterBindingVisitor, state);</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!state.needsRename) {</span>
+    <span class="s2">this</span><span class="s1">.node.id = id;</span>
+    <span class="s1">scope.getProgramParent().references[id.name] = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(scope.hasBinding(id.name) &amp;&amp; !scope.hasGlobal(id.name)) {</span>
+    <span class="s1">scope.rename(id.name);</span>
+    <span class="s2">this</span><span class="s1">.node.id = id;</span>
+    <span class="s1">scope.getProgramParent().references[id.name] = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!isFunction(</span><span class="s2">this</span><span class="s1">.node)) </span><span class="s2">return null</span><span class="s1">;</span>
+  <span class="s1">const key = scope.generateUidIdentifier(id.name);</span>
+  <span class="s1">const params = [];</span>
+  <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">, len = getFunctionArity(</span><span class="s2">this</span><span class="s1">.node); i &lt; len; i++) {</span>
+    <span class="s1">params.push(scope.generateUidIdentifier(</span><span class="s0">&quot;x&quot;</span><span class="s1">));</span>
+  <span class="s1">}</span>
+  <span class="s1">const call = _template.</span><span class="s2">default</span><span class="s1">.expression.ast`</span>
+    <span class="s1">(</span><span class="s2">function </span><span class="s1">(${key}) {</span>
+      <span class="s2">function </span><span class="s1">${id}(${params}) {</span>
+        <span class="s2">return </span><span class="s1">${cloneNode(key)}.apply(</span><span class="s2">this</span><span class="s1">, arguments);</span>
+      <span class="s1">}</span>
+
+      <span class="s1">${cloneNode(id)}.toString = </span><span class="s2">function </span><span class="s1">() {</span>
+        <span class="s2">return </span><span class="s1">${cloneNode(key)}.toString();</span>
+      <span class="s1">}</span>
+
+      <span class="s2">return </span><span class="s1">${cloneNode(id)};</span>
+    <span class="s1">})(${toExpression(</span><span class="s2">this</span><span class="s1">.node)})</span>
+  <span class="s1">`;</span>
+  <span class="s2">return this</span><span class="s1">.replaceWith(call)[</span><span class="s3">0</span><span class="s1">].get(</span><span class="s0">&quot;arguments.0&quot;</span><span class="s1">);</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getFunctionArity(node) {</span>
+  <span class="s1">const count = node.params.findIndex(param =&gt; isAssignmentPattern(param) || isRestElement(param));</span>
+  <span class="s2">return </span><span class="s1">count === -</span><span class="s3">1 </span><span class="s1">? node.params.length : count;</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=conversion.js.map</span>
+</pre>
+</body>
+</html>

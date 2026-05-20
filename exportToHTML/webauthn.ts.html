@@ -1,0 +1,973 @@
+<html>
+<head>
+<title>webauthn.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+.s8 { color: #bcbec4; font-style: italic;}
+.s9 { color: #42c3d4;}
+.s10 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+webauthn.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">GoTrueClient </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../GoTrueClient</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ base64UrlToUint8Array, bytesToBase64URL } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./base64url</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ AuthError, AuthUnknownError, isAuthError } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./errors</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">AuthMFAEnrollWebauthnResponse,</span>
+  <span class="s2">AuthMFAVerifyResponse,</span>
+  <span class="s2">AuthMFAVerifyResponseData,</span>
+  <span class="s2">MFAChallengeWebauthnParams,</span>
+  <span class="s2">MFAEnrollWebauthnParams,</span>
+  <span class="s2">MFAVerifyWebauthnParamFields,</span>
+  <span class="s2">MFAVerifyWebauthnParams,</span>
+  <span class="s2">RequestResult,</span>
+  <span class="s2">StrictOmit,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ isBrowser } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./helpers</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">AuthenticationCredential,</span>
+  <span class="s2">AuthenticationResponseJSON,</span>
+  <span class="s2">AuthenticatorAttachment,</span>
+  <span class="s2">PublicKeyCredentialCreationOptionsFuture,</span>
+  <span class="s2">PublicKeyCredentialCreationOptionsJSON,</span>
+  <span class="s2">PublicKeyCredentialFuture,</span>
+  <span class="s2">PublicKeyCredentialRequestOptionsFuture,</span>
+  <span class="s2">PublicKeyCredentialRequestOptionsJSON,</span>
+  <span class="s2">RegistrationCredential,</span>
+  <span class="s2">RegistrationResponseJSON,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./webauthn.dom</span><span class="s2">'</span>
+
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">identifyAuthenticationError,</span>
+  <span class="s2">identifyRegistrationError,</span>
+  <span class="s2">isWebAuthnError,</span>
+  <span class="s2">WebAuthnError,</span>
+  <span class="s2">WebAuthnUnknownError,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./webauthn.errors</span><span class="s2">'</span>
+
+<span class="s0">export </span><span class="s2">{ WebAuthnError, isWebAuthnError, identifyRegistrationError, identifyAuthenticationError }</span>
+<span class="s2">// </span><span class="s4">Re-export the JSON types for use in other files</span>
+<span class="s0">export type </span><span class="s2">{ RegistrationResponseJSON, AuthenticationResponseJSON }</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* WebAuthn abort service to manage ceremony cancellation. 
+ * Ensures only one WebAuthn ceremony is active at a time to prevent &quot;operation already in progress&quot; errors. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This class is experimental and may change in future releases 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-automation-webdriver-capability W3C WebAuthn Spec - Aborting Ceremonies}</span>
+ <span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">WebAuthnAbortService {</span>
+  <span class="s0">private </span><span class="s2">controller: AbortController | undefined</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Create an abort signal for a new WebAuthn operation. 
+   * Automatically cancels any existing operation. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{AbortSignal} </span><span class="s4">Signal to pass to navigator.credentials.create() or .get() 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal MDN - AbortSignal}</span>
+   <span class="s2">*/</span>
+  <span class="s5">createNewAbortSignal</span><span class="s2">(): AbortSignal {</span>
+    <span class="s2">// </span><span class="s4">Abort any existing calls to navigator.credentials.create() or navigator.credentials.get()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.controller</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">abortError = new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Cancelling existing WebAuthn API call for new one</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">abortError.name = '</span><span class="s3">AbortError</span><span class="s2">'</span>
+      <span class="s2">this.controller.</span><span class="s5">abort</span><span class="s1">(</span><span class="s2">abortError</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">newController = new </span><span class="s5">AbortController</span><span class="s1">()</span>
+    <span class="s2">this.controller = newController</span>
+    <span class="s0">return </span><span class="s2">newController.signal</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Manually cancel the current WebAuthn operation. 
+   * Useful for cleaning up when user cancels or navigates away. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/AbortController/abort MDN - AbortController.abort}</span>
+   <span class="s2">*/</span>
+  <span class="s5">cancelCeremony</span><span class="s2">(): void {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">this.controller</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">abortError = new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Manually cancelling existing WebAuthn API call</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">abortError.name = '</span><span class="s3">AbortError</span><span class="s2">'</span>
+      <span class="s2">this.controller.</span><span class="s5">abort</span><span class="s1">(</span><span class="s2">abortError</span><span class="s1">)</span>
+      <span class="s2">this.controller = </span><span class="s6">undefined</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Singleton instance to ensure only one WebAuthn ceremony is active at a time. 
+ * This prevents &quot;operation already in progress&quot; errors when retrying WebAuthn operations. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This instance is experimental and may change in future releases 
+ </span><span class="s2">*/</span>
+<span class="s0">export const </span><span class="s2">webAuthnAbortService = new </span><span class="s5">WebAuthnAbortService</span><span class="s1">()</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Server response format for WebAuthn credential creation options. 
+ * Uses W3C standard JSON format with base64url-encoded binary fields. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ServerCredentialCreationOptions = PublicKeyCredentialCreationOptionsJSON</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Server response format for WebAuthn credential request options. 
+ * Uses W3C standard JSON format with base64url-encoded binary fields. 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ServerCredentialRequestOptions = PublicKeyCredentialRequestOptionsJSON</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Convert base64url encoded strings in WebAuthn credential creation options to ArrayBuffers 
+ * as required by the WebAuthn browser API. 
+ * Supports both native WebAuthn Level 3 parseCreationOptionsFromJSON and manual fallback. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{ServerCredentialCreationOptions} options </span><span class="s4">- JSON options from server with base64url encoded fields 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} </span><span class="s4">Options ready for navigator.credentials.create() 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-parseCreationOptionsFromJSON W3C WebAuthn Spec - parseCreationOptionsFromJSON}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">deserializeCredentialCreationOptions</span><span class="s2">(</span>
+  <span class="s2">options: ServerCredentialCreationOptions</span>
+<span class="s2">): PublicKeyCredentialCreationOptionsFuture {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">!options</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Credential creation options are required</span><span class="s2">'</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Check if the native parseCreationOptionsFromJSON method is available</span>
+  <span class="s0">if </span><span class="s1">(</span>
+    <span class="s2">typeof PublicKeyCredential !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp;</span>
+    <span class="s2">'</span><span class="s3">parseCreationOptionsFromJSON</span><span class="s2">' in PublicKeyCredential &amp;&amp;</span>
+    <span class="s2">typeof </span><span class="s1">(</span><span class="s2">PublicKeyCredential </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">PublicKeyCredentialFuture</span><span class="s1">)</span>
+      <span class="s2">.parseCreationOptionsFromJSON === '</span><span class="s3">function</span><span class="s2">'</span>
+  <span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">// </span><span class="s4">Use the native WebAuthn Level 3 method</span>
+    <span class="s0">return </span><span class="s1">(</span>
+      <span class="s2">PublicKeyCredential </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">PublicKeyCredentialFuture</span>
+    <span class="s1">)</span><span class="s2">.</span><span class="s5">parseCreationOptionsFromJSON</span><span class="s1">(</span>
+      <span class="s2">/** </span><span class="s4">we assert the options here as typescript still doesn't know about future webauthn types </span><span class="s2">*/</span>
+      <span class="s2">options </span><span class="s0">as </span><span class="s2">any</span>
+    <span class="s1">) </span><span class="s0">as </span><span class="s2">PublicKeyCredentialCreationOptionsFuture</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Fallback to manual parsing for browsers that don't support the native method</span>
+  <span class="s2">// </span><span class="s4">Destructure to separate fields that need transformation</span>
+  <span class="s0">const </span><span class="s2">{ challenge: challengeStr, user: userOpts, excludeCredentials, ...restOptions } = options</span>
+
+  <span class="s2">// </span><span class="s4">Convert challenge from base64url to ArrayBuffer</span>
+  <span class="s0">const </span><span class="s2">challenge = </span><span class="s5">base64UrlToUint8Array</span><span class="s1">(</span><span class="s2">challengeStr</span><span class="s1">)</span><span class="s2">.buffer </span><span class="s0">as </span><span class="s2">ArrayBuffer</span>
+
+  <span class="s2">// </span><span class="s4">Convert user.id from base64url to ArrayBuffer</span>
+  <span class="s0">const </span><span class="s2">user: PublicKeyCredentialUserEntity = {</span>
+    <span class="s2">...userOpts,</span>
+    <span class="s1">id</span><span class="s2">: </span><span class="s5">base64UrlToUint8Array</span><span class="s1">(</span><span class="s2">userOpts.id</span><span class="s1">)</span><span class="s2">.buffer </span><span class="s0">as </span><span class="s2">ArrayBuffer,</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Build the result object</span>
+  <span class="s0">const </span><span class="s2">result: PublicKeyCredentialCreationOptionsFuture = {</span>
+    <span class="s2">...restOptions,</span>
+    <span class="s2">challenge,</span>
+    <span class="s2">user,</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Only add excludeCredentials if it exists</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">excludeCredentials &amp;&amp; excludeCredentials.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s7">0</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">result.excludeCredentials = new </span><span class="s5">Array</span><span class="s1">(</span><span class="s2">excludeCredentials.</span><span class="s1">length)</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; excludeCredentials.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">cred = excludeCredentials</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span>
+      <span class="s2">result.excludeCredentials</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">= {</span>
+        <span class="s2">...cred,</span>
+        <span class="s1">id</span><span class="s2">: </span><span class="s5">base64UrlToUint8Array</span><span class="s1">(</span><span class="s2">cred.id</span><span class="s1">)</span><span class="s2">.buffer,</span>
+        <span class="s1">type</span><span class="s2">: cred.type || '</span><span class="s3">public-key</span><span class="s2">',</span>
+        <span class="s2">// </span><span class="s4">Cast transports to handle future transport types like &quot;cable&quot;</span>
+        <span class="s1">transports</span><span class="s2">: cred.transports,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">result</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Convert base64url encoded strings in WebAuthn credential request options to ArrayBuffers 
+ * as required by the WebAuthn browser API. 
+ * Supports both native WebAuthn Level 3 parseRequestOptionsFromJSON and manual fallback. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{ServerCredentialRequestOptions} options </span><span class="s4">- JSON options from server with base64url encoded fields 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} </span><span class="s4">Options ready for navigator.credentials.get() 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-parseRequestOptionsFromJSON W3C WebAuthn Spec - parseRequestOptionsFromJSON}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">deserializeCredentialRequestOptions</span><span class="s2">(</span>
+  <span class="s2">options: ServerCredentialRequestOptions</span>
+<span class="s2">): PublicKeyCredentialRequestOptionsFuture {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">!options</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Credential request options are required</span><span class="s2">'</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Check if the native parseRequestOptionsFromJSON method is available</span>
+  <span class="s0">if </span><span class="s1">(</span>
+    <span class="s2">typeof PublicKeyCredential !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp;</span>
+    <span class="s2">'</span><span class="s3">parseRequestOptionsFromJSON</span><span class="s2">' in PublicKeyCredential &amp;&amp;</span>
+    <span class="s2">typeof </span><span class="s1">(</span><span class="s2">PublicKeyCredential </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">PublicKeyCredentialFuture</span><span class="s1">)</span>
+      <span class="s2">.parseRequestOptionsFromJSON === '</span><span class="s3">function</span><span class="s2">'</span>
+  <span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">// </span><span class="s4">Use the native WebAuthn Level 3 method</span>
+    <span class="s0">return </span><span class="s1">(</span>
+      <span class="s2">PublicKeyCredential </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">PublicKeyCredentialFuture</span>
+    <span class="s1">)</span><span class="s2">.</span><span class="s5">parseRequestOptionsFromJSON</span><span class="s1">(</span><span class="s2">options</span><span class="s1">) </span><span class="s0">as </span><span class="s2">PublicKeyCredentialRequestOptionsFuture</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Fallback to manual parsing for browsers that don't support the native method</span>
+  <span class="s2">// </span><span class="s4">Destructure to separate fields that need transformation</span>
+  <span class="s0">const </span><span class="s2">{ challenge: challengeStr, allowCredentials, ...restOptions } = options</span>
+
+  <span class="s2">// </span><span class="s4">Convert challenge from base64url to ArrayBuffer</span>
+  <span class="s0">const </span><span class="s2">challenge = </span><span class="s5">base64UrlToUint8Array</span><span class="s1">(</span><span class="s2">challengeStr</span><span class="s1">)</span><span class="s2">.buffer </span><span class="s0">as </span><span class="s2">ArrayBuffer</span>
+
+  <span class="s2">// </span><span class="s4">Build the result object</span>
+  <span class="s0">const </span><span class="s2">result: PublicKeyCredentialRequestOptionsFuture = {</span>
+    <span class="s2">...restOptions,</span>
+    <span class="s2">challenge,</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Only add allowCredentials if it exists</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">allowCredentials &amp;&amp; allowCredentials.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s7">0</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">result.allowCredentials = new </span><span class="s5">Array</span><span class="s1">(</span><span class="s2">allowCredentials.</span><span class="s1">length)</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; allowCredentials.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">cred = allowCredentials</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span>
+      <span class="s2">result.allowCredentials</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">= {</span>
+        <span class="s2">...cred,</span>
+        <span class="s1">id</span><span class="s2">: </span><span class="s5">base64UrlToUint8Array</span><span class="s1">(</span><span class="s2">cred.id</span><span class="s1">)</span><span class="s2">.buffer,</span>
+        <span class="s1">type</span><span class="s2">: cred.type || '</span><span class="s3">public-key</span><span class="s2">',</span>
+        <span class="s2">// </span><span class="s4">Cast transports to handle future transport types like &quot;cable&quot;</span>
+        <span class="s1">transports</span><span class="s2">: cred.transports,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">result</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Server format for credential response with base64url-encoded binary fields 
+ * Can be either a registration or authentication response 
+ </span><span class="s2">*/</span>
+<span class="s0">export type </span><span class="s2">ServerCredentialResponse = RegistrationResponseJSON | AuthenticationResponseJSON</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Convert a registration/enrollment credential response to server format. 
+ * Serializes binary fields to base64url for JSON transmission. 
+ * Supports both native WebAuthn Level 3 toJSON and manual fallback. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{RegistrationCredential} credential </span><span class="s4">- Credential from navigator.credentials.create() 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{RegistrationResponseJSON} </span><span class="s4">JSON-serializable credential for server 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#dom-publickeycredential-tojson W3C WebAuthn Spec - toJSON}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">serializeCredentialCreationResponse</span><span class="s2">(</span>
+  <span class="s2">credential: RegistrationCredential</span>
+<span class="s2">): RegistrationResponseJSON {</span>
+  <span class="s2">// </span><span class="s4">Check if the credential instance has the toJSON method</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">toJSON</span><span class="s2">' in credential &amp;&amp; typeof credential.toJSON === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">// </span><span class="s4">Use the native WebAuthn Level 3 method</span>
+    <span class="s0">return </span><span class="s1">(</span><span class="s2">credential </span><span class="s0">as </span><span class="s2">RegistrationCredential</span><span class="s1">)</span><span class="s2">.</span><span class="s5">toJSON</span><span class="s1">()</span>
+  <span class="s2">}</span>
+  <span class="s0">const </span><span class="s2">credentialWithAttachment = credential </span><span class="s0">as </span><span class="s2">PublicKeyCredential &amp; {</span>
+    <span class="s2">response: AuthenticatorAttestationResponse</span>
+    <span class="s2">authenticatorAttachment?: string | null</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">{</span>
+    <span class="s1">id</span><span class="s2">: credential.id,</span>
+    <span class="s1">rawId</span><span class="s2">: credential.id,</span>
+    <span class="s1">response</span><span class="s2">: {</span>
+      <span class="s1">attestationObject</span><span class="s2">: </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">credential.response.attestationObject</span><span class="s1">))</span><span class="s2">,</span>
+      <span class="s1">clientDataJSON</span><span class="s2">: </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">credential.response.clientDataJSON</span><span class="s1">))</span><span class="s2">,</span>
+    <span class="s2">},</span>
+    <span class="s1">type</span><span class="s2">: '</span><span class="s3">public-key</span><span class="s2">',</span>
+    <span class="s1">clientExtensionResults</span><span class="s2">: credential.</span><span class="s5">getClientExtensionResults</span><span class="s1">()</span><span class="s2">,</span>
+    <span class="s2">// </span><span class="s4">Convert null to undefined and cast to AuthenticatorAttachment type</span>
+    <span class="s1">authenticatorAttachment</span><span class="s2">: </span><span class="s1">(</span><span class="s2">credentialWithAttachment.authenticatorAttachment ?? </span><span class="s6">undefined</span><span class="s1">) </span><span class="s0">as</span>
+      <span class="s2">| AuthenticatorAttachment</span>
+      <span class="s2">| </span><span class="s6">undefined</span><span class="s2">,</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Convert an authentication/verification credential response to server format. 
+ * Serializes binary fields to base64url for JSON transmission. 
+ * Supports both native WebAuthn Level 3 toJSON and manual fallback. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{AuthenticationCredential} credential </span><span class="s4">- Credential from navigator.credentials.get() 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{AuthenticationResponseJSON} </span><span class="s4">JSON-serializable credential for server 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#dom-publickeycredential-tojson W3C WebAuthn Spec - toJSON}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">serializeCredentialRequestResponse</span><span class="s2">(</span>
+  <span class="s2">credential: AuthenticationCredential</span>
+<span class="s2">): AuthenticationResponseJSON {</span>
+  <span class="s2">// </span><span class="s4">Check if the credential instance has the toJSON method</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">toJSON</span><span class="s2">' in credential &amp;&amp; typeof credential.toJSON === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">// </span><span class="s4">Use the native WebAuthn Level 3 method</span>
+    <span class="s0">return </span><span class="s1">(</span><span class="s2">credential </span><span class="s0">as </span><span class="s2">AuthenticationCredential</span><span class="s1">)</span><span class="s2">.</span><span class="s5">toJSON</span><span class="s1">()</span>
+  <span class="s2">}</span>
+
+  <span class="s2">// </span><span class="s4">Fallback to manual conversion for browsers that don't support toJSON</span>
+  <span class="s2">// </span><span class="s4">Access authenticatorAttachment via type assertion to handle TypeScript version differences</span>
+  <span class="s2">// </span><span class="s4">@simplewebauthn/types includes this property but base TypeScript 4.7.4 doesn't</span>
+  <span class="s0">const </span><span class="s2">credentialWithAttachment = credential </span><span class="s0">as </span><span class="s2">PublicKeyCredential &amp; {</span>
+    <span class="s2">response: AuthenticatorAssertionResponse</span>
+    <span class="s2">authenticatorAttachment?: string | null</span>
+  <span class="s2">}</span>
+
+  <span class="s0">const </span><span class="s2">clientExtensionResults = credential.</span><span class="s5">getClientExtensionResults</span><span class="s1">()</span>
+  <span class="s0">const </span><span class="s2">assertionResponse = credential.response</span>
+
+  <span class="s0">return </span><span class="s2">{</span>
+    <span class="s1">id</span><span class="s2">: credential.id,</span>
+    <span class="s1">rawId</span><span class="s2">: credential.id, // </span><span class="s4">W3C spec expects rawId to match id for JSON format</span>
+    <span class="s1">response</span><span class="s2">: {</span>
+      <span class="s1">authenticatorData</span><span class="s2">: </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">assertionResponse.authenticatorData</span><span class="s1">))</span><span class="s2">,</span>
+      <span class="s1">clientDataJSON</span><span class="s2">: </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">assertionResponse.clientDataJSON</span><span class="s1">))</span><span class="s2">,</span>
+      <span class="s1">signature</span><span class="s2">: </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">assertionResponse.signature</span><span class="s1">))</span><span class="s2">,</span>
+      <span class="s1">userHandle</span><span class="s2">: assertionResponse.userHandle</span>
+        <span class="s2">? </span><span class="s5">bytesToBase64URL</span><span class="s1">(</span><span class="s2">new </span><span class="s5">Uint8Array</span><span class="s1">(</span><span class="s2">assertionResponse.userHandle</span><span class="s1">))</span>
+        <span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+    <span class="s2">},</span>
+    <span class="s1">type</span><span class="s2">: '</span><span class="s3">public-key</span><span class="s2">',</span>
+    <span class="s2">clientExtensionResults,</span>
+    <span class="s2">// </span><span class="s4">Convert null to undefined and cast to AuthenticatorAttachment type</span>
+    <span class="s1">authenticatorAttachment</span><span class="s2">: </span><span class="s1">(</span><span class="s2">credentialWithAttachment.authenticatorAttachment ?? </span><span class="s6">undefined</span><span class="s1">) </span><span class="s0">as</span>
+      <span class="s2">| AuthenticatorAttachment</span>
+      <span class="s2">| </span><span class="s6">undefined</span><span class="s2">,</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* A simple test to determine if a hostname is a properly-formatted domain name. 
+ * Considers localhost valid for development environments. 
+ * 
+ * A &quot;valid domain&quot; is defined here: https://url.spec.whatwg.org/#valid-domain 
+ * 
+ * Regex sourced from here: 
+ * https://www.oreilly.com/library/view/regular-expressions-cookbook/9781449327453/ch08s15.html 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} hostname </span><span class="s4">- The hostname to validate 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{boolean} </span><span class="s4">True if valid domain or localhost 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://url.spec.whatwg.org/#valid-domain WHATWG URL Spec - Valid Domain}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">isValidDomain</span><span class="s2">(hostname: string): boolean {</span>
+  <span class="s0">return </span><span class="s1">(</span>
+    <span class="s2">// </span><span class="s4">Consider localhost valid as well since it's okay wrt Secure Contexts</span>
+    <span class="s2">hostname === '</span><span class="s3">localhost</span><span class="s2">' || /</span><span class="s0">^</span><span class="s2">(</span><span class="s8">[</span><span class="s6">a-z0-9</span><span class="s8">]</span><span class="s2">+(</span><span class="s9">-</span><span class="s8">[</span><span class="s6">a-z0-9</span><span class="s8">]</span><span class="s2">+)*</span><span class="s10">\.</span><span class="s2">)+</span><span class="s8">[</span><span class="s6">a-z</span><span class="s8">]</span><span class="s2">{2,}</span><span class="s0">$</span><span class="s2">/</span><span class="s0">i</span><span class="s2">.</span><span class="s5">test</span><span class="s1">(</span><span class="s2">hostname</span><span class="s1">)</span>
+  <span class="s1">)</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Determine if the browser is capable of WebAuthn. 
+ * Checks for necessary Web APIs: PublicKeyCredential and Credential Management. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{boolean} </span><span class="s4">True if browser supports WebAuthn 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredential#browser_compatibility MDN - PublicKeyCredential Browser Compatibility}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">browserSupportsWebAuthn</span><span class="s2">(): boolean {</span>
+  <span class="s0">return </span><span class="s2">!!</span><span class="s1">(</span>
+    <span class="s5">isBrowser</span><span class="s1">() </span><span class="s2">&amp;&amp;</span>
+    <span class="s2">'</span><span class="s3">PublicKeyCredential</span><span class="s2">' in window &amp;&amp;</span>
+    <span class="s2">window.PublicKeyCredential &amp;&amp;</span>
+    <span class="s2">'</span><span class="s3">credentials</span><span class="s2">' in navigator &amp;&amp;</span>
+    <span class="s2">typeof navigator?.credentials?.create === '</span><span class="s3">function</span><span class="s2">' &amp;&amp;</span>
+    <span class="s2">typeof navigator?.credentials?.get === '</span><span class="s3">function</span><span class="s2">'</span>
+  <span class="s1">)</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Create a WebAuthn credential using the browser's credentials API. 
+ * Wraps navigator.credentials.create() with error handling. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{CredentialCreationOptions} options </span><span class="s4">- Options including publicKey parameters 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;RequestResult&lt;RegistrationCredential, WebAuthnError&gt;&gt;} </span><span class="s4">Created credential or error 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-createCredential W3C WebAuthn Spec - Create Credential}</span>
+ <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/CredentialsContainer/create MDN - credentials.create}</span>
+ <span class="s2">*/</span>
+<span class="s0">export async function </span><span class="s5">createCredential</span><span class="s2">(</span>
+  <span class="s2">options: StrictOmit&lt;CredentialCreationOptions, '</span><span class="s3">publicKey</span><span class="s2">'&gt; &amp; {</span>
+    <span class="s2">publicKey: PublicKeyCredentialCreationOptionsFuture</span>
+  <span class="s2">}</span>
+<span class="s2">): Promise&lt;RequestResult&lt;RegistrationCredential, WebAuthnError&gt;&gt; {</span>
+  <span class="s0">try </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">response = </span><span class="s0">await </span><span class="s2">navigator.credentials.</span><span class="s5">create</span><span class="s1">(</span>
+      <span class="s2">/** </span><span class="s4">we assert the type here until typescript types are updated </span><span class="s2">*/</span>
+      <span class="s2">options </span><span class="s0">as </span><span class="s2">Parameters&lt;typeof navigator.credentials.create&gt;</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span>
+    <span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!response</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">WebAuthnUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Empty credential response</span><span class="s2">', response</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">response instanceof PublicKeyCredential</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">WebAuthnUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Browser returned unexpected credential type</span><span class="s2">', response</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: response </span><span class="s0">as </span><span class="s2">RegistrationCredential, </span><span class="s1">error</span><span class="s2">: </span><span class="s6">null </span><span class="s2">}</span>
+  <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">err</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+      <span class="s1">error</span><span class="s2">: </span><span class="s5">identifyRegistrationError</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">error</span><span class="s2">: err </span><span class="s0">as </span><span class="s2">Error,</span>
+        <span class="s2">options,</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Get a WebAuthn credential using the browser's credentials API. 
+ * Wraps navigator.credentials.get() with error handling. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{CredentialRequestOptions} options </span><span class="s4">- Options including publicKey parameters 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;RequestResult&lt;AuthenticationCredential, WebAuthnError&gt;&gt;} </span><span class="s4">Retrieved credential or error 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-getAssertion W3C WebAuthn Spec - Get Assertion}</span>
+ <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/CredentialsContainer/get MDN - credentials.get}</span>
+ <span class="s2">*/</span>
+<span class="s0">export async function </span><span class="s5">getCredential</span><span class="s2">(</span>
+  <span class="s2">options: StrictOmit&lt;CredentialRequestOptions, '</span><span class="s3">publicKey</span><span class="s2">'&gt; &amp; {</span>
+    <span class="s2">publicKey: PublicKeyCredentialRequestOptionsFuture</span>
+  <span class="s2">}</span>
+<span class="s2">): Promise&lt;RequestResult&lt;AuthenticationCredential, WebAuthnError&gt;&gt; {</span>
+  <span class="s0">try </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">response = </span><span class="s0">await </span><span class="s2">navigator.credentials.</span><span class="s5">get</span><span class="s1">(</span>
+      <span class="s2">/** </span><span class="s4">we assert the type here until typescript types are updated </span><span class="s2">*/</span>
+      <span class="s2">options </span><span class="s0">as </span><span class="s2">Parameters&lt;typeof navigator.credentials.get&gt;</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span>
+    <span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!response</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">WebAuthnUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Empty credential response</span><span class="s2">', response</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">response instanceof PublicKeyCredential</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">WebAuthnUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Browser returned unexpected credential type</span><span class="s2">', response</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: response </span><span class="s0">as </span><span class="s2">AuthenticationCredential, </span><span class="s1">error</span><span class="s2">: </span><span class="s6">null </span><span class="s2">}</span>
+  <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">err</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+      <span class="s1">error</span><span class="s2">: </span><span class="s5">identifyAuthenticationError</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">error</span><span class="s2">: err </span><span class="s0">as </span><span class="s2">Error,</span>
+        <span class="s2">options,</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export const </span><span class="s2">DEFAULT_CREATION_OPTIONS: Partial&lt;PublicKeyCredentialCreationOptionsFuture&gt; = {</span>
+  <span class="s1">hints</span><span class="s2">: </span><span class="s1">[</span><span class="s2">'</span><span class="s3">security-key</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s1">authenticatorSelection</span><span class="s2">: {</span>
+    <span class="s1">authenticatorAttachment</span><span class="s2">: '</span><span class="s3">cross-platform</span><span class="s2">',</span>
+    <span class="s1">requireResidentKey</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+    <span class="s2">/** </span><span class="s4">set to preferred because older yubikeys don't have PIN/Biometric </span><span class="s2">*/</span>
+    <span class="s1">userVerification</span><span class="s2">: '</span><span class="s3">preferred</span><span class="s2">',</span>
+    <span class="s1">residentKey</span><span class="s2">: '</span><span class="s3">discouraged</span><span class="s2">',</span>
+  <span class="s2">},</span>
+  <span class="s1">attestation</span><span class="s2">: '</span><span class="s3">direct</span><span class="s2">',</span>
+<span class="s2">}</span>
+
+<span class="s0">export const </span><span class="s2">DEFAULT_REQUEST_OPTIONS: Partial&lt;PublicKeyCredentialRequestOptionsFuture&gt; = {</span>
+  <span class="s2">/** </span><span class="s4">set to preferred because older yubikeys don't have PIN/Biometric </span><span class="s2">*/</span>
+  <span class="s1">userVerification</span><span class="s2">: '</span><span class="s3">preferred</span><span class="s2">',</span>
+  <span class="s1">hints</span><span class="s2">: </span><span class="s1">[</span><span class="s2">'</span><span class="s3">security-key</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s1">attestation</span><span class="s2">: '</span><span class="s3">direct</span><span class="s2">',</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">deepMerge</span><span class="s2">&lt;T&gt;(...sources: Partial&lt;T&gt;</span><span class="s1">[]</span><span class="s2">): T {</span>
+  <span class="s0">const </span><span class="s5">isObject </span><span class="s2">= (val: unknown): val is Record&lt;string, unknown&gt; </span><span class="s0">=&gt;</span>
+    <span class="s2">val !== </span><span class="s6">null </span><span class="s2">&amp;&amp; typeof val === '</span><span class="s3">object</span><span class="s2">' &amp;&amp; !Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">val</span><span class="s1">)</span>
+
+  <span class="s0">const </span><span class="s5">isArrayBufferLike </span><span class="s2">= (val: unknown): val is ArrayBuffer | ArrayBufferView </span><span class="s0">=&gt;</span>
+    <span class="s2">val instanceof ArrayBuffer || ArrayBuffer.</span><span class="s5">isView</span><span class="s1">(</span><span class="s2">val</span><span class="s1">)</span>
+
+  <span class="s0">const </span><span class="s2">result: Partial&lt;T&gt; = {}</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">source of sources</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!source</span><span class="s1">) </span><span class="s0">continue</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in source</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">value = source</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">value === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s0">continue</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s4">preserve array reference, including unions like AuthenticatorTransport[]</span>
+        <span class="s2">result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value </span><span class="s0">as </span><span class="s2">T</span><span class="s1">[</span><span class="s2">typeof key</span><span class="s1">]</span>
+      <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s5">isArrayBufferLike</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value </span><span class="s0">as </span><span class="s2">T</span><span class="s1">[</span><span class="s2">typeof key</span><span class="s1">]</span>
+      <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s5">isObject</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">existing = result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s5">isObject</span><span class="s1">(</span><span class="s2">existing</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s5">deepMerge</span><span class="s1">(</span><span class="s2">existing, value</span><span class="s1">) </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">T</span><span class="s1">[</span><span class="s2">typeof key</span><span class="s1">]</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+          <span class="s2">result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s5">deepMerge</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">T</span><span class="s1">[</span><span class="s2">typeof key</span><span class="s1">]</span>
+        <span class="s2">}</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">result</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value </span><span class="s0">as </span><span class="s2">T</span><span class="s1">[</span><span class="s2">typeof key</span><span class="s1">]</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">result </span><span class="s0">as </span><span class="s2">T</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Merges WebAuthn credential creation options with overrides. 
+ * Sets sensible defaults for authenticator selection and extensions. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} baseOptions </span><span class="s4">- The base options from the server 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} overrides </span><span class="s4">- Optional overrides to apply 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} friendlyName </span><span class="s4">- Optional friendly name for the credential 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} </span><span class="s4">Merged credential creation options 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#dictdef-authenticatorselectioncriteria W3C WebAuthn Spec - AuthenticatorSelectionCriteria}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">mergeCredentialCreationOptions</span><span class="s2">(</span>
+  <span class="s2">baseOptions: PublicKeyCredentialCreationOptionsFuture,</span>
+  <span class="s2">overrides?: Partial&lt;PublicKeyCredentialCreationOptionsFuture&gt;</span>
+<span class="s2">): PublicKeyCredentialCreationOptionsFuture {</span>
+  <span class="s0">return </span><span class="s5">deepMerge</span><span class="s1">(</span><span class="s2">DEFAULT_CREATION_OPTIONS, baseOptions, overrides || {}</span><span class="s1">)</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Merges WebAuthn credential request options with overrides. 
+ * Sets sensible defaults for user verification and hints. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} baseOptions </span><span class="s4">- The base options from the server 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} overrides </span><span class="s4">- Optional overrides to apply 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} </span><span class="s4">Merged credential request options 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#dictdef-publickeycredentialrequestoptions W3C WebAuthn Spec - PublicKeyCredentialRequestOptions}</span>
+ <span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">mergeCredentialRequestOptions</span><span class="s2">(</span>
+  <span class="s2">baseOptions: PublicKeyCredentialRequestOptionsFuture,</span>
+  <span class="s2">overrides?: Partial&lt;PublicKeyCredentialRequestOptionsFuture&gt;</span>
+<span class="s2">): PublicKeyCredentialRequestOptionsFuture {</span>
+  <span class="s0">return </span><span class="s5">deepMerge</span><span class="s1">(</span><span class="s2">DEFAULT_REQUEST_OPTIONS, baseOptions, overrides || {}</span><span class="s1">)</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* WebAuthn API wrapper for Supabase Auth. 
+ * Provides methods for enrolling, challenging, verifying, authenticating, and registering WebAuthn credentials. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This API is experimental and may change in future releases 
+ * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/ W3C WebAuthn Specification}</span>
+ <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API MDN - Web Authentication API}</span>
+ <span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">WebAuthnApi {</span>
+  <span class="s0">public </span><span class="s2">enroll: typeof </span><span class="s1">WebAuthnApi</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">._enroll</span>
+  <span class="s0">public </span><span class="s2">challenge: typeof </span><span class="s1">WebAuthnApi</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">._challenge</span>
+  <span class="s0">public </span><span class="s2">verify: typeof </span><span class="s1">WebAuthnApi</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">._verify</span>
+  <span class="s0">public </span><span class="s2">authenticate: typeof </span><span class="s1">WebAuthnApi</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">._authenticate</span>
+  <span class="s0">public </span><span class="s2">register: typeof </span><span class="s1">WebAuthnApi</span><span class="s2">.</span><span class="s1">prototype</span><span class="s2">._register</span>
+
+  <span class="s0">constructor</span><span class="s2">(</span><span class="s0">private </span><span class="s2">client: GoTrueClient) {</span>
+    <span class="s2">// </span><span class="s4">Bind all methods so they can be destructured</span>
+    <span class="s2">this.enroll = this._enroll.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s2">this.challenge = this._challenge.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s2">this.verify = this._verify.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s2">this.authenticate = this._authenticate.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+    <span class="s2">this.register = this._register.</span><span class="s5">bind</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Enroll a new WebAuthn factor. 
+   * Creates an unverified WebAuthn factor that must be verified with a credential. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This method is experimental and may change in future releases 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Omit&lt;MFAEnrollWebauthnParams, 'factorType'&gt;} params </span><span class="s4">- Enrollment parameters (friendlyName required) 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;AuthMFAEnrollWebauthnResponse&gt;} </span><span class="s4">Enrolled factor details or error 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-registering-a-new-credential W3C WebAuthn Spec - Registering a New Credential}</span>
+   <span class="s2">*/</span>
+  <span class="s0">public async </span><span class="s5">_enroll</span><span class="s2">(</span>
+    <span class="s2">params: Omit&lt;MFAEnrollWebauthnParams, '</span><span class="s3">factorType</span><span class="s2">'&gt;</span>
+  <span class="s2">): Promise&lt;AuthMFAEnrollWebauthnResponse&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.client.mfa.</span><span class="s5">enroll</span><span class="s1">(</span><span class="s2">{ ...params, </span><span class="s1">factorType</span><span class="s2">: '</span><span class="s3">webauthn</span><span class="s2">' }</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Challenge for WebAuthn credential creation or authentication. 
+   * Combines server challenge with browser credential operations. 
+   * Handles both registration (create) and authentication (request) flows. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This method is experimental and may change in future releases 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{MFAChallengeWebauthnParams &amp; { friendlyName?: string; signal?: AbortSignal }} params </span><span class="s4">- Challenge parameters including factorId 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} overrides </span><span class="s4">- Allows you to override the parameters passed to navigator.credentials 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} overrides.create </span><span class="s4">- Override options for credential creation 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} overrides.request </span><span class="s4">- Override options for credential request 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;RequestResult&gt;} </span><span class="s4">Challenge response with credential or error 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-credential-creation W3C WebAuthn Spec - Credential Creation}</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-verifying-assertion W3C WebAuthn Spec - Verifying Assertion}</span>
+   <span class="s2">*/</span>
+  <span class="s0">public async </span><span class="s5">_challenge</span><span class="s2">(</span>
+    <span class="s2">{</span>
+      <span class="s2">factorId,</span>
+      <span class="s2">webauthn,</span>
+      <span class="s2">friendlyName,</span>
+      <span class="s2">signal,</span>
+    <span class="s2">}: MFAChallengeWebauthnParams &amp; { friendlyName?: string; signal?: AbortSignal },</span>
+    <span class="s2">overrides?:</span>
+      <span class="s2">| {</span>
+          <span class="s2">create?: Partial&lt;PublicKeyCredentialCreationOptionsFuture&gt;</span>
+          <span class="s2">request?: never</span>
+        <span class="s2">}</span>
+      <span class="s2">| {</span>
+          <span class="s2">create?: never</span>
+          <span class="s2">request?: Partial&lt;PublicKeyCredentialRequestOptionsFuture&gt;</span>
+        <span class="s2">}</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">RequestResult&lt;</span>
+      <span class="s2">{ factorId: string; challengeId: string } &amp; {</span>
+        <span class="s2">webauthn: StrictOmit&lt;</span>
+          <span class="s2">MFAVerifyWebauthnParamFields&lt;'</span><span class="s3">create</span><span class="s2">' | '</span><span class="s3">request</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">'</span><span class="s3">webauthn</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+          <span class="s2">'</span><span class="s3">rpId</span><span class="s2">' | '</span><span class="s3">rpOrigins</span><span class="s2">'</span>
+        <span class="s2">&gt;</span>
+      <span class="s2">},</span>
+      <span class="s2">WebAuthnError | AuthError</span>
+    <span class="s2">&gt;</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s2">// </span><span class="s4">Get challenge from server using the client's MFA methods</span>
+      <span class="s0">const </span><span class="s2">{ data: challengeResponse, error: challengeError } = </span><span class="s0">await </span><span class="s2">this.client.mfa.</span><span class="s5">challenge</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">factorId,</span>
+        <span class="s2">webauthn,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!challengeResponse</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: challengeError }</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">abortSignal = signal ?? webAuthnAbortService.</span><span class="s5">createNewAbortSignal</span><span class="s1">()</span>
+
+      <span class="s2">/** </span><span class="s4">webauthn will fail if either of the name/displayname are blank </span><span class="s2">*/</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">challengeResponse.webauthn.type === '</span><span class="s3">create</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">{ user } = challengeResponse.webauthn.credential_options.publicKey</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!user.name</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">// </span><span class="s4">Preserve original format: use friendlyName if provided, otherwise fetch fallback</span>
+          <span class="s2">// </span><span class="s4">This maintains backward compatibility with the ${user.id}:${name} format</span>
+          <span class="s0">const </span><span class="s2">nameToUse = friendlyName</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">!nameToUse</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">// </span><span class="s4">Only fetch user data if friendlyName is not provided (bug fix for null friendlyName)</span>
+            <span class="s0">const </span><span class="s2">currentUser = </span><span class="s0">await </span><span class="s2">this.client.</span><span class="s5">getUser</span><span class="s1">()</span>
+            <span class="s0">const </span><span class="s2">userData = currentUser.data.user</span>
+            <span class="s0">const </span><span class="s2">fallbackName =</span>
+              <span class="s2">userData?.user_metadata?.name || userData?.email || userData?.id || '</span><span class="s3">User</span><span class="s2">'</span>
+            <span class="s2">user.name = `${user.id}</span><span class="s3">:</span><span class="s2">${fallbackName}`</span>
+          <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">user.name = `${user.id}</span><span class="s3">:</span><span class="s2">${nameToUse}`</span>
+          <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!user.displayName</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">user.displayName = user.name</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">switch </span><span class="s1">(</span><span class="s2">challengeResponse.webauthn.type</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">case </span><span class="s2">'</span><span class="s3">create</span><span class="s2">': {</span>
+          <span class="s0">const </span><span class="s2">options = </span><span class="s5">mergeCredentialCreationOptions</span><span class="s1">(</span>
+            <span class="s2">challengeResponse.webauthn.credential_options.publicKey,</span>
+            <span class="s2">overrides?.create</span>
+          <span class="s1">)</span>
+
+          <span class="s0">const </span><span class="s2">{ data, error } = </span><span class="s0">await </span><span class="s5">createCredential</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s1">publicKey</span><span class="s2">: options,</span>
+            <span class="s1">signal</span><span class="s2">: abortSignal,</span>
+          <span class="s2">}</span><span class="s1">)</span>
+
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">data</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">{</span>
+              <span class="s1">data</span><span class="s2">: {</span>
+                <span class="s2">factorId,</span>
+                <span class="s1">challengeId</span><span class="s2">: challengeResponse.id,</span>
+                <span class="s1">webauthn</span><span class="s2">: {</span>
+                  <span class="s1">type</span><span class="s2">: challengeResponse.webauthn.type,</span>
+                  <span class="s1">credential_response</span><span class="s2">: data,</span>
+                <span class="s2">},</span>
+              <span class="s2">},</span>
+              <span class="s1">error</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+            <span class="s2">}</span>
+          <span class="s2">}</span>
+          <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, error }</span>
+        <span class="s2">}</span>
+
+        <span class="s0">case </span><span class="s2">'</span><span class="s3">request</span><span class="s2">': {</span>
+          <span class="s0">const </span><span class="s2">options = </span><span class="s5">mergeCredentialRequestOptions</span><span class="s1">(</span>
+            <span class="s2">challengeResponse.webauthn.credential_options.publicKey,</span>
+            <span class="s2">overrides?.request</span>
+          <span class="s1">)</span>
+
+          <span class="s0">const </span><span class="s2">{ data, error } = </span><span class="s0">await </span><span class="s5">getCredential</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s2">...challengeResponse.webauthn.credential_options,</span>
+            <span class="s1">publicKey</span><span class="s2">: options,</span>
+            <span class="s1">signal</span><span class="s2">: abortSignal,</span>
+          <span class="s2">}</span><span class="s1">)</span>
+
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">data</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">{</span>
+              <span class="s1">data</span><span class="s2">: {</span>
+                <span class="s2">factorId,</span>
+                <span class="s1">challengeId</span><span class="s2">: challengeResponse.id,</span>
+                <span class="s1">webauthn</span><span class="s2">: {</span>
+                  <span class="s1">type</span><span class="s2">: challengeResponse.webauthn.type,</span>
+                  <span class="s1">credential_response</span><span class="s2">: data,</span>
+                <span class="s2">},</span>
+              <span class="s2">},</span>
+              <span class="s1">error</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+            <span class="s2">}</span>
+          <span class="s2">}</span>
+          <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, error }</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s5">isAuthError</span><span class="s1">(</span><span class="s2">error</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, error }</span>
+      <span class="s2">}</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Unexpected error in challenge</span><span class="s2">', error</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Verify a WebAuthn credential with the server. 
+   * Completes the WebAuthn ceremony by sending the credential to the server for verification. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This method is experimental and may change in future releases 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} params </span><span class="s4">- Verification parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.challengeId </span><span class="s4">- ID of the challenge being verified 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.factorId </span><span class="s4">- ID of the WebAuthn factor 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{MFAVerifyWebauthnParams&lt;T&gt;['webauthn']} params.webauthn </span><span class="s4">- WebAuthn credential response 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;AuthMFAVerifyResponse&gt;} </span><span class="s4">Verification result with session or error 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-verifying-assertion W3C WebAuthn Spec - Verifying an Authentication Assertion}</span>
+   <span class="s4">* </span><span class="s2">*/</span>
+  <span class="s0">public async </span><span class="s5">_verify</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">'</span><span class="s3">create</span><span class="s2">' | '</span><span class="s3">request</span><span class="s2">'&gt;({</span>
+    <span class="s2">challengeId,</span>
+    <span class="s2">factorId,</span>
+    <span class="s2">webauthn,</span>
+  <span class="s2">}: {</span>
+    <span class="s2">challengeId: string</span>
+    <span class="s2">factorId: string</span>
+    <span class="s2">webauthn: MFAVerifyWebauthnParams&lt;T&gt;</span><span class="s1">[</span><span class="s2">'</span><span class="s3">webauthn</span><span class="s2">'</span><span class="s1">]</span>
+  <span class="s2">}): Promise&lt;AuthMFAVerifyResponse&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.client.mfa.</span><span class="s5">verify</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">factorId,</span>
+      <span class="s2">challengeId,</span>
+      <span class="s1">webauthn</span><span class="s2">: webauthn,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Complete WebAuthn authentication flow. 
+   * Performs challenge and verification in a single operation for existing credentials. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This method is experimental and may change in future releases 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} params </span><span class="s4">- Authentication parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.factorId </span><span class="s4">- ID of the WebAuthn factor to authenticate with 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} params.webauthn </span><span class="s4">- WebAuthn configuration 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.webauthn.rpId </span><span class="s4">- Relying Party ID (defaults to current hostname) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string[]} params.webauthn.rpOrigins </span><span class="s4">- Allowed origins (defaults to current origin) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{AbortSignal} params.webauthn.signal </span><span class="s4">- Optional abort signal 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialRequestOptionsFuture} overrides </span><span class="s4">- Override options for navigator.credentials.get 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;RequestResult&lt;AuthMFAVerifyResponseData, WebAuthnError | AuthError&gt;&gt;} </span><span class="s4">Authentication result 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-authentication W3C WebAuthn Spec - Authentication Ceremony}</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialRequestOptions MDN - PublicKeyCredentialRequestOptions}</span>
+   <span class="s2">*/</span>
+  <span class="s0">public async </span><span class="s5">_authenticate</span><span class="s2">(</span>
+    <span class="s2">{</span>
+      <span class="s2">factorId,</span>
+      <span class="s2">webauthn: {</span>
+        <span class="s2">rpId = typeof window !== '</span><span class="s3">undefined</span><span class="s2">' ? window.location.hostname : </span><span class="s6">undefined</span><span class="s2">,</span>
+        <span class="s2">rpOrigins = typeof window !== '</span><span class="s3">undefined</span><span class="s2">' ? </span><span class="s1">[</span><span class="s2">window.location.origin</span><span class="s1">] </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+        <span class="s2">signal,</span>
+      <span class="s2">} = {},</span>
+    <span class="s2">}: {</span>
+      <span class="s2">factorId: string</span>
+      <span class="s2">webauthn?: {</span>
+        <span class="s2">rpId?: string</span>
+        <span class="s2">rpOrigins?: string</span><span class="s1">[]</span>
+        <span class="s2">signal?: AbortSignal</span>
+      <span class="s2">}</span>
+    <span class="s2">},</span>
+    <span class="s2">overrides?: PublicKeyCredentialRequestOptionsFuture</span>
+  <span class="s2">): Promise&lt;RequestResult&lt;AuthMFAVerifyResponseData, WebAuthnError | AuthError&gt;&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!rpId</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">rpId is required for WebAuthn authentication</span><span class="s2">'</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s5">browserSupportsWebAuthn</span><span class="s1">()) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{</span>
+          <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+          <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Browser does not support WebAuthn</span><span class="s2">', </span><span class="s6">null</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s2">// </span><span class="s4">Get challenge and credential</span>
+      <span class="s0">const </span><span class="s2">{ data: challengeResponse, error: challengeError } = </span><span class="s0">await </span><span class="s2">this.</span><span class="s5">challenge</span><span class="s1">(</span>
+        <span class="s2">{</span>
+          <span class="s2">factorId,</span>
+          <span class="s1">webauthn</span><span class="s2">: { rpId, rpOrigins },</span>
+          <span class="s2">signal,</span>
+        <span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">request</span><span class="s2">: overrides }</span>
+      <span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!challengeResponse</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: challengeError }</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">{ webauthn } = challengeResponse</span>
+
+      <span class="s2">// </span><span class="s4">Verify credential</span>
+      <span class="s0">return </span><span class="s2">this.</span><span class="s5">_verify</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">factorId,</span>
+        <span class="s1">challengeId</span><span class="s2">: challengeResponse.challengeId,</span>
+        <span class="s1">webauthn</span><span class="s2">: {</span>
+          <span class="s1">type</span><span class="s2">: webauthn.type,</span>
+          <span class="s2">rpId,</span>
+          <span class="s2">rpOrigins,</span>
+          <span class="s1">credential_response</span><span class="s2">: webauthn.credential_response,</span>
+        <span class="s2">},</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s5">isAuthError</span><span class="s1">(</span><span class="s2">error</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, error }</span>
+      <span class="s2">}</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Unexpected error in authenticate</span><span class="s2">', error</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Complete WebAuthn registration flow. 
+   * Performs enrollment, challenge, and verification in a single operation for new credentials. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s4">This method is experimental and may change in future releases 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{Object} params </span><span class="s4">- Registration parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.friendlyName </span><span class="s4">- User-friendly name for the credential 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string} params.rpId </span><span class="s4">- Relying Party ID (defaults to current hostname) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{string[]} params.rpOrigins </span><span class="s4">- Allowed origins (defaults to current origin) 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{AbortSignal} params.signal </span><span class="s4">- Optional abort signal 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">{PublicKeyCredentialCreationOptionsFuture} overrides </span><span class="s4">- Override options for navigator.credentials.create 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s2">{Promise&lt;RequestResult&lt;AuthMFAVerifyResponseData, WebAuthnError | AuthError&gt;&gt;} </span><span class="s4">Registration result 
+   * </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://w3c.github.io/webauthn/#sctn-registering-a-new-credential W3C WebAuthn Spec - Registration Ceremony}</span>
+   <span class="s4">* </span><span class="s2">@</span><span class="s0">see </span><span class="s2">{@</span><span class="s0">link </span><span class="s2">https://developer.mozilla.org/en-US/docs/Web/API/PublicKeyCredentialCreationOptions MDN - PublicKeyCredentialCreationOptions}</span>
+   <span class="s2">*/</span>
+  <span class="s0">public async </span><span class="s5">_register</span><span class="s2">(</span>
+    <span class="s2">{</span>
+      <span class="s2">friendlyName,</span>
+      <span class="s2">webauthn: {</span>
+        <span class="s2">rpId = typeof window !== '</span><span class="s3">undefined</span><span class="s2">' ? window.location.hostname : </span><span class="s6">undefined</span><span class="s2">,</span>
+        <span class="s2">rpOrigins = typeof window !== '</span><span class="s3">undefined</span><span class="s2">' ? </span><span class="s1">[</span><span class="s2">window.location.origin</span><span class="s1">] </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+        <span class="s2">signal,</span>
+      <span class="s2">} = {},</span>
+    <span class="s2">}: {</span>
+      <span class="s2">friendlyName: string</span>
+      <span class="s2">webauthn?: {</span>
+        <span class="s2">rpId?: string</span>
+        <span class="s2">rpOrigins?: string</span><span class="s1">[]</span>
+        <span class="s2">signal?: AbortSignal</span>
+      <span class="s2">}</span>
+    <span class="s2">},</span>
+    <span class="s2">overrides?: Partial&lt;PublicKeyCredentialCreationOptionsFuture&gt;</span>
+  <span class="s2">): Promise&lt;RequestResult&lt;AuthMFAVerifyResponseData, WebAuthnError | AuthError&gt;&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!rpId</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">rpId is required for WebAuthn registration</span><span class="s2">'</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s5">browserSupportsWebAuthn</span><span class="s1">()) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{</span>
+          <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+          <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Browser does not support WebAuthn</span><span class="s2">', </span><span class="s6">null</span><span class="s1">)</span><span class="s2">,</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s2">// </span><span class="s4">Enroll factor</span>
+      <span class="s0">const </span><span class="s2">{ data: factor, error: enrollError } = </span><span class="s0">await </span><span class="s2">this.</span><span class="s5">_enroll</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">friendlyName,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!factor</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">await </span><span class="s2">this.client.mfa</span>
+          <span class="s2">.</span><span class="s5">listFactors</span><span class="s1">()</span>
+          <span class="s2">.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">(factors) </span><span class="s0">=&gt;</span>
+            <span class="s2">factors.data?.all.</span><span class="s5">find</span><span class="s1">(</span>
+              <span class="s2">(v) </span><span class="s0">=&gt;</span>
+                <span class="s2">v.factor_type === '</span><span class="s3">webauthn</span><span class="s2">' &amp;&amp;</span>
+                <span class="s2">v.friendly_name === friendlyName &amp;&amp;</span>
+                <span class="s2">v.status !== '</span><span class="s3">unverified</span><span class="s2">'</span>
+            <span class="s1">)</span>
+          <span class="s1">)</span>
+          <span class="s2">.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">(factor) </span><span class="s0">=&gt; </span><span class="s1">(</span><span class="s2">factor ? this.client.mfa.</span><span class="s5">unenroll</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">factorId</span><span class="s2">: factor?.id }</span><span class="s1">) </span><span class="s2">: void </span><span class="s7">0</span><span class="s1">))</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: enrollError }</span>
+      <span class="s2">}</span>
+
+      <span class="s2">// </span><span class="s4">Get challenge and create credential</span>
+      <span class="s0">const </span><span class="s2">{ data: challengeResponse, error: challengeError } = </span><span class="s0">await </span><span class="s2">this.</span><span class="s5">_challenge</span><span class="s1">(</span>
+        <span class="s2">{</span>
+          <span class="s1">factorId</span><span class="s2">: factor.id,</span>
+          <span class="s1">friendlyName</span><span class="s2">: factor.friendly_name,</span>
+          <span class="s1">webauthn</span><span class="s2">: { rpId, rpOrigins },</span>
+          <span class="s2">signal,</span>
+        <span class="s2">},</span>
+        <span class="s2">{</span>
+          <span class="s1">create</span><span class="s2">: overrides,</span>
+        <span class="s2">}</span>
+      <span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!challengeResponse</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: challengeError }</span>
+      <span class="s2">}</span>
+
+      <span class="s0">return </span><span class="s2">this.</span><span class="s5">_verify</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">factorId</span><span class="s2">: factor.id,</span>
+        <span class="s1">challengeId</span><span class="s2">: challengeResponse.challengeId,</span>
+        <span class="s1">webauthn</span><span class="s2">: {</span>
+          <span class="s2">rpId,</span>
+          <span class="s2">rpOrigins,</span>
+          <span class="s1">type</span><span class="s2">: challengeResponse.webauthn.type,</span>
+          <span class="s1">credential_response</span><span class="s2">: challengeResponse.webauthn.credential_response,</span>
+        <span class="s2">},</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s5">isAuthError</span><span class="s1">(</span><span class="s2">error</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">, error }</span>
+      <span class="s2">}</span>
+      <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">data</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s1">error</span><span class="s2">: new </span><span class="s5">AuthUnknownError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Unexpected error in register</span><span class="s2">', error</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

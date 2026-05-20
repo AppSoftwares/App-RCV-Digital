@@ -1,0 +1,196 @@
+<html>
+<head>
+<title>util.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+util.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2023 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.LRUCache = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">exports.snakeToCamel = snakeToCamel;</span>
+<span class="s1">exports.originalOrCamelOptions = originalOrCamelOptions;</span>
+<span class="s1">exports.removeUndefinedValuesInObject = removeUndefinedValuesInObject;</span>
+<span class="s1">exports.isValidFile = isValidFile;</span>
+<span class="s1">exports.getWellKnownCertificateConfigFileLocation = getWellKnownCertificateConfigFileLocation;</span>
+<span class="s1">const fs = require(</span><span class="s0">&quot;fs&quot;</span><span class="s1">);</span>
+<span class="s1">const os = require(</span><span class="s0">&quot;os&quot;</span><span class="s1">);</span>
+<span class="s1">const path = require(</span><span class="s0">&quot;path&quot;</span><span class="s1">);</span>
+<span class="s1">const WELL_KNOWN_CERTIFICATE_CONFIG_FILE = </span><span class="s0">'certificate_config.json'</span><span class="s1">;</span>
+<span class="s1">const CLOUDSDK_CONFIG_DIRECTORY = </span><span class="s0">'gcloud'</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Returns the camel case of a provided string. 
+ * 
+ * @remarks 
+ * 
+ * Match any `_` and not `_` pair, then return the uppercase of the not `_` 
+ * character. 
+ * 
+ * @param str the string to convert 
+ * @returns the camelCase'd string 
+ */</span>
+<span class="s3">function </span><span class="s1">snakeToCamel(str) {</span>
+    <span class="s3">return </span><span class="s1">str.replace(/([_][^_])/g, match =&gt; match.slice(</span><span class="s4">1</span><span class="s1">).toUpperCase());</span>
+<span class="s1">}</span>
+<span class="s2">/** 
+ * Get the value of `obj[key]` or `obj[camelCaseKey]`, with a preference 
+ * for original, non-camelCase key. 
+ * 
+ * @param obj object to lookup a value in 
+ * @returns a `get` function for getting `obj[key || snakeKey]`, if available 
+ */</span>
+<span class="s3">function </span><span class="s1">originalOrCamelOptions(obj) {</span>
+    <span class="s2">/** 
+     * 
+     * @param key an index of object, preferably snake_case 
+     * @returns the value `obj[key || snakeKey]`, if available 
+     */</span>
+    <span class="s3">function </span><span class="s1">get(key) {</span>
+        <span class="s1">const o = (obj || {});</span>
+        <span class="s3">return </span><span class="s1">o[key] ?? o[snakeToCamel(key)];</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">{ get };</span>
+<span class="s1">}</span>
+<span class="s2">/** 
+ * A simple LRU cache utility. 
+ * Not meant for external usage. 
+ * 
+ * @experimental 
+ */</span>
+<span class="s1">class LRUCache {</span>
+    <span class="s1">capacity;</span>
+    <span class="s2">/** 
+     * Maps are in order. Thus, the older item is the first item. 
+     * 
+     * {@link https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map} 
+     */</span>
+    <span class="s1">#cache = </span><span class="s3">new </span><span class="s1">Map();</span>
+    <span class="s1">maxAge;</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s3">this</span><span class="s1">.capacity = options.capacity;</span>
+        <span class="s3">this</span><span class="s1">.maxAge = options.maxAge;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Moves the key to the end of the cache. 
+     * 
+     * @param key the key to move 
+     * @param value the value of the key 
+     */</span>
+    <span class="s1">#moveToEnd(key, value) {</span>
+        <span class="s3">this</span><span class="s1">.#cache.</span><span class="s3">delete</span><span class="s1">(key);</span>
+        <span class="s3">this</span><span class="s1">.#cache.set(key, {</span>
+            <span class="s1">value,</span>
+            <span class="s1">lastAccessed: Date.now(),</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Add an item to the cache. 
+     * 
+     * @param key the key to upsert 
+     * @param value the value of the key 
+     */</span>
+    <span class="s1">set(key, value) {</span>
+        <span class="s3">this</span><span class="s1">.#moveToEnd(key, value);</span>
+        <span class="s3">this</span><span class="s1">.#evict();</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Get an item from the cache. 
+     * 
+     * @param key the key to retrieve 
+     */</span>
+    <span class="s1">get(key) {</span>
+        <span class="s1">const item = </span><span class="s3">this</span><span class="s1">.#cache.get(key);</span>
+        <span class="s3">if </span><span class="s1">(!item)</span>
+            <span class="s3">return</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.#moveToEnd(key, item.value);</span>
+        <span class="s3">this</span><span class="s1">.#evict();</span>
+        <span class="s3">return </span><span class="s1">item.value;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Maintain the cache based on capacity and TTL. 
+     */</span>
+    <span class="s1">#evict() {</span>
+        <span class="s1">const cutoffDate = </span><span class="s3">this</span><span class="s1">.maxAge ? Date.now() - </span><span class="s3">this</span><span class="s1">.maxAge : </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">/** 
+         * Because we know Maps are in order, this item is both the 
+         * last item in the list (capacity) and oldest (maxAge). 
+         */</span>
+        <span class="s1">let oldestItem = </span><span class="s3">this</span><span class="s1">.#cache.entries().next();</span>
+        <span class="s3">while </span><span class="s1">(!oldestItem.done &amp;&amp;</span>
+            <span class="s1">(</span><span class="s3">this</span><span class="s1">.#cache.size &gt; </span><span class="s3">this</span><span class="s1">.capacity || </span><span class="s2">// too many</span>
+                <span class="s1">oldestItem.value[</span><span class="s4">1</span><span class="s1">].lastAccessed &lt; cutoffDate) </span><span class="s2">// too old</span>
+        <span class="s1">) {</span>
+            <span class="s3">this</span><span class="s1">.#cache.</span><span class="s3">delete</span><span class="s1">(oldestItem.value[</span><span class="s4">0</span><span class="s1">]);</span>
+            <span class="s1">oldestItem = </span><span class="s3">this</span><span class="s1">.#cache.entries().next();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.LRUCache = LRUCache;</span>
+<span class="s2">// Given and object remove fields where value is undefined.</span>
+<span class="s3">function </span><span class="s1">removeUndefinedValuesInObject(object) {</span>
+    <span class="s1">Object.entries(object).forEach(([key, value]) =&gt; {</span>
+        <span class="s3">if </span><span class="s1">(value === undefined || value === </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+            <span class="s3">delete </span><span class="s1">object[key];</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s3">return </span><span class="s1">object;</span>
+<span class="s1">}</span>
+<span class="s2">/** 
+ * Helper to check if a path points to a valid file. 
+ */</span>
+<span class="s1">async </span><span class="s3">function </span><span class="s1">isValidFile(filePath) {</span>
+    <span class="s3">try </span><span class="s1">{</span>
+        <span class="s1">const stats = await fs.promises.lstat(filePath);</span>
+        <span class="s3">return </span><span class="s1">stats.isFile();</span>
+    <span class="s1">}</span>
+    <span class="s3">catch </span><span class="s1">(e) {</span>
+        <span class="s3">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">/** 
+ * Determines the well-known gcloud location for the certificate config file. 
+ * @returns The platform-specific path to the configuration file. 
+ * @internal 
+ */</span>
+<span class="s3">function </span><span class="s1">getWellKnownCertificateConfigFileLocation() {</span>
+    <span class="s1">const configDir = process.env.CLOUDSDK_CONFIG ||</span>
+        <span class="s1">(_isWindows()</span>
+            <span class="s1">? path.join(process.env.APPDATA || </span><span class="s0">''</span><span class="s1">, CLOUDSDK_CONFIG_DIRECTORY)</span>
+            <span class="s1">: path.join(process.env.HOME || </span><span class="s0">''</span><span class="s1">, </span><span class="s0">'.config'</span><span class="s1">, CLOUDSDK_CONFIG_DIRECTORY));</span>
+    <span class="s3">return </span><span class="s1">path.join(configDir, WELL_KNOWN_CERTIFICATE_CONFIG_FILE);</span>
+<span class="s1">}</span>
+<span class="s2">/** 
+ * Checks if the current operating system is Windows. 
+ * @returns True if the OS is Windows, false otherwise. 
+ * @internal 
+ */</span>
+<span class="s3">function </span><span class="s1">_isWindows() {</span>
+    <span class="s3">return </span><span class="s1">os.platform().startsWith(</span><span class="s0">'win'</span><span class="s1">);</span>
+<span class="s1">}</span>
+<span class="s2">//# sourceMappingURL=util.js.map</span></pre>
+</body>
+</html>

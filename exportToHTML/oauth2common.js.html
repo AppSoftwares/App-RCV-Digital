@@ -1,0 +1,209 @@
+<html>
+<head>
+<title>oauth2common.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+oauth2common.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2021 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.OAuthClientAuthHandler = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">exports.getErrorFromOAuthErrorResponse = getErrorFromOAuthErrorResponse;</span>
+<span class="s1">const gaxios_1 = require(</span><span class="s0">&quot;gaxios&quot;</span><span class="s1">);</span>
+<span class="s1">const crypto_1 = require(</span><span class="s0">&quot;../crypto/crypto&quot;</span><span class="s1">);</span>
+<span class="s2">/** List of HTTP methods that accept request bodies. */</span>
+<span class="s1">const METHODS_SUPPORTING_REQUEST_BODY = [</span><span class="s0">'PUT'</span><span class="s1">, </span><span class="s0">'POST'</span><span class="s1">, </span><span class="s0">'PATCH'</span><span class="s1">];</span>
+<span class="s2">/** 
+ * Abstract class for handling client authentication in OAuth-based 
+ * operations. 
+ * When request-body client authentication is used, only application/json and 
+ * application/x-www-form-urlencoded content types for HTTP methods that support 
+ * request bodies are supported. 
+ */</span>
+<span class="s1">class OAuthClientAuthHandler {</span>
+    <span class="s1">#crypto = (</span><span class="s4">0</span><span class="s1">, crypto_1.createCrypto)();</span>
+    <span class="s1">#clientAuthentication;</span>
+    <span class="s1">transporter;</span>
+    <span class="s2">/** 
+     * Instantiates an OAuth client authentication handler. 
+     * @param options The OAuth Client Auth Handler instance options. Passing an `ClientAuthentication` directly is **@DEPRECATED**. 
+     */</span>
+    <span class="s1">constructor(options) {</span>
+        <span class="s3">if </span><span class="s1">(options &amp;&amp; </span><span class="s0">'clientId' </span><span class="s3">in </span><span class="s1">options) {</span>
+            <span class="s3">this</span><span class="s1">.#clientAuthentication = options;</span>
+            <span class="s3">this</span><span class="s1">.transporter = </span><span class="s3">new </span><span class="s1">gaxios_1.Gaxios();</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">this</span><span class="s1">.#clientAuthentication = options?.clientAuthentication;</span>
+            <span class="s3">this</span><span class="s1">.transporter = options?.transporter || </span><span class="s3">new </span><span class="s1">gaxios_1.Gaxios();</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Applies client authentication on the OAuth request's headers or POST 
+     * body but does not process the request. 
+     * @param opts The GaxiosOptions whose headers or data are to be modified 
+     *   depending on the client authentication mechanism to be used. 
+     * @param bearerToken The optional bearer token to use for authentication. 
+     *   When this is used, no client authentication credentials are needed. 
+     */</span>
+    <span class="s1">applyClientAuthenticationOptions(opts, bearerToken) {</span>
+        <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers);</span>
+        <span class="s2">// Inject authenticated header.</span>
+        <span class="s3">this</span><span class="s1">.injectAuthenticatedHeaders(opts, bearerToken);</span>
+        <span class="s2">// Inject authenticated request body.</span>
+        <span class="s3">if </span><span class="s1">(!bearerToken) {</span>
+            <span class="s3">this</span><span class="s1">.injectAuthenticatedRequestBody(opts);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Applies client authentication on the request's header if either 
+     * basic authentication or bearer token authentication is selected. 
+     * 
+     * @param opts The GaxiosOptions whose headers or data are to be modified 
+     *   depending on the client authentication mechanism to be used. 
+     * @param bearerToken The optional bearer token to use for authentication. 
+     *   When this is used, no client authentication credentials are needed. 
+     */</span>
+    <span class="s1">injectAuthenticatedHeaders(opts, bearerToken) {</span>
+        <span class="s2">// Bearer token prioritized higher than basic Auth.</span>
+        <span class="s3">if </span><span class="s1">(bearerToken) {</span>
+            <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers, {</span>
+                <span class="s1">authorization: `Bearer ${bearerToken}`,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.#clientAuthentication?.confidentialClientType === </span><span class="s0">'basic'</span><span class="s1">) {</span>
+            <span class="s1">opts.headers = gaxios_1.Gaxios.mergeHeaders(opts.headers);</span>
+            <span class="s1">const clientId = </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientId;</span>
+            <span class="s1">const clientSecret = </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientSecret || </span><span class="s0">''</span><span class="s1">;</span>
+            <span class="s1">const base64EncodedCreds = </span><span class="s3">this</span><span class="s1">.#crypto.encodeBase64StringUtf8(`${clientId}:${clientSecret}`);</span>
+            <span class="s1">gaxios_1.Gaxios.mergeHeaders(opts.headers, {</span>
+                <span class="s1">authorization: `Basic ${base64EncodedCreds}`,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Applies client authentication on the request's body if request-body 
+     * client authentication is selected. 
+     * 
+     * @param opts The GaxiosOptions whose headers or data are to be modified 
+     *   depending on the client authentication mechanism to be used. 
+     */</span>
+    <span class="s1">injectAuthenticatedRequestBody(opts) {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.#clientAuthentication?.confidentialClientType === </span><span class="s0">'request-body'</span><span class="s1">) {</span>
+            <span class="s1">const method = (opts.method || </span><span class="s0">'GET'</span><span class="s1">).toUpperCase();</span>
+            <span class="s3">if </span><span class="s1">(!METHODS_SUPPORTING_REQUEST_BODY.includes(method)) {</span>
+                <span class="s3">throw new </span><span class="s1">Error(`${method} HTTP method does not support ` +</span>
+                    <span class="s1">`${</span><span class="s3">this</span><span class="s1">.#clientAuthentication.confidentialClientType} ` +</span>
+                    <span class="s0">'client authentication'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s2">// Get content-type</span>
+            <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers(opts.headers);</span>
+            <span class="s1">const contentType = headers.get(</span><span class="s0">'content-type'</span><span class="s1">);</span>
+            <span class="s2">// Inject authenticated request body</span>
+            <span class="s3">if </span><span class="s1">(contentType?.startsWith(</span><span class="s0">'application/x-www-form-urlencoded'</span><span class="s1">) ||</span>
+                <span class="s1">opts.data </span><span class="s3">instanceof </span><span class="s1">URLSearchParams) {</span>
+                <span class="s1">const data = </span><span class="s3">new </span><span class="s1">URLSearchParams(opts.data ?? </span><span class="s0">''</span><span class="s1">);</span>
+                <span class="s1">data.append(</span><span class="s0">'client_id'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientId);</span>
+                <span class="s1">data.append(</span><span class="s0">'client_secret'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientSecret || </span><span class="s0">''</span><span class="s1">);</span>
+                <span class="s1">opts.data = data;</span>
+            <span class="s1">}</span>
+            <span class="s3">else if </span><span class="s1">(contentType?.startsWith(</span><span class="s0">'application/json'</span><span class="s1">)) {</span>
+                <span class="s1">opts.data = opts.data || {};</span>
+                <span class="s1">Object.assign(opts.data, {</span>
+                    <span class="s1">client_id: </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientId,</span>
+                    <span class="s1">client_secret: </span><span class="s3">this</span><span class="s1">.#clientAuthentication.clientSecret || </span><span class="s0">''</span><span class="s1">,</span>
+                <span class="s1">});</span>
+            <span class="s1">}</span>
+            <span class="s3">else </span><span class="s1">{</span>
+                <span class="s3">throw new </span><span class="s1">Error(`${contentType} content-types are not supported </span><span class="s3">with </span><span class="s1">` +</span>
+                    <span class="s1">`${</span><span class="s3">this</span><span class="s1">.#clientAuthentication.confidentialClientType} ` +</span>
+                    <span class="s0">'client authentication'</span><span class="s1">);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Retry config for Auth-related requests. 
+     * 
+     * @remarks 
+     * 
+     * This is not a part of the default {@link AuthClient.transporter transporter/gaxios} 
+     * config as some downstream APIs would prefer if customers explicitly enable retries, 
+     * such as GCS. 
+     */</span>
+    <span class="s1">static get RETRY_CONFIG() {</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">retry: </span><span class="s3">true</span><span class="s1">,</span>
+            <span class="s1">retryConfig: {</span>
+                <span class="s1">httpMethodsToRetry: [</span><span class="s0">'GET'</span><span class="s1">, </span><span class="s0">'PUT'</span><span class="s1">, </span><span class="s0">'POST'</span><span class="s1">, </span><span class="s0">'HEAD'</span><span class="s1">, </span><span class="s0">'OPTIONS'</span><span class="s1">, </span><span class="s0">'DELETE'</span><span class="s1">],</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.OAuthClientAuthHandler = OAuthClientAuthHandler;</span>
+<span class="s2">/** 
+ * Converts an OAuth error response to a native JavaScript Error. 
+ * @param resp The OAuth error response to convert to a native Error object. 
+ * @param err The optional original error. If provided, the error properties 
+ *   will be copied to the new error. 
+ * @return The converted native Error object. 
+ */</span>
+<span class="s3">function </span><span class="s1">getErrorFromOAuthErrorResponse(resp, err) {</span>
+    <span class="s2">// Error response.</span>
+    <span class="s1">const errorCode = resp.error;</span>
+    <span class="s1">const errorDescription = resp.error_description;</span>
+    <span class="s1">const errorUri = resp.error_uri;</span>
+    <span class="s1">let message = `Error code ${errorCode}`;</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">errorDescription !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+        <span class="s1">message += `: ${errorDescription}`;</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">errorUri !== </span><span class="s0">'undefined'</span><span class="s1">) {</span>
+        <span class="s1">message += ` - ${errorUri}`;</span>
+    <span class="s1">}</span>
+    <span class="s1">const newError = </span><span class="s3">new </span><span class="s1">Error(message);</span>
+    <span class="s2">// Copy properties from original error to newly generated error.</span>
+    <span class="s3">if </span><span class="s1">(err) {</span>
+        <span class="s1">const keys = Object.keys(err);</span>
+        <span class="s3">if </span><span class="s1">(err.stack) {</span>
+            <span class="s2">// Copy error.stack if available.</span>
+            <span class="s1">keys.push(</span><span class="s0">'stack'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s1">keys.forEach(key =&gt; {</span>
+            <span class="s2">// Do not overwrite the message field.</span>
+            <span class="s3">if </span><span class="s1">(key !== </span><span class="s0">'message'</span><span class="s1">) {</span>
+                <span class="s1">Object.defineProperty(newError, key, {</span>
+                    <span class="s1">value: err[key],</span>
+                    <span class="s1">writable: </span><span class="s3">false</span><span class="s1">,</span>
+                    <span class="s1">enumerable: </span><span class="s3">true</span><span class="s1">,</span>
+                <span class="s1">});</span>
+            <span class="s1">}</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">newError;</span>
+<span class="s1">}</span>
+<span class="s2">//# sourceMappingURL=oauth2common.js.map</span></pre>
+</body>
+</html>

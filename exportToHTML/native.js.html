@@ -1,0 +1,182 @@
+<html>
+<head>
+<title>native.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+native.js</font>
+</center></td></tr></table>
+<pre><span class="s0">const { existsSync } = require(</span><span class="s1">'node:fs'</span><span class="s0">);</span>
+<span class="s0">const path = require(</span><span class="s1">'node:path'</span><span class="s0">);</span>
+<span class="s0">const { platform, arch, report } = require(</span><span class="s1">'node:process'</span><span class="s0">);</span>
+<span class="s0">const { spawnSync } = require(</span><span class="s1">'node:child_process'</span><span class="s0">);</span>
+
+<span class="s0">const getReportHeader = () =&gt; {</span>
+	<span class="s2">try </span><span class="s0">{</span>
+		<span class="s2">if </span><span class="s0">(platform !== </span><span class="s1">'win32'</span><span class="s0">) {</span>
+			<span class="s2">return </span><span class="s0">report.getReport().header;</span>
+		<span class="s0">}</span>
+
+		<span class="s3">// This is needed because report.getReport() crashes the process on Windows sometimes.</span>
+		<span class="s0">const script =</span>
+			<span class="s1">&quot;console.log(JSON.stringify(require('node:process').report.getReport().header));&quot;</span><span class="s0">;</span>
+		<span class="s0">const child = spawnSync(process.execPath, [</span><span class="s1">'-p'</span><span class="s0">, script], {</span>
+			<span class="s0">encoding: </span><span class="s1">'utf8'</span><span class="s0">,</span>
+			<span class="s0">timeout: </span><span class="s4">3000</span><span class="s0">,</span>
+			<span class="s0">windowsHide: </span><span class="s2">true</span>
+		<span class="s0">});</span>
+
+		<span class="s2">if </span><span class="s0">(child.status !== </span><span class="s4">0</span><span class="s0">) {</span>
+			<span class="s2">return null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s3">// The output from node -p might include a trailing 'undefined' and newline</span>
+		<span class="s0">const stdout = child.stdout?.replace(/undefined\r?\n?$/, </span><span class="s1">''</span><span class="s0">).trim();</span>
+		<span class="s2">if </span><span class="s0">(!stdout) {</span>
+			<span class="s2">return null</span><span class="s0">;</span>
+		<span class="s0">}</span>
+
+		<span class="s2">return </span><span class="s0">JSON.parse(stdout);</span>
+	<span class="s0">} </span><span class="s2">catch </span><span class="s0">{</span>
+		<span class="s2">return null</span><span class="s0">;</span>
+	<span class="s0">}</span>
+<span class="s0">};</span>
+
+<span class="s0">let reportHeader;</span>
+<span class="s0">const isMingw32 = () =&gt; {</span>
+	<span class="s0">reportHeader ??= getReportHeader();</span>
+
+	<span class="s2">return </span><span class="s0">reportHeader?.osName?.startsWith(</span><span class="s1">'MINGW32_NT'</span><span class="s0">) ?? </span><span class="s2">false</span><span class="s0">;</span>
+<span class="s0">};</span>
+
+<span class="s0">const isMusl = () =&gt; {</span>
+	<span class="s0">reportHeader ??= getReportHeader();</span>
+
+	<span class="s2">return </span><span class="s0">reportHeader ? !reportHeader.glibcVersionRuntime : </span><span class="s2">false</span><span class="s0">;</span>
+<span class="s0">};</span>
+
+<span class="s0">const bindingsByPlatformAndArch = {</span>
+	<span class="s0">android: {</span>
+		<span class="s0">arm: { base: </span><span class="s1">'android-arm-eabi' </span><span class="s0">},</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'android-arm64' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">darwin: {</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'darwin-arm64' </span><span class="s0">},</span>
+		<span class="s0">x64: { base: </span><span class="s1">'darwin-x64' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">freebsd: {</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'freebsd-arm64' </span><span class="s0">},</span>
+		<span class="s0">x64: { base: </span><span class="s1">'freebsd-x64' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">linux: {</span>
+		<span class="s0">arm: { base: </span><span class="s1">'linux-arm-gnueabihf'</span><span class="s0">, musl: </span><span class="s1">'linux-arm-musleabihf' </span><span class="s0">},</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'linux-arm64-gnu'</span><span class="s0">, musl: </span><span class="s1">'linux-arm64-musl' </span><span class="s0">},</span>
+		<span class="s0">loong64: { base: </span><span class="s1">'linux-loong64-gnu'</span><span class="s0">, musl: </span><span class="s1">'linux-loong64-musl' </span><span class="s0">},</span>
+		<span class="s0">ppc64: { base: </span><span class="s1">'linux-ppc64-gnu'</span><span class="s0">, musl: </span><span class="s1">'linux-ppc64-musl' </span><span class="s0">},</span>
+		<span class="s0">riscv64: { base: </span><span class="s1">'linux-riscv64-gnu'</span><span class="s0">, musl: </span><span class="s1">'linux-riscv64-musl' </span><span class="s0">},</span>
+		<span class="s0">s390x: { base: </span><span class="s1">'linux-s390x-gnu'</span><span class="s0">, musl: </span><span class="s2">null </span><span class="s0">},</span>
+		<span class="s0">x64: { base: </span><span class="s1">'linux-x64-gnu'</span><span class="s0">, musl: </span><span class="s1">'linux-x64-musl' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">openbsd: {</span>
+		<span class="s0">x64: { base: </span><span class="s1">'openbsd-x64' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">openharmony: {</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'openharmony-arm64' </span><span class="s0">}</span>
+	<span class="s0">},</span>
+	<span class="s0">win32: {</span>
+		<span class="s0">arm64: { base: </span><span class="s1">'win32-arm64-msvc' </span><span class="s0">},</span>
+		<span class="s0">ia32: { base: </span><span class="s1">'win32-ia32-msvc' </span><span class="s0">},</span>
+		<span class="s0">x64: {</span>
+			<span class="s0">base: isMingw32() ? </span><span class="s1">'win32-x64-gnu' </span><span class="s0">: </span><span class="s1">'win32-x64-msvc'</span>
+		<span class="s0">}</span>
+	<span class="s0">}</span>
+<span class="s0">};</span>
+
+<span class="s0">const msvcLinkFilenameByArch = {</span>
+	<span class="s0">arm64: </span><span class="s1">'vc_redist.arm64.exe'</span><span class="s0">,</span>
+	<span class="s0">ia32: </span><span class="s1">'vc_redist.x86.exe'</span><span class="s0">,</span>
+	<span class="s0">x64: </span><span class="s1">'vc_redist.x64.exe'</span>
+<span class="s0">};</span>
+
+<span class="s0">const packageBase = getPackageBase();</span>
+<span class="s0">const localName = `./rollup.${packageBase}.node`;</span>
+<span class="s0">const requireWithFriendlyError = id =&gt; {</span>
+	<span class="s2">try </span><span class="s0">{</span>
+		<span class="s2">return </span><span class="s0">require(id);</span>
+	<span class="s0">} </span><span class="s2">catch </span><span class="s0">(error) {</span>
+		<span class="s2">if </span><span class="s0">(</span>
+			<span class="s0">platform === </span><span class="s1">'win32' </span><span class="s0">&amp;&amp;</span>
+			<span class="s0">error </span><span class="s2">instanceof </span><span class="s0">Error &amp;&amp;</span>
+			<span class="s0">error.code === </span><span class="s1">'ERR_DLOPEN_FAILED' </span><span class="s0">&amp;&amp;</span>
+			<span class="s0">error.message.includes(</span><span class="s1">'The specified module could not be found'</span><span class="s0">)</span>
+		<span class="s0">) {</span>
+			<span class="s0">const msvcDownloadLink = `https:</span><span class="s3">//aka.ms/vs/17/release/${msvcLinkFilenameByArch[arch]}`;</span>
+			<span class="s2">throw new </span><span class="s0">Error(</span>
+				<span class="s0">`Failed to load module ${id}. ` +</span>
+					<span class="s1">'Required DLL was not found. ' </span><span class="s0">+</span>
+					<span class="s1">'This error usually happens when Microsoft Visual C++ Redistributable is not installed. ' </span><span class="s0">+</span>
+					<span class="s0">`You can download it from ${msvcDownloadLink}`,</span>
+				<span class="s0">{ cause: error }</span>
+			<span class="s0">);</span>
+		<span class="s0">}</span>
+
+		<span class="s2">throw new </span><span class="s0">Error(</span>
+			<span class="s0">`Cannot find module ${id}. ` +</span>
+				<span class="s0">`npm has a bug related to optional dependencies (https:</span><span class="s3">//github.com/npm/cli/issues/4828). ` +</span>
+				<span class="s1">'Please try `npm i` again after removing both package-lock.json and node_modules directory.'</span><span class="s0">,</span>
+			<span class="s0">{ cause: error }</span>
+		<span class="s0">);</span>
+	<span class="s0">}</span>
+<span class="s0">};</span>
+
+<span class="s0">const { parse, parseAsync, xxhashBase64Url, xxhashBase36, xxhashBase16 } = requireWithFriendlyError(</span>
+	<span class="s0">existsSync(path.join(__dirname, localName)) ? localName : `@rollup/rollup-${packageBase}`</span>
+<span class="s0">);</span>
+
+<span class="s2">function </span><span class="s0">getPackageBase() {</span>
+	<span class="s0">const imported = bindingsByPlatformAndArch[platform]?.[arch];</span>
+	<span class="s2">if </span><span class="s0">(!imported) {</span>
+		<span class="s0">throwUnsupportedError(</span><span class="s2">false</span><span class="s0">);</span>
+	<span class="s0">}</span>
+	<span class="s2">if </span><span class="s0">(</span><span class="s1">'musl' </span><span class="s2">in </span><span class="s0">imported &amp;&amp; isMusl()) {</span>
+		<span class="s2">return </span><span class="s0">imported.musl || throwUnsupportedError(</span><span class="s2">true</span><span class="s0">);</span>
+	<span class="s0">}</span>
+	<span class="s2">return </span><span class="s0">imported.base;</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">throwUnsupportedError(isMusl) {</span>
+	<span class="s2">throw new </span><span class="s0">Error(</span>
+		<span class="s0">`Your current platform </span><span class="s1">&quot;${platform}${isMusl ? ' (musl)' : ''}&quot; </span><span class="s0">and architecture </span><span class="s1">&quot;${arch}&quot; </span><span class="s0">combination is not yet supported by the native Rollup build. Please use the WASM build </span><span class="s1">&quot;@rollup/wasm-node&quot; </span><span class="s0">instead.</span>
+
+<span class="s0">The following platform-architecture combinations are supported:</span>
+<span class="s0">${Object.entries(bindingsByPlatformAndArch)</span>
+	<span class="s0">.flatMap(([platformName, architectures]) =&gt;</span>
+		<span class="s0">Object.entries(architectures).flatMap(([architectureName, { musl }]) =&gt; {</span>
+			<span class="s0">const name = `${platformName}-${architectureName}`;</span>
+			<span class="s2">return </span><span class="s0">musl ? [name, `${name} (musl)`] : [name];</span>
+		<span class="s0">})</span>
+	<span class="s0">)</span>
+	<span class="s0">.join(</span><span class="s1">'</span><span class="s2">\n</span><span class="s1">'</span><span class="s0">)}</span>
+
+<span class="s0">If </span><span class="s2">this </span><span class="s0">is important to you, please consider supporting Rollup to make a native build </span><span class="s2">for </span><span class="s0">your platform and architecture available.`</span>
+	<span class="s0">);</span>
+<span class="s0">}</span>
+
+<span class="s0">module.exports.parse = parse;</span>
+<span class="s0">module.exports.parseAsync = parseAsync;</span>
+<span class="s0">module.exports.xxhashBase64Url = xxhashBase64Url;</span>
+<span class="s0">module.exports.xxhashBase36 = xxhashBase36;</span>
+<span class="s0">module.exports.xxhashBase16 = xxhashBase16;</span>
+</pre>
+</body>
+</html>

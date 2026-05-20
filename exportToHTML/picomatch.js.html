@@ -1,0 +1,370 @@
+<html>
+<head>
+<title>picomatch.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+picomatch.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span><span class="s1">;</span>
+
+<span class="s1">const scan = require(</span><span class="s0">'./scan'</span><span class="s1">);</span>
+<span class="s1">const parse = require(</span><span class="s0">'./parse'</span><span class="s1">);</span>
+<span class="s1">const utils = require(</span><span class="s0">'./utils'</span><span class="s1">);</span>
+<span class="s1">const constants = require(</span><span class="s0">'./constants'</span><span class="s1">);</span>
+<span class="s1">const isObject = val =&gt; val &amp;&amp; </span><span class="s2">typeof </span><span class="s1">val === </span><span class="s0">'object' </span><span class="s1">&amp;&amp; !Array.isArray(val);</span>
+
+<span class="s3">/** 
+ * Creates a matcher function from one or more glob patterns. The 
+ * returned function takes a string to match as its first argument, 
+ * and returns true if the string is a match. The returned matcher 
+ * function also takes a boolean as the second argument that, when true, 
+ * returns an object with additional information. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch(glob[, options]); 
+ * 
+ * const isMatch = picomatch('*.!(*a)'); 
+ * console.log(isMatch('a.a')); //=&gt; false 
+ * console.log(isMatch('a.b')); //=&gt; true 
+ * ``` 
+ * @name picomatch 
+ * @param {String|Array} `globs` One or more glob patterns. 
+ * @param {Object=} `options` 
+ * @return {Function=} Returns a matcher function. 
+ * @api public 
+ */</span>
+
+<span class="s1">const picomatch = (glob, options, returnState = </span><span class="s2">false</span><span class="s1">) =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(Array.isArray(glob)) {</span>
+    <span class="s1">const fns = glob.map(input =&gt; picomatch(input, options, returnState));</span>
+    <span class="s1">const arrayMatcher = str =&gt; {</span>
+      <span class="s2">for </span><span class="s1">(const isMatch of fns) {</span>
+        <span class="s1">const state = isMatch(str);</span>
+        <span class="s2">if </span><span class="s1">(state) </span><span class="s2">return </span><span class="s1">state;</span>
+      <span class="s1">}</span>
+      <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">};</span>
+    <span class="s2">return </span><span class="s1">arrayMatcher;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const isState = isObject(glob) &amp;&amp; glob.tokens &amp;&amp; glob.input;</span>
+
+  <span class="s2">if </span><span class="s1">(glob === </span><span class="s0">'' </span><span class="s1">|| (</span><span class="s2">typeof </span><span class="s1">glob !== </span><span class="s0">'string' </span><span class="s1">&amp;&amp; !isState)) {</span>
+    <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s0">'Expected pattern to be a non-empty string'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const opts = options || {};</span>
+  <span class="s1">const posix = opts.windows;</span>
+  <span class="s1">const regex = isState</span>
+    <span class="s1">? picomatch.compileRe(glob, options)</span>
+    <span class="s1">: picomatch.makeRe(glob, options, </span><span class="s2">false</span><span class="s1">, </span><span class="s2">true</span><span class="s1">);</span>
+
+  <span class="s1">const state = regex.state;</span>
+  <span class="s2">delete </span><span class="s1">regex.state;</span>
+
+  <span class="s1">let isIgnored = () =&gt; </span><span class="s2">false</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(opts.ignore) {</span>
+    <span class="s1">const ignoreOpts = { ...options, ignore: </span><span class="s2">null</span><span class="s1">, onMatch: </span><span class="s2">null</span><span class="s1">, onResult: </span><span class="s2">null </span><span class="s1">};</span>
+    <span class="s1">isIgnored = picomatch(opts.ignore, ignoreOpts, returnState);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const matcher = (input, returnObject = </span><span class="s2">false</span><span class="s1">) =&gt; {</span>
+    <span class="s1">const { isMatch, match, output } = picomatch.test(input, regex, options, { glob, posix });</span>
+    <span class="s1">const result = { glob, state, regex, posix, input, output, match, isMatch };</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.onResult === </span><span class="s0">'function'</span><span class="s1">) {</span>
+      <span class="s1">opts.onResult(result);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(isMatch === </span><span class="s2">false</span><span class="s1">) {</span>
+      <span class="s1">result.isMatch = </span><span class="s2">false</span><span class="s1">;</span>
+      <span class="s2">return </span><span class="s1">returnObject ? result : </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(isIgnored(input)) {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.onIgnore === </span><span class="s0">'function'</span><span class="s1">) {</span>
+        <span class="s1">opts.onIgnore(result);</span>
+      <span class="s1">}</span>
+      <span class="s1">result.isMatch = </span><span class="s2">false</span><span class="s1">;</span>
+      <span class="s2">return </span><span class="s1">returnObject ? result : </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.onMatch === </span><span class="s0">'function'</span><span class="s1">) {</span>
+      <span class="s1">opts.onMatch(result);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">returnObject ? result : </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s1">};</span>
+
+  <span class="s2">if </span><span class="s1">(returnState) {</span>
+    <span class="s1">matcher.state = state;</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">matcher;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Test `input` with the given `regex`. This is used by the main 
+ * `picomatch()` function to test the input string. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.test(input, regex[, options]); 
+ * 
+ * console.log(picomatch.test('foo/bar', /^(?:([^/]*?)\/([^/]*?))$/)); 
+ * // { isMatch: true, match: [ 'foo/', 'foo', 'bar' ], output: 'foo/bar' } 
+ * ``` 
+ * @param {String} `input` String to test. 
+ * @param {RegExp} `regex` 
+ * @return {Object} Returns an object with matching info. 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.test = (input, regex, options, { glob, posix } = {}) =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">input !== </span><span class="s0">'string'</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s0">'Expected input to be a string'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(input === </span><span class="s0">''</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">{ isMatch: </span><span class="s2">false</span><span class="s1">, output: </span><span class="s0">'' </span><span class="s1">};</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const opts = options || {};</span>
+  <span class="s1">const format = opts.format || (posix ? utils.toPosixSlashes : </span><span class="s2">null</span><span class="s1">);</span>
+  <span class="s1">let match = input === glob;</span>
+  <span class="s1">let output = (match &amp;&amp; format) ? format(input) : input;</span>
+
+  <span class="s2">if </span><span class="s1">(match === </span><span class="s2">false</span><span class="s1">) {</span>
+    <span class="s1">output = format ? format(input) : input;</span>
+    <span class="s1">match = output === glob;</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(match === </span><span class="s2">false </span><span class="s1">|| opts.capture === </span><span class="s2">true</span><span class="s1">) {</span>
+    <span class="s2">if </span><span class="s1">(opts.matchBase === </span><span class="s2">true </span><span class="s1">|| opts.basename === </span><span class="s2">true</span><span class="s1">) {</span>
+      <span class="s1">match = picomatch.matchBase(input, regex, options, posix);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">match = regex.exec(output);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">{ isMatch: Boolean(match), match, output };</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Match the basename of a filepath. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.matchBase(input, glob[, options]); 
+ * console.log(picomatch.matchBase('foo/bar.js', '*.js'); // true 
+ * ``` 
+ * @param {String} `input` String to test. 
+ * @param {RegExp|String} `glob` Glob pattern or regex created by [.makeRe](#makeRe). 
+ * @return {Boolean} 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.matchBase = (input, glob, options) =&gt; {</span>
+  <span class="s1">const regex = glob </span><span class="s2">instanceof </span><span class="s1">RegExp ? glob : picomatch.makeRe(glob, options);</span>
+  <span class="s2">return </span><span class="s1">regex.test(utils.basename(input));</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Returns true if **any** of the given glob `patterns` match the specified `string`. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.isMatch(string, patterns[, options]); 
+ * 
+ * console.log(picomatch.isMatch('a.a', ['b.*', '*.a'])); //=&gt; true 
+ * console.log(picomatch.isMatch('a.a', 'b.*')); //=&gt; false 
+ * ``` 
+ * @param {String|Array} str The string to test. 
+ * @param {String|Array} patterns One or more glob patterns to use for matching. 
+ * @param {Object} [options] See available [options](#options). 
+ * @return {Boolean} Returns true if any patterns match `str` 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.isMatch = (str, patterns, options) =&gt; picomatch(patterns, options)(str);</span>
+
+<span class="s3">/** 
+ * Parse a glob pattern to create the source string for a regular 
+ * expression. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * const result = picomatch.parse(pattern[, options]); 
+ * ``` 
+ * @param {String} `pattern` 
+ * @param {Object} `options` 
+ * @return {Object} Returns an object with useful properties and output to be used as a regex source string. 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.parse = (pattern, options) =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(Array.isArray(pattern)) </span><span class="s2">return </span><span class="s1">pattern.map(p =&gt; picomatch.parse(p, options));</span>
+  <span class="s2">return </span><span class="s1">parse(pattern, { ...options, fastpaths: </span><span class="s2">false </span><span class="s1">});</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Scan a glob pattern to separate the pattern into segments. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.scan(input[, options]); 
+ * 
+ * const result = picomatch.scan('!./foo/*.js'); 
+ * console.log(result); 
+ * { prefix: '!./', 
+ *   input: '!./foo/*.js', 
+ *   start: 3, 
+ *   base: 'foo', 
+ *   glob: '*.js', 
+ *   isBrace: false, 
+ *   isBracket: false, 
+ *   isGlob: true, 
+ *   isExtglob: false, 
+ *   isGlobstar: false, 
+ *   negated: true } 
+ * ``` 
+ * @param {String} `input` Glob pattern to scan. 
+ * @param {Object} `options` 
+ * @return {Object} Returns an object with 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.scan = (input, options) =&gt; scan(input, options);</span>
+
+<span class="s3">/** 
+ * Compile a regular expression from the `state` object returned by the 
+ * [parse()](#parse) method. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * const state = picomatch.parse('*.js'); 
+ * // picomatch.compileRe(state[, options]); 
+ * 
+ * console.log(picomatch.compileRe(state)); 
+ * //=&gt; /^(?:(?!\.)(?=.)[^/]*?\.js)$/ 
+ * ``` 
+ * @param {Object} `state` 
+ * @param {Object} `options` 
+ * @param {Boolean} `returnOutput` Intended for implementors, this argument allows you to return the raw output from the parser. 
+ * @param {Boolean} `returnState` Adds the state to a `state` property on the returned regex. Useful for implementors and debugging. 
+ * @return {RegExp} 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.compileRe = (state, options, returnOutput = </span><span class="s2">false</span><span class="s1">, returnState = </span><span class="s2">false</span><span class="s1">) =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(returnOutput === </span><span class="s2">true</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">state.output;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const opts = options || {};</span>
+  <span class="s1">const prepend = opts.contains ? </span><span class="s0">'' </span><span class="s1">: </span><span class="s0">'^'</span><span class="s1">;</span>
+  <span class="s1">const append = opts.contains ? </span><span class="s0">'' </span><span class="s1">: </span><span class="s0">'$'</span><span class="s1">;</span>
+
+  <span class="s1">let source = `${prepend}(?:${state.output})${append}`;</span>
+  <span class="s2">if </span><span class="s1">(state &amp;&amp; state.negated === </span><span class="s2">true</span><span class="s1">) {</span>
+    <span class="s1">source = `^(?!${source}).*$`;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">const regex = picomatch.toRegex(source, options);</span>
+  <span class="s2">if </span><span class="s1">(returnState === </span><span class="s2">true</span><span class="s1">) {</span>
+    <span class="s1">regex.state = state;</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">regex;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Create a regular expression from a parsed glob pattern. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.makeRe(state[, options]); 
+ * 
+ * const result = picomatch.makeRe('*.js'); 
+ * console.log(result); 
+ * //=&gt; /^(?:(?!\.)(?=.)[^/]*?\.js)$/ 
+ * ``` 
+ * @param {String} `state` The object returned from the `.parse` method. 
+ * @param {Object} `options` 
+ * @param {Boolean} `returnOutput` Implementors may use this argument to return the compiled output, instead of a regular expression. This is not exposed on the options to prevent end-users from mutating the result. 
+ * @param {Boolean} `returnState` Implementors may use this argument to return the state from the parsed glob with the returned regular expression. 
+ * @return {RegExp} Returns a regex created from the given pattern. 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.makeRe = (input, options = {}, returnOutput = </span><span class="s2">false</span><span class="s1">, returnState = </span><span class="s2">false</span><span class="s1">) =&gt; {</span>
+  <span class="s2">if </span><span class="s1">(!input || </span><span class="s2">typeof </span><span class="s1">input !== </span><span class="s0">'string'</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">TypeError(</span><span class="s0">'Expected a non-empty string'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">let parsed = { negated: </span><span class="s2">false</span><span class="s1">, fastpaths: </span><span class="s2">true </span><span class="s1">};</span>
+
+  <span class="s2">if </span><span class="s1">(options.fastpaths !== </span><span class="s2">false </span><span class="s1">&amp;&amp; (input[</span><span class="s4">0</span><span class="s1">] === </span><span class="s0">'.' </span><span class="s1">|| input[</span><span class="s4">0</span><span class="s1">] === </span><span class="s0">'*'</span><span class="s1">)) {</span>
+    <span class="s1">parsed.output = parse.fastpaths(input, options);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(!parsed.output) {</span>
+    <span class="s1">parsed = parse(input, options);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">picomatch.compileRe(parsed, options, returnOutput, returnState);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Create a regular expression from the given regex source string. 
+ * 
+ * ```js 
+ * const picomatch = require('picomatch'); 
+ * // picomatch.toRegex(source[, options]); 
+ * 
+ * const { output } = picomatch.parse('*.js'); 
+ * console.log(picomatch.toRegex(output)); 
+ * //=&gt; /^(?:(?!\.)(?=.)[^/]*?\.js)$/ 
+ * ``` 
+ * @param {String} `source` Regular expression source string. 
+ * @param {Object} `options` 
+ * @return {RegExp} 
+ * @api public 
+ */</span>
+
+<span class="s1">picomatch.toRegex = (source, options) =&gt; {</span>
+  <span class="s2">try </span><span class="s1">{</span>
+    <span class="s1">const opts = options || {};</span>
+    <span class="s2">return new </span><span class="s1">RegExp(source, opts.flags || (opts.nocase ? </span><span class="s0">'i' </span><span class="s1">: </span><span class="s0">''</span><span class="s1">));</span>
+  <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+    <span class="s2">if </span><span class="s1">(options &amp;&amp; options.debug === </span><span class="s2">true</span><span class="s1">) </span><span class="s2">throw </span><span class="s1">err;</span>
+    <span class="s2">return </span><span class="s1">/$^/;</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Picomatch constants. 
+ * @return {Object} 
+ */</span>
+
+<span class="s1">picomatch.constants = constants;</span>
+
+<span class="s3">/** 
+ * Expose &quot;picomatch&quot; 
+ */</span>
+
+<span class="s1">module.exports = picomatch;</span>
+</pre>
+</body>
+</html>

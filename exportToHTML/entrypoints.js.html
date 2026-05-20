@@ -1,0 +1,779 @@
+<html>
+<head>
+<title>entrypoints.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+entrypoints.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Ivan Kopeykin @vankop 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const { parseIdentifier } = require(</span><span class="s2">&quot;./identifier&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {string | (string | ConditionalMapping)[]} DirectMapping */</span>
+<span class="s0">/** @typedef {{ [k: string]: MappingValue }} ConditionalMapping */</span>
+<span class="s0">/** @typedef {ConditionalMapping | DirectMapping | null} MappingValue */</span>
+<span class="s0">/** @typedef {Record&lt;string, MappingValue&gt; | ConditionalMapping | DirectMapping} ExportsField */</span>
+<span class="s0">/** @typedef {Record&lt;string, MappingValue&gt;} ImportsField */</span>
+
+<span class="s0">/** 
+ * Processing exports/imports field 
+ * @callback FieldProcessor 
+ * @param {string} request request 
+ * @param {Set&lt;string&gt;} conditionNames condition names 
+ * @returns {[string[], string | null]} resolved paths with used field 
+ */</span>
+
+<span class="s0">/* 
+Example exports field: 
+{ 
+  &quot;.&quot;: &quot;./main.js&quot;, 
+  &quot;./feature&quot;: { 
+    &quot;browser&quot;: &quot;./feature-browser.js&quot;, 
+    &quot;default&quot;: &quot;./feature.js&quot; 
+  } 
+} 
+Terminology: 
+ 
+Enhanced-resolve name keys (&quot;.&quot; and &quot;./feature&quot;) as exports field keys. 
+ 
+If value is string or string[], mapping is called as a direct mapping 
+and value called as a direct export. 
+ 
+If value is key-value object, mapping is called as a conditional mapping 
+and value called as a conditional export. 
+ 
+Key in conditional mapping is called condition name. 
+ 
+Conditional mapping nested in another conditional mapping is called nested mapping. 
+ 
+---------- 
+ 
+Example imports field: 
+{ 
+  &quot;#a&quot;: &quot;./main.js&quot;, 
+  &quot;#moment&quot;: { 
+    &quot;browser&quot;: &quot;./moment/index.js&quot;, 
+    &quot;default&quot;: &quot;moment&quot; 
+  }, 
+  &quot;#moment/&quot;: { 
+    &quot;browser&quot;: &quot;./moment/&quot;, 
+    &quot;default&quot;: &quot;moment/&quot; 
+  } 
+} 
+Terminology: 
+ 
+Enhanced-resolve name keys (&quot;#a&quot; and &quot;#moment/&quot;, &quot;#moment&quot;) as imports field keys. 
+ 
+If value is string or string[], mapping is called as a direct mapping 
+and value called as a direct export. 
+ 
+If value is key-value object, mapping is called as a conditional mapping 
+and value called as a conditional export. 
+ 
+Key in conditional mapping is called condition name. 
+ 
+Conditional mapping nested in another conditional mapping is called nested mapping. 
+ 
+*/</span>
+
+<span class="s1">const slashCode = </span><span class="s2">&quot;/&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const dotCode = </span><span class="s2">&quot;.&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const hashCode = </span><span class="s2">&quot;#&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+<span class="s1">const patternRegEx = /\*/g;</span>
+
+<span class="s0">/** @typedef {Record&lt;string, MappingValue&gt;} RecordMapping */</span>
+
+<span class="s0">/** 
+ * Cached `Object.keys()` for objects whose shape does not change after the 
+ * first observation — i.e. parsed `package.json` fields and the nested 
+ * conditional mappings inside them. `Object.keys` allocates a fresh array 
+ * on every call; since `findMatch` / `conditionalMapping` run on every 
+ * bare-specifier resolve, the allocation adds up quickly. 
+ * @type {WeakMap&lt;RecordMapping, string[]&gt;} 
+ */</span>
+<span class="s1">const _keysCache = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * @param {RecordMapping} obj object to read keys from 
+ * @returns {string[]} cached keys array (DO NOT mutate) 
+ */</span>
+<span class="s4">function </span><span class="s1">cachedKeys(obj) {</span>
+	<span class="s1">let keys = _keysCache.get(obj);</span>
+	<span class="s4">if </span><span class="s1">(keys === undefined) {</span>
+		<span class="s1">keys = Object.keys(obj);</span>
+		<span class="s1">_keysCache.set(obj, keys);</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">keys;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Per-key precomputed info used by `findMatch`. Equivalent to what the 
+ * previous implementation recomputed inline on every resolve. 
+ * @typedef {object} FieldKeyInfo 
+ * @property {string} key the original key 
+ * @property {number} patternIndex position of the single &quot;*&quot; in the key, or -1 when absent 
+ * @property {string} wildcardPrefix substring before &quot;*&quot; (empty when patternIndex === -1) 
+ * @property {string} wildcardSuffix substring after &quot;*&quot; (empty when patternIndex === -1) 
+ * @property {boolean} isLegacySubpath true when key is a legacy `./foo/`-style folder key with no &quot;*&quot; 
+ * @property {boolean} isPattern true when key contains &quot;*&quot; 
+ * @property {boolean} isSubpathMapping true when key ends with &quot;/&quot; 
+ * @property {boolean} isValidPattern true when key has at most one &quot;*&quot; 
+ */</span>
+
+<span class="s0">/** 
+ * Cached per-field key metadata, keyed by the exports/imports field 
+ * object. Computed lazily on first `findMatch` call and reused forever. 
+ * Safe because `package.json` fields are immutable JSON values. 
+ * @type {WeakMap&lt;RecordMapping, FieldKeyInfo[]&gt;} 
+ */</span>
+<span class="s1">const _fieldKeyInfoCache = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * @param {ExportsField | ImportsField} field field object 
+ * @returns {FieldKeyInfo[]} precomputed per-key info 
+ */</span>
+<span class="s4">function </span><span class="s1">getFieldKeyInfos(field) {</span>
+	<span class="s1">const fieldKey = </span><span class="s0">/** @type {RecordMapping} */ </span><span class="s1">(field);</span>
+	<span class="s1">let infos = _fieldKeyInfoCache.get(fieldKey);</span>
+	<span class="s4">if </span><span class="s1">(infos !== undefined) </span><span class="s4">return </span><span class="s1">infos;</span>
+	<span class="s1">const keys = Object.getOwnPropertyNames(field);</span>
+	<span class="s1">infos = Array.from({ length: keys.length });</span>
+	<span class="s4">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; keys.length; i++) {</span>
+		<span class="s1">const key = keys[i];</span>
+		<span class="s1">const patternIndex = key.indexOf(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+		<span class="s1">const lastStar = patternIndex === -</span><span class="s3">1 </span><span class="s1">? -</span><span class="s3">1 </span><span class="s1">: key.lastIndexOf(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+		<span class="s1">const keyLen = key.length;</span>
+		<span class="s1">const endsWithSlash =</span>
+			<span class="s1">keyLen &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; key.charCodeAt(keyLen - </span><span class="s3">1</span><span class="s1">) === slashCode;</span>
+		<span class="s1">infos[i] = {</span>
+			<span class="s1">key,</span>
+			<span class="s1">patternIndex,</span>
+			<span class="s1">wildcardPrefix: patternIndex === -</span><span class="s3">1 </span><span class="s1">? </span><span class="s2">&quot;&quot; </span><span class="s1">: key.slice(</span><span class="s3">0</span><span class="s1">, patternIndex),</span>
+			<span class="s1">wildcardSuffix: patternIndex === -</span><span class="s3">1 </span><span class="s1">? </span><span class="s2">&quot;&quot; </span><span class="s1">: key.slice(patternIndex + </span><span class="s3">1</span><span class="s1">),</span>
+			<span class="s1">isLegacySubpath: patternIndex === -</span><span class="s3">1 </span><span class="s1">&amp;&amp; endsWithSlash,</span>
+			<span class="s1">isPattern: patternIndex !== -</span><span class="s3">1</span><span class="s1">,</span>
+			<span class="s1">isSubpathMapping: endsWithSlash,</span>
+			<span class="s1">isValidPattern: patternIndex === -</span><span class="s3">1 </span><span class="s1">|| lastStar === patternIndex,</span>
+		<span class="s1">};</span>
+	<span class="s1">}</span>
+	<span class="s1">_fieldKeyInfoCache.set(fieldKey, infos);</span>
+	<span class="s4">return </span><span class="s1">infos;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string} a first string 
+ * @param {string} b second string 
+ * @returns {number} compare result 
+ */</span>
+<span class="s4">function </span><span class="s1">patternKeyCompare(a, b) {</span>
+	<span class="s1">const aPatternIndex = a.indexOf(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+	<span class="s1">const bPatternIndex = b.indexOf(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+	<span class="s1">const baseLenA = aPatternIndex === -</span><span class="s3">1 </span><span class="s1">? a.length : aPatternIndex + </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s1">const baseLenB = bPatternIndex === -</span><span class="s3">1 </span><span class="s1">? b.length : bPatternIndex + </span><span class="s3">1</span><span class="s1">;</span>
+
+	<span class="s4">if </span><span class="s1">(baseLenA &gt; baseLenB) </span><span class="s4">return </span><span class="s1">-</span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(baseLenB &gt; baseLenA) </span><span class="s4">return </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(aPatternIndex === -</span><span class="s3">1</span><span class="s1">) </span><span class="s4">return </span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(bPatternIndex === -</span><span class="s3">1</span><span class="s1">) </span><span class="s4">return </span><span class="s1">-</span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(a.length &gt; b.length) </span><span class="s4">return </span><span class="s1">-</span><span class="s3">1</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(b.length &gt; a.length) </span><span class="s4">return </span><span class="s3">1</span><span class="s1">;</span>
+
+	<span class="s4">return </span><span class="s3">0</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** @typedef {[MappingValue, string, boolean, boolean, string] | null} MatchTuple */</span>
+
+<span class="s0">/** 
+ * Per-field memoization of `findMatch(request, field)`. For a given field 
+ * the result depends only on the `request` string (it does NOT depend on 
+ * `conditionNames` — that's applied separately by `conditionalMapping`), 
+ * so we can cache the tuple keyed by request. 
+ * 
+ * Typical build traffic runs the same request through the resolver 
+ * repeatedly (same import re-resolved from different source files, module 
+ * graph traversals that revisit a package, etc.), and every one of those 
+ * hits walks the same key list and allocates the same tuple. Caching the 
+ * tuple turns the second-and-onward call into a single Map lookup. 
+ * 
+ * Keyed on the field object via a module-level `WeakMap`, so the cache 
+ * is freed automatically when the owning description file is GC'd. 
+ * @type {WeakMap&lt;RecordMapping, Map&lt;string, MatchTuple&gt;&gt;} 
+ */</span>
+<span class="s1">const _findMatchCache = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * @param {string} request request 
+ * @param {ExportsField | ImportsField} field exports or import field 
+ * @returns {MatchTuple} match result (uncached) 
+ */</span>
+<span class="s4">function </span><span class="s1">computeFindMatch(request, field) {</span>
+	<span class="s1">const requestLen = request.length;</span>
+	<span class="s1">const requestEndsWithSlash =</span>
+		<span class="s1">requestLen &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; request.charCodeAt(requestLen - </span><span class="s3">1</span><span class="s1">) === slashCode;</span>
+	<span class="s1">const requestHasStar = request.includes(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+
+	<span class="s4">if </span><span class="s1">(</span>
+		<span class="s1">!requestHasStar &amp;&amp;</span>
+		<span class="s1">!requestEndsWithSlash &amp;&amp;</span>
+		<span class="s1">Object.prototype.hasOwnProperty.call(field, request)</span>
+	<span class="s1">) {</span>
+		<span class="s1">const target = </span><span class="s0">/** @type {{ [k: string]: MappingValue }} */ </span><span class="s1">(field)[</span>
+			<span class="s1">request</span>
+		<span class="s1">];</span>
+
+		<span class="s4">return </span><span class="s1">[target, </span><span class="s2">&quot;&quot;</span><span class="s1">, </span><span class="s4">false</span><span class="s1">, </span><span class="s4">false</span><span class="s1">, request];</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @type {string} */</span>
+	<span class="s1">let bestMatch = </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+	<span class="s0">/** @type {FieldKeyInfo | null} */</span>
+	<span class="s1">let bestMatchInfo = </span><span class="s4">null</span><span class="s1">;</span>
+	<span class="s0">/** @type {string | undefined} */</span>
+	<span class="s1">let bestMatchSubpath;</span>
+
+	<span class="s1">const infos = getFieldKeyInfos(field);</span>
+
+	<span class="s4">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; infos.length; i++) {</span>
+		<span class="s1">const info = infos[i];</span>
+		<span class="s1">const { key, patternIndex } = info;</span>
+
+		<span class="s4">if </span><span class="s1">(patternIndex !== -</span><span class="s3">1</span><span class="s1">) {</span>
+			<span class="s4">if </span><span class="s1">(</span>
+				<span class="s1">!info.isValidPattern ||</span>
+				<span class="s1">!request.startsWith(info.wildcardPrefix) ||</span>
+				<span class="s1">requestLen &lt; key.length ||</span>
+				<span class="s1">!request.endsWith(info.wildcardSuffix) ||</span>
+				<span class="s1">patternKeyCompare(bestMatch, key) !== </span><span class="s3">1</span>
+			<span class="s1">) {</span>
+				<span class="s4">continue</span><span class="s1">;</span>
+			<span class="s1">}</span>
+			<span class="s1">bestMatch = key;</span>
+			<span class="s1">bestMatchInfo = info;</span>
+			<span class="s1">bestMatchSubpath = request.slice(</span>
+				<span class="s1">patternIndex,</span>
+				<span class="s1">requestLen - info.wildcardSuffix.length,</span>
+			<span class="s1">);</span>
+		<span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+			<span class="s1">info.isLegacySubpath &amp;&amp;</span>
+			<span class="s1">request.startsWith(key) &amp;&amp;</span>
+			<span class="s1">patternKeyCompare(bestMatch, key) === </span><span class="s3">1</span>
+		<span class="s1">) {</span>
+			<span class="s1">bestMatch = key;</span>
+			<span class="s1">bestMatchInfo = info;</span>
+			<span class="s1">bestMatchSubpath = request.slice(key.length);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s4">if </span><span class="s1">(bestMatch === </span><span class="s2">&quot;&quot;</span><span class="s1">) </span><span class="s4">return null</span><span class="s1">;</span>
+
+	<span class="s1">const target =</span>
+		<span class="s0">/** @type {{ [k: string]: MappingValue }} */</span>
+		<span class="s1">(field)[bestMatch];</span>
+
+	<span class="s4">return </span><span class="s1">[</span>
+		<span class="s1">target,</span>
+		<span class="s0">/** @type {string} */ </span><span class="s1">(bestMatchSubpath),</span>
+		<span class="s0">/** @type {FieldKeyInfo} */ </span><span class="s1">(bestMatchInfo).isSubpathMapping,</span>
+		<span class="s0">/** @type {FieldKeyInfo} */ </span><span class="s1">(bestMatchInfo).isPattern,</span>
+		<span class="s1">bestMatch,</span>
+	<span class="s1">];</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Trying to match request to field 
+ * @param {string} request request 
+ * @param {ExportsField | ImportsField} field exports or import field 
+ * @returns {MatchTuple} match or null, number is negative and one less when it's a folder mapping, number is request.length + 1 for direct mappings 
+ */</span>
+<span class="s4">function </span><span class="s1">findMatch(request, field) {</span>
+	<span class="s1">const fieldKey = </span><span class="s0">/** @type {RecordMapping} */ </span><span class="s1">(field);</span>
+	<span class="s1">let perRequest = _findMatchCache.get(fieldKey);</span>
+	<span class="s4">if </span><span class="s1">(perRequest !== undefined) {</span>
+		<span class="s1">const cached = perRequest.get(request);</span>
+		<span class="s4">if </span><span class="s1">(cached !== undefined) </span><span class="s4">return </span><span class="s1">cached;</span>
+		<span class="s0">// `null` is a valid cached value (= &quot;no match&quot;), so a `get(...)`</span>
+		<span class="s0">// that returns undefined could either mean &quot;not cached yet&quot; or</span>
+		<span class="s0">// &quot;cached null&quot;. Do the explicit `has` only in the undefined case.</span>
+		<span class="s4">if </span><span class="s1">(perRequest.has(request)) </span><span class="s4">return null</span><span class="s1">;</span>
+	<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+		<span class="s1">perRequest = </span><span class="s4">new </span><span class="s1">Map();</span>
+		<span class="s1">_findMatchCache.set(fieldKey, perRequest);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const result = computeFindMatch(request, field);</span>
+	<span class="s1">perRequest.set(request, result);</span>
+	<span class="s4">return </span><span class="s1">result;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ConditionalMapping | DirectMapping | null} mapping mapping 
+ * @returns {boolean} is conditional mapping 
+ */</span>
+<span class="s4">function </span><span class="s1">isConditionalMapping(mapping) {</span>
+	<span class="s4">return </span><span class="s1">(</span>
+		<span class="s1">mapping !== </span><span class="s4">null </span><span class="s1">&amp;&amp; </span><span class="s4">typeof </span><span class="s1">mapping === </span><span class="s2">&quot;object&quot; </span><span class="s1">&amp;&amp; !Array.isArray(mapping)</span>
+	<span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Sentinel stored in the conditional-mapping cache for inputs whose walk 
+ * returns `null` (&quot;no condition matched&quot;). Using a non-null marker lets the 
+ * cache-hit path be a single `WeakMap.get()` — we distinguish 
+ * &quot;cached null&quot; from &quot;not cached yet&quot; without a second `has` call. 
+ */</span>
+<span class="s1">const NULL_RESULT = Symbol(</span><span class="s2">&quot;NULL_RESULT&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Memoization of `conditionalMapping(mapping, conditionNames)`. The result 
+ * depends only on the mapping object (immutable — owned by a parsed 
+ * `package.json`) and the `conditionNames` Set (owned by the resolver's 
+ * options and stable for its lifetime), so it is safe to cache per (mapping, 
+ * conditionNames) pair. 
+ * 
+ * A conditional `exports` entry that appears inside a `directMapping` array 
+ * (the common `&quot;browser&quot;: [...fallback list...]` shape, plus nested 
+ * conditions) gets walked on every resolve that traverses the parent entry. 
+ * Without this cache each of those walks re-reads `Object.keys` on the 
+ * mapping and re-visits every condition until one matches, even though the 
+ * inputs are identical. 
+ * 
+ * Outer key is the conditional mapping itself; inner key is the condition 
+ * Set. Both are object references, so WeakMap-of-WeakMap lets both levels 
+ * be collected automatically when the description file or resolver go away. 
+ * @type {WeakMap&lt;ConditionalMapping, WeakMap&lt;Set&lt;string&gt;, DirectMapping | typeof NULL_RESULT&gt;&gt;} 
+ */</span>
+<span class="s1">const _conditionalMappingCache = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * @param {ConditionalMapping} conditionalMapping_ conditional mapping 
+ * @param {Set&lt;string&gt;} conditionNames condition names 
+ * @returns {DirectMapping | null} direct mapping if found (uncached) 
+ */</span>
+<span class="s4">function </span><span class="s1">computeConditionalMapping(conditionalMapping_, conditionNames) {</span>
+	<span class="s0">/** @type {[ConditionalMapping, string[], number][]} */</span>
+	<span class="s1">const lookup = [[conditionalMapping_, cachedKeys(conditionalMapping_), </span><span class="s3">0</span><span class="s1">]];</span>
+
+	<span class="s1">loop: </span><span class="s4">while </span><span class="s1">(lookup.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+		<span class="s1">const [mapping, conditions, j] = lookup[lookup.length - </span><span class="s3">1</span><span class="s1">];</span>
+
+		<span class="s4">for </span><span class="s1">(let i = j; i &lt; conditions.length; i++) {</span>
+			<span class="s1">const condition = conditions[i];</span>
+
+			<span class="s4">if </span><span class="s1">(condition === </span><span class="s2">&quot;default&quot;</span><span class="s1">) {</span>
+				<span class="s1">const innerMapping = mapping[condition];</span>
+				<span class="s0">// is nested</span>
+				<span class="s4">if </span><span class="s1">(isConditionalMapping(innerMapping)) {</span>
+					<span class="s1">const conditionalMapping = </span><span class="s0">/** @type {ConditionalMapping} */ </span><span class="s1">(</span>
+						<span class="s1">innerMapping</span>
+					<span class="s1">);</span>
+					<span class="s1">lookup[lookup.length - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">2</span><span class="s1">] = i + </span><span class="s3">1</span><span class="s1">;</span>
+					<span class="s1">lookup.push([conditionalMapping, cachedKeys(conditionalMapping), </span><span class="s3">0</span><span class="s1">]);</span>
+					<span class="s4">continue </span><span class="s1">loop;</span>
+				<span class="s1">}</span>
+
+				<span class="s4">return </span><span class="s0">/** @type {DirectMapping} */ </span><span class="s1">(innerMapping);</span>
+			<span class="s1">}</span>
+
+			<span class="s4">if </span><span class="s1">(conditionNames.has(condition)) {</span>
+				<span class="s1">const innerMapping = mapping[condition];</span>
+				<span class="s0">// is nested</span>
+				<span class="s4">if </span><span class="s1">(isConditionalMapping(innerMapping)) {</span>
+					<span class="s1">const conditionalMapping = </span><span class="s0">/** @type {ConditionalMapping} */ </span><span class="s1">(</span>
+						<span class="s1">innerMapping</span>
+					<span class="s1">);</span>
+					<span class="s1">lookup[lookup.length - </span><span class="s3">1</span><span class="s1">][</span><span class="s3">2</span><span class="s1">] = i + </span><span class="s3">1</span><span class="s1">;</span>
+					<span class="s1">lookup.push([conditionalMapping, cachedKeys(conditionalMapping), </span><span class="s3">0</span><span class="s1">]);</span>
+					<span class="s4">continue </span><span class="s1">loop;</span>
+				<span class="s1">}</span>
+
+				<span class="s4">return </span><span class="s0">/** @type {DirectMapping} */ </span><span class="s1">(innerMapping);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s1">lookup.pop();</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return null</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ConditionalMapping} conditionalMapping_ conditional mapping 
+ * @param {Set&lt;string&gt;} conditionNames condition names 
+ * @returns {DirectMapping | null} direct mapping if found 
+ */</span>
+<span class="s4">function </span><span class="s1">conditionalMapping(conditionalMapping_, conditionNames) {</span>
+	<span class="s1">let perSet = _conditionalMappingCache.get(conditionalMapping_);</span>
+	<span class="s4">if </span><span class="s1">(perSet !== undefined) {</span>
+		<span class="s1">const cached = perSet.get(conditionNames);</span>
+		<span class="s4">if </span><span class="s1">(cached !== undefined) {</span>
+			<span class="s4">return </span><span class="s1">cached === NULL_RESULT</span>
+				<span class="s1">? </span><span class="s4">null</span>
+				<span class="s1">: </span><span class="s0">/** @type {DirectMapping} */ </span><span class="s1">(cached);</span>
+		<span class="s1">}</span>
+	<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+		<span class="s1">perSet = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+		<span class="s1">_conditionalMappingCache.set(conditionalMapping_, perSet);</span>
+	<span class="s1">}</span>
+	<span class="s1">const result = computeConditionalMapping(conditionalMapping_, conditionNames);</span>
+	<span class="s1">perSet.set(conditionNames, result === </span><span class="s4">null </span><span class="s1">? NULL_RESULT : result);</span>
+	<span class="s4">return </span><span class="s1">result;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string | undefined} remainingRequest remaining request when folder mapping, undefined for file mappings 
+ * @param {boolean} isPattern true, if mapping is a pattern (contains &quot;*&quot;) 
+ * @param {boolean} isSubpathMapping true, for subpath mappings 
+ * @param {string} mappingTarget direct export 
+ * @param {(d: string, f: boolean) =&gt; void} assert asserting direct value 
+ * @returns {string} mapping result 
+ */</span>
+<span class="s4">function </span><span class="s1">targetMapping(</span>
+	<span class="s1">remainingRequest,</span>
+	<span class="s1">isPattern,</span>
+	<span class="s1">isSubpathMapping,</span>
+	<span class="s1">mappingTarget,</span>
+	<span class="s1">assert,</span>
+<span class="s1">) {</span>
+	<span class="s4">if </span><span class="s1">(remainingRequest === undefined) {</span>
+		<span class="s1">assert(mappingTarget, </span><span class="s4">false</span><span class="s1">);</span>
+
+		<span class="s4">return </span><span class="s1">mappingTarget;</span>
+	<span class="s1">}</span>
+
+	<span class="s4">if </span><span class="s1">(isSubpathMapping) {</span>
+		<span class="s1">assert(mappingTarget, </span><span class="s4">true</span><span class="s1">);</span>
+
+		<span class="s4">return </span><span class="s1">mappingTarget + remainingRequest;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">assert(mappingTarget, </span><span class="s4">false</span><span class="s1">);</span>
+
+	<span class="s1">let result = mappingTarget;</span>
+
+	<span class="s4">if </span><span class="s1">(isPattern) {</span>
+		<span class="s1">result = result.replace(</span>
+			<span class="s1">patternRegEx,</span>
+			<span class="s1">remainingRequest.replace(/\$/g, </span><span class="s2">&quot;$$&quot;</span><span class="s1">),</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">result;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string | undefined} remainingRequest remaining request when folder mapping, undefined for file mappings 
+ * @param {boolean} isPattern true, if mapping is a pattern (contains &quot;*&quot;) 
+ * @param {boolean} isSubpathMapping true, for subpath mappings 
+ * @param {DirectMapping | null} mappingTarget direct export 
+ * @param {Set&lt;string&gt;} conditionNames condition names 
+ * @param {(d: string, f: boolean) =&gt; void} assert asserting direct value 
+ * @returns {string[]} mapping result 
+ */</span>
+<span class="s4">function </span><span class="s1">directMapping(</span>
+	<span class="s1">remainingRequest,</span>
+	<span class="s1">isPattern,</span>
+	<span class="s1">isSubpathMapping,</span>
+	<span class="s1">mappingTarget,</span>
+	<span class="s1">conditionNames,</span>
+	<span class="s1">assert,</span>
+<span class="s1">) {</span>
+	<span class="s4">if </span><span class="s1">(mappingTarget === </span><span class="s4">null</span><span class="s1">) </span><span class="s4">return </span><span class="s1">[];</span>
+
+	<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">mappingTarget === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+		<span class="s4">return </span><span class="s1">[</span>
+			<span class="s1">targetMapping(</span>
+				<span class="s1">remainingRequest,</span>
+				<span class="s1">isPattern,</span>
+				<span class="s1">isSubpathMapping,</span>
+				<span class="s1">mappingTarget,</span>
+				<span class="s1">assert,</span>
+			<span class="s1">),</span>
+		<span class="s1">];</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @type {string[]} */</span>
+	<span class="s1">const targets = [];</span>
+
+	<span class="s4">for </span><span class="s1">(const exp of mappingTarget) {</span>
+		<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">exp === </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+			<span class="s1">targets.push(</span>
+				<span class="s1">targetMapping(</span>
+					<span class="s1">remainingRequest,</span>
+					<span class="s1">isPattern,</span>
+					<span class="s1">isSubpathMapping,</span>
+					<span class="s1">exp,</span>
+					<span class="s1">assert,</span>
+				<span class="s1">),</span>
+			<span class="s1">);</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const mapping = conditionalMapping(exp, conditionNames);</span>
+		<span class="s4">if </span><span class="s1">(!mapping) </span><span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">const innerExports = directMapping(</span>
+			<span class="s1">remainingRequest,</span>
+			<span class="s1">isPattern,</span>
+			<span class="s1">isSubpathMapping,</span>
+			<span class="s1">mapping,</span>
+			<span class="s1">conditionNames,</span>
+			<span class="s1">assert,</span>
+		<span class="s1">);</span>
+		<span class="s4">for </span><span class="s1">(const innerExport of innerExports) {</span>
+			<span class="s1">targets.push(innerExport);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">targets;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ExportsField | ImportsField} field root 
+ * @param {(s: string) =&gt; string} normalizeRequest Normalize request, for `imports` field it adds `#`, for `exports` field it adds `.` or `./` 
+ * @param {(s: string) =&gt; string} assertRequest assertRequest 
+ * @param {(s: string, f: boolean) =&gt; void} assertTarget assertTarget 
+ * @returns {FieldProcessor} field processor 
+ */</span>
+<span class="s4">function </span><span class="s1">createFieldProcessor(</span>
+	<span class="s1">field,</span>
+	<span class="s1">normalizeRequest,</span>
+	<span class="s1">assertRequest,</span>
+	<span class="s1">assertTarget,</span>
+<span class="s1">) {</span>
+	<span class="s4">return function </span><span class="s1">fieldProcessor(request, conditionNames) {</span>
+		<span class="s1">request = assertRequest(request);</span>
+
+		<span class="s1">const match = findMatch(normalizeRequest(request), field);</span>
+
+		<span class="s4">if </span><span class="s1">(match === </span><span class="s4">null</span><span class="s1">) </span><span class="s4">return </span><span class="s1">[[], </span><span class="s4">null</span><span class="s1">];</span>
+
+		<span class="s1">const [mapping, remainingRequest, isSubpathMapping, isPattern, usedField] =</span>
+			<span class="s1">match;</span>
+
+		<span class="s0">/** @type {DirectMapping | null} */</span>
+		<span class="s1">let direct = </span><span class="s4">null</span><span class="s1">;</span>
+
+		<span class="s4">if </span><span class="s1">(isConditionalMapping(mapping)) {</span>
+			<span class="s1">direct = conditionalMapping(</span>
+				<span class="s0">/** @type {ConditionalMapping} */ </span><span class="s1">(mapping),</span>
+				<span class="s1">conditionNames,</span>
+			<span class="s1">);</span>
+
+			<span class="s0">// matching not found</span>
+			<span class="s4">if </span><span class="s1">(direct === </span><span class="s4">null</span><span class="s1">) </span><span class="s4">return </span><span class="s1">[[], </span><span class="s4">null</span><span class="s1">];</span>
+		<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+			<span class="s1">direct = </span><span class="s0">/** @type {DirectMapping} */ </span><span class="s1">(mapping);</span>
+		<span class="s1">}</span>
+
+		<span class="s4">return </span><span class="s1">[</span>
+			<span class="s1">directMapping(</span>
+				<span class="s1">remainingRequest,</span>
+				<span class="s1">isPattern,</span>
+				<span class="s1">isSubpathMapping,</span>
+				<span class="s1">direct,</span>
+				<span class="s1">conditionNames,</span>
+				<span class="s1">assertTarget,</span>
+			<span class="s1">),</span>
+			<span class="s1">usedField,</span>
+		<span class="s1">];</span>
+	<span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string} request request 
+ * @returns {string} updated request 
+ */</span>
+<span class="s4">function </span><span class="s1">assertExportsFieldRequest(request) {</span>
+	<span class="s4">if </span><span class="s1">(request.charCodeAt(</span><span class="s3">0</span><span class="s1">) !== dotCode) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">'Request should be relative path and start with &quot;.&quot;'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+	<span class="s4">if </span><span class="s1">(request.length === </span><span class="s3">1</span><span class="s1">) </span><span class="s4">return </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+	<span class="s4">if </span><span class="s1">(request.charCodeAt(</span><span class="s3">1</span><span class="s1">) !== slashCode) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">'Request should be relative path and start with &quot;./&quot;'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+	<span class="s4">if </span><span class="s1">(request.charCodeAt(request.length - </span><span class="s3">1</span><span class="s1">) === slashCode) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Only requesting file allowed&quot;</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">request.slice(</span><span class="s3">2</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ExportsField} field exports field 
+ * @returns {ExportsField} normalized exports field 
+ */</span>
+<span class="s4">function </span><span class="s1">buildExportsField(field) {</span>
+	<span class="s0">// handle syntax sugar, if exports field is direct mapping for &quot;.&quot;</span>
+	<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">field === </span><span class="s2">&quot;string&quot; </span><span class="s1">|| Array.isArray(field)) {</span>
+		<span class="s4">return </span><span class="s1">{ </span><span class="s2">&quot;.&quot;</span><span class="s1">: field };</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const keys = Object.keys(field);</span>
+
+	<span class="s4">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; keys.length; i++) {</span>
+		<span class="s1">const key = keys[i];</span>
+
+		<span class="s4">if </span><span class="s1">(key.charCodeAt(</span><span class="s3">0</span><span class="s1">) !== dotCode) {</span>
+			<span class="s0">// handle syntax sugar, if exports field is conditional mapping for &quot;.&quot;</span>
+			<span class="s4">if </span><span class="s1">(i === </span><span class="s3">0</span><span class="s1">) {</span>
+				<span class="s4">while </span><span class="s1">(i &lt; keys.length) {</span>
+					<span class="s1">const charCode = keys[i].charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+					<span class="s4">if </span><span class="s1">(charCode === dotCode || charCode === slashCode) {</span>
+						<span class="s4">throw new </span><span class="s1">Error(</span>
+							<span class="s1">`Exports field key should be relative path and start </span><span class="s4">with </span><span class="s2">&quot;.&quot; </span><span class="s1">(key: ${JSON.stringify(</span>
+								<span class="s1">key,</span>
+							<span class="s1">)})`,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+					<span class="s1">i++;</span>
+				<span class="s1">}</span>
+
+				<span class="s4">return </span><span class="s1">{ </span><span class="s2">&quot;.&quot;</span><span class="s1">: field };</span>
+			<span class="s1">}</span>
+
+			<span class="s4">throw new </span><span class="s1">Error(</span>
+				<span class="s1">`Exports field key should be relative path and start </span><span class="s4">with </span><span class="s2">&quot;.&quot; </span><span class="s1">(key: ${JSON.stringify(</span>
+					<span class="s1">key,</span>
+				<span class="s1">)})`,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s4">if </span><span class="s1">(key.length === </span><span class="s3">1</span><span class="s1">) {</span>
+			<span class="s4">continue</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s4">if </span><span class="s1">(key.charCodeAt(</span><span class="s3">1</span><span class="s1">) !== slashCode) {</span>
+			<span class="s4">throw new </span><span class="s1">Error(</span>
+				<span class="s1">`Exports field key should be relative path and start </span><span class="s4">with </span><span class="s2">&quot;./&quot; </span><span class="s1">(key: ${JSON.stringify(</span>
+					<span class="s1">key,</span>
+				<span class="s1">)})`,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">field;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string} exp export target 
+ * @param {boolean} expectFolder is folder expected 
+ */</span>
+<span class="s4">function </span><span class="s1">assertExportTarget(exp, expectFolder) {</span>
+	<span class="s1">const parsedIdentifier = parseIdentifier(exp);</span>
+
+	<span class="s4">if </span><span class="s1">(!parsedIdentifier) {</span>
+		<span class="s4">return</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const [relativePath] = parsedIdentifier;</span>
+	<span class="s1">const isFolder =</span>
+		<span class="s1">relativePath.charCodeAt(relativePath.length - </span><span class="s3">1</span><span class="s1">) === slashCode;</span>
+
+	<span class="s4">if </span><span class="s1">(isFolder !== expectFolder) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span>
+			<span class="s1">expectFolder</span>
+				<span class="s1">? `Expecting folder to folder mapping. ${JSON.stringify(</span>
+						<span class="s1">exp,</span>
+					<span class="s1">)} should end </span><span class="s4">with </span><span class="s2">&quot;/&quot;</span><span class="s1">`</span>
+				<span class="s1">: `Expecting file to file mapping. ${JSON.stringify(</span>
+						<span class="s1">exp,</span>
+					<span class="s1">)} should not end </span><span class="s4">with </span><span class="s2">&quot;/&quot;</span><span class="s1">`,</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ExportsField} exportsField the exports field 
+ * @returns {FieldProcessor} process callback 
+ */</span>
+<span class="s1">module.exports.processExportsField = </span><span class="s4">function </span><span class="s1">processExportsField(</span>
+	<span class="s1">exportsField,</span>
+<span class="s1">) {</span>
+	<span class="s4">return </span><span class="s1">createFieldProcessor(</span>
+		<span class="s1">buildExportsField(exportsField),</span>
+		<span class="s1">(request) =&gt; (request.length === </span><span class="s3">0 </span><span class="s1">? </span><span class="s2">&quot;.&quot; </span><span class="s1">: `./${request}`),</span>
+		<span class="s1">assertExportsFieldRequest,</span>
+		<span class="s1">assertExportTarget,</span>
+	<span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * @param {string} request request 
+ * @returns {string} updated request 
+ */</span>
+<span class="s4">function </span><span class="s1">assertImportsFieldRequest(request) {</span>
+	<span class="s4">if </span><span class="s1">(request.charCodeAt(</span><span class="s3">0</span><span class="s1">) !== hashCode) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">'Request should start with &quot;#&quot;'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+	<span class="s4">if </span><span class="s1">(request.length === </span><span class="s3">1</span><span class="s1">) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Request should have at least 2 characters&quot;</span><span class="s1">);</span>
+	<span class="s1">}</span>
+	<span class="s0">// Note: #/ patterns are now allowed per Node.js PR #60864</span>
+	<span class="s0">// https://github.com/nodejs/node/pull/60864</span>
+	<span class="s4">if </span><span class="s1">(request.charCodeAt(request.length - </span><span class="s3">1</span><span class="s1">) === slashCode) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span><span class="s2">&quot;Only requesting file allowed&quot;</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s4">return </span><span class="s1">request.slice(</span><span class="s3">1</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {string} imp import target 
+ * @param {boolean} expectFolder is folder expected 
+ */</span>
+<span class="s4">function </span><span class="s1">assertImportTarget(imp, expectFolder) {</span>
+	<span class="s1">const parsedIdentifier = parseIdentifier(imp);</span>
+
+	<span class="s4">if </span><span class="s1">(!parsedIdentifier) {</span>
+		<span class="s4">return</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">const [relativePath] = parsedIdentifier;</span>
+	<span class="s1">const isFolder =</span>
+		<span class="s1">relativePath.charCodeAt(relativePath.length - </span><span class="s3">1</span><span class="s1">) === slashCode;</span>
+
+	<span class="s4">if </span><span class="s1">(isFolder !== expectFolder) {</span>
+		<span class="s4">throw new </span><span class="s1">Error(</span>
+			<span class="s1">expectFolder</span>
+				<span class="s1">? `Expecting folder to folder mapping. ${JSON.stringify(</span>
+						<span class="s1">imp,</span>
+					<span class="s1">)} should end </span><span class="s4">with </span><span class="s2">&quot;/&quot;</span><span class="s1">`</span>
+				<span class="s1">: `Expecting file to file mapping. ${JSON.stringify(</span>
+						<span class="s1">imp,</span>
+					<span class="s1">)} should not end </span><span class="s4">with </span><span class="s2">&quot;/&quot;</span><span class="s1">`,</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {ImportsField} importsField the exports field 
+ * @returns {FieldProcessor} process callback 
+ */</span>
+<span class="s1">module.exports.processImportsField = </span><span class="s4">function </span><span class="s1">processImportsField(</span>
+	<span class="s1">importsField,</span>
+<span class="s1">) {</span>
+	<span class="s4">return </span><span class="s1">createFieldProcessor(</span>
+		<span class="s1">importsField,</span>
+		<span class="s1">(request) =&gt; `#${request}`,</span>
+		<span class="s1">assertImportsFieldRequest,</span>
+		<span class="s1">assertImportTarget,</span>
+	<span class="s1">);</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

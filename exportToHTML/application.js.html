@@ -1,0 +1,682 @@
+<html>
+<head>
+<title>application.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+application.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/*! 
+ * express 
+ * Copyright(c) 2009-2013 TJ Holowaychuk 
+ * Copyright(c) 2013 Roman Shtylman 
+ * Copyright(c) 2014-2015 Douglas Christopher Wilson 
+ * MIT Licensed 
+ */</span>
+
+<span class="s2">'use strict'</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * Module dependencies. 
+ * @private 
+ */</span>
+
+<span class="s3">var </span><span class="s1">finalhandler = require(</span><span class="s2">'finalhandler'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">Router = require(</span><span class="s2">'./router'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">methods = require(</span><span class="s2">'methods'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">middleware = require(</span><span class="s2">'./middleware/init'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">query = require(</span><span class="s2">'./middleware/query'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">debug = require(</span><span class="s2">'debug'</span><span class="s1">)(</span><span class="s2">'express:application'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">View = require(</span><span class="s2">'./view'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">http = require(</span><span class="s2">'http'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">compileETag = require(</span><span class="s2">'./utils'</span><span class="s1">).compileETag;</span>
+<span class="s3">var </span><span class="s1">compileQueryParser = require(</span><span class="s2">'./utils'</span><span class="s1">).compileQueryParser;</span>
+<span class="s3">var </span><span class="s1">compileTrust = require(</span><span class="s2">'./utils'</span><span class="s1">).compileTrust;</span>
+<span class="s3">var </span><span class="s1">deprecate = require(</span><span class="s2">'depd'</span><span class="s1">)(</span><span class="s2">'express'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">flatten = require(</span><span class="s2">'array-flatten'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">merge = require(</span><span class="s2">'utils-merge'</span><span class="s1">);</span>
+<span class="s3">var </span><span class="s1">resolve = require(</span><span class="s2">'path'</span><span class="s1">).resolve;</span>
+<span class="s3">var </span><span class="s1">setPrototypeOf = require(</span><span class="s2">'setprototypeof'</span><span class="s1">)</span>
+
+<span class="s0">/** 
+ * Module variables. 
+ * @private 
+ */</span>
+
+<span class="s3">var </span><span class="s1">hasOwnProperty = Object.prototype.hasOwnProperty</span>
+<span class="s3">var </span><span class="s1">slice = Array.prototype.slice;</span>
+
+<span class="s0">/** 
+ * Application prototype. 
+ */</span>
+
+<span class="s3">var </span><span class="s1">app = exports = module.exports = {};</span>
+
+<span class="s0">/** 
+ * Variable for trust proxy inheritance back-compat 
+ * @private 
+ */</span>
+
+<span class="s3">var </span><span class="s1">trustProxyDefaultSymbol = </span><span class="s2">'@@symbol:trust_proxy_default'</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * Initialize the server. 
+ * 
+ *   - setup default configuration 
+ *   - setup default middleware 
+ *   - setup route reflection methods 
+ * 
+ * @private 
+ */</span>
+
+<span class="s1">app.init = </span><span class="s3">function </span><span class="s1">init() {</span>
+  <span class="s3">this</span><span class="s1">.cache = {};</span>
+  <span class="s3">this</span><span class="s1">.engines = {};</span>
+  <span class="s3">this</span><span class="s1">.settings = {};</span>
+
+  <span class="s3">this</span><span class="s1">.defaultConfiguration();</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Initialize application configuration. 
+ * @private 
+ */</span>
+
+<span class="s1">app.defaultConfiguration = </span><span class="s3">function </span><span class="s1">defaultConfiguration() {</span>
+  <span class="s3">var </span><span class="s1">env = process.env.NODE_ENV || </span><span class="s2">'development'</span><span class="s1">;</span>
+
+  <span class="s0">// default settings</span>
+  <span class="s3">this</span><span class="s1">.enable(</span><span class="s2">'x-powered-by'</span><span class="s1">);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'etag'</span><span class="s1">, </span><span class="s2">'weak'</span><span class="s1">);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'env'</span><span class="s1">, env);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'query parser'</span><span class="s1">, </span><span class="s2">'extended'</span><span class="s1">);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'subdomain offset'</span><span class="s1">, </span><span class="s4">2</span><span class="s1">);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'trust proxy'</span><span class="s1">, </span><span class="s3">false</span><span class="s1">);</span>
+
+  <span class="s0">// trust proxy inherit back-compat</span>
+  <span class="s1">Object.defineProperty(</span><span class="s3">this</span><span class="s1">.settings, trustProxyDefaultSymbol, {</span>
+    <span class="s1">configurable: </span><span class="s3">true</span><span class="s1">,</span>
+    <span class="s1">value: </span><span class="s3">true</span>
+  <span class="s1">});</span>
+
+  <span class="s1">debug(</span><span class="s2">'booting in %s mode'</span><span class="s1">, env);</span>
+
+  <span class="s3">this</span><span class="s1">.on(</span><span class="s2">'mount'</span><span class="s1">, </span><span class="s3">function </span><span class="s1">onmount(parent) {</span>
+    <span class="s0">// inherit trust proxy</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.settings[trustProxyDefaultSymbol] === </span><span class="s3">true</span>
+      <span class="s1">&amp;&amp; </span><span class="s3">typeof </span><span class="s1">parent.settings[</span><span class="s2">'trust proxy fn'</span><span class="s1">] === </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s3">delete this</span><span class="s1">.settings[</span><span class="s2">'trust proxy'</span><span class="s1">];</span>
+      <span class="s3">delete this</span><span class="s1">.settings[</span><span class="s2">'trust proxy fn'</span><span class="s1">];</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// inherit protos</span>
+    <span class="s1">setPrototypeOf(</span><span class="s3">this</span><span class="s1">.request, parent.request)</span>
+    <span class="s1">setPrototypeOf(</span><span class="s3">this</span><span class="s1">.response, parent.response)</span>
+    <span class="s1">setPrototypeOf(</span><span class="s3">this</span><span class="s1">.engines, parent.engines)</span>
+    <span class="s1">setPrototypeOf(</span><span class="s3">this</span><span class="s1">.settings, parent.settings)</span>
+  <span class="s1">});</span>
+
+  <span class="s0">// setup locals</span>
+  <span class="s3">this</span><span class="s1">.locals = Object.create(</span><span class="s3">null</span><span class="s1">);</span>
+
+  <span class="s0">// top-most app is mounted at /</span>
+  <span class="s3">this</span><span class="s1">.mountpath = </span><span class="s2">'/'</span><span class="s1">;</span>
+
+  <span class="s0">// default locals</span>
+  <span class="s3">this</span><span class="s1">.locals.settings = </span><span class="s3">this</span><span class="s1">.settings;</span>
+
+  <span class="s0">// default configuration</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'view'</span><span class="s1">, View);</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'views'</span><span class="s1">, resolve(</span><span class="s2">'views'</span><span class="s1">));</span>
+  <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'jsonp callback name'</span><span class="s1">, </span><span class="s2">'callback'</span><span class="s1">);</span>
+
+  <span class="s3">if </span><span class="s1">(env === </span><span class="s2">'production'</span><span class="s1">) {</span>
+    <span class="s3">this</span><span class="s1">.enable(</span><span class="s2">'view cache'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">Object.defineProperty(</span><span class="s3">this</span><span class="s1">, </span><span class="s2">'router'</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+      <span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">'</span><span class="s3">\'</span><span class="s2">app.router</span><span class="s3">\' </span><span class="s2">is deprecated!</span><span class="s3">\n</span><span class="s2">Please see the 3.x to 4.x migration guide for details on how to update your app.'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * lazily adds the base router if it has not yet been added. 
+ * 
+ * We cannot add the base router in the defaultConfiguration because 
+ * it reads app settings which might be set after that has run. 
+ * 
+ * @private 
+ */</span>
+<span class="s1">app.lazyrouter = </span><span class="s3">function </span><span class="s1">lazyrouter() {</span>
+  <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">._router) {</span>
+    <span class="s3">this</span><span class="s1">._router = </span><span class="s3">new </span><span class="s1">Router({</span>
+      <span class="s1">caseSensitive: </span><span class="s3">this</span><span class="s1">.enabled(</span><span class="s2">'case sensitive routing'</span><span class="s1">),</span>
+      <span class="s1">strict: </span><span class="s3">this</span><span class="s1">.enabled(</span><span class="s2">'strict routing'</span><span class="s1">)</span>
+    <span class="s1">});</span>
+
+    <span class="s3">this</span><span class="s1">._router.use(query(</span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'query parser fn'</span><span class="s1">)));</span>
+    <span class="s3">this</span><span class="s1">._router.use(middleware.init(</span><span class="s3">this</span><span class="s1">));</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Dispatch a req, res pair into the application. Starts pipeline processing. 
+ * 
+ * If no callback is provided, then default error handlers will respond 
+ * in the event of an error bubbling through the stack. 
+ * 
+ * @private 
+ */</span>
+
+<span class="s1">app.handle = </span><span class="s3">function </span><span class="s1">handle(req, res, callback) {</span>
+  <span class="s3">var </span><span class="s1">router = </span><span class="s3">this</span><span class="s1">._router;</span>
+
+  <span class="s0">// final handler</span>
+  <span class="s3">var </span><span class="s1">done = callback || finalhandler(req, res, {</span>
+    <span class="s1">env: </span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'env'</span><span class="s1">),</span>
+    <span class="s1">onerror: logerror.bind(</span><span class="s3">this</span><span class="s1">)</span>
+  <span class="s1">});</span>
+
+  <span class="s0">// no routes</span>
+  <span class="s3">if </span><span class="s1">(!router) {</span>
+    <span class="s1">debug(</span><span class="s2">'no routes defined on app'</span><span class="s1">);</span>
+    <span class="s1">done();</span>
+    <span class="s3">return</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">router.handle(req, res, done);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Proxy `Router#use()` to add middleware to the app router. 
+ * See Router#use() documentation for details. 
+ * 
+ * If the _fn_ parameter is an express app, then it will be 
+ * mounted at the _route_ specified. 
+ * 
+ * @public 
+ */</span>
+
+<span class="s1">app.use = </span><span class="s3">function </span><span class="s1">use(fn) {</span>
+  <span class="s3">var </span><span class="s1">offset = </span><span class="s4">0</span><span class="s1">;</span>
+  <span class="s3">var </span><span class="s1">path = </span><span class="s2">'/'</span><span class="s1">;</span>
+
+  <span class="s0">// default path to '/'</span>
+  <span class="s0">// disambiguate app.use([fn])</span>
+  <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">fn !== </span><span class="s2">'function'</span><span class="s1">) {</span>
+    <span class="s3">var </span><span class="s1">arg = fn;</span>
+
+    <span class="s3">while </span><span class="s1">(Array.isArray(arg) &amp;&amp; arg.length !== </span><span class="s4">0</span><span class="s1">) {</span>
+      <span class="s1">arg = arg[</span><span class="s4">0</span><span class="s1">];</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// first arg is the path</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">arg !== </span><span class="s2">'function'</span><span class="s1">) {</span>
+      <span class="s1">offset = </span><span class="s4">1</span><span class="s1">;</span>
+      <span class="s1">path = fn;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">var </span><span class="s1">fns = flatten(slice.call(arguments, offset));</span>
+
+  <span class="s3">if </span><span class="s1">(fns.length === </span><span class="s4">0</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'app.use() requires a middleware function'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// setup router</span>
+  <span class="s3">this</span><span class="s1">.lazyrouter();</span>
+  <span class="s3">var </span><span class="s1">router = </span><span class="s3">this</span><span class="s1">._router;</span>
+
+  <span class="s1">fns.forEach(</span><span class="s3">function </span><span class="s1">(fn) {</span>
+    <span class="s0">// non-express app</span>
+    <span class="s3">if </span><span class="s1">(!fn || !fn.handle || !fn.set) {</span>
+      <span class="s3">return </span><span class="s1">router.use(path, fn);</span>
+    <span class="s1">}</span>
+
+    <span class="s1">debug(</span><span class="s2">'.use app under %s'</span><span class="s1">, path);</span>
+    <span class="s1">fn.mountpath = path;</span>
+    <span class="s1">fn.parent = </span><span class="s3">this</span><span class="s1">;</span>
+
+    <span class="s0">// restore .app property on req and res</span>
+    <span class="s1">router.use(path, </span><span class="s3">function </span><span class="s1">mounted_app(req, res, next) {</span>
+      <span class="s3">var </span><span class="s1">orig = req.app;</span>
+      <span class="s1">fn.handle(req, res, </span><span class="s3">function </span><span class="s1">(err) {</span>
+        <span class="s1">setPrototypeOf(req, orig.request)</span>
+        <span class="s1">setPrototypeOf(res, orig.response)</span>
+        <span class="s1">next(err);</span>
+      <span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s0">// mounted an app</span>
+    <span class="s1">fn.emit(</span><span class="s2">'mount'</span><span class="s1">, </span><span class="s3">this</span><span class="s1">);</span>
+  <span class="s1">}, </span><span class="s3">this</span><span class="s1">);</span>
+
+  <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Proxy to the app `Router#route()` 
+ * Returns a new `Route` instance for the _path_. 
+ * 
+ * Routes are isolated middleware stacks for specific paths. 
+ * See the Route api docs for details. 
+ * 
+ * @public 
+ */</span>
+
+<span class="s1">app.route = </span><span class="s3">function </span><span class="s1">route(path) {</span>
+  <span class="s3">this</span><span class="s1">.lazyrouter();</span>
+  <span class="s3">return this</span><span class="s1">._router.route(path);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Register the given template engine callback `fn` 
+ * as `ext`. 
+ * 
+ * By default will `require()` the engine based on the 
+ * file extension. For example if you try to render 
+ * a &quot;foo.ejs&quot; file Express will invoke the following internally: 
+ * 
+ *     app.engine('ejs', require('ejs').__express); 
+ * 
+ * For engines that do not provide `.__express` out of the box, 
+ * or if you wish to &quot;map&quot; a different extension to the template engine 
+ * you may use this method. For example mapping the EJS template engine to 
+ * &quot;.html&quot; files: 
+ * 
+ *     app.engine('html', require('ejs').renderFile); 
+ * 
+ * In this case EJS provides a `.renderFile()` method with 
+ * the same signature that Express expects: `(path, options, callback)`, 
+ * though note that it aliases this method as `ejs.__express` internally 
+ * so if you're using &quot;.ejs&quot; extensions you don't need to do anything. 
+ * 
+ * Some template engines do not follow this convention, the 
+ * [Consolidate.js](https://github.com/tj/consolidate.js) 
+ * library was created to map all of node's popular template 
+ * engines to follow this convention, thus allowing them to 
+ * work seamlessly within Express. 
+ * 
+ * @param {String} ext 
+ * @param {Function} fn 
+ * @return {app} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.engine = </span><span class="s3">function </span><span class="s1">engine(ext, fn) {</span>
+  <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">fn !== </span><span class="s2">'function'</span><span class="s1">) {</span>
+    <span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">'callback function required'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// get file extension</span>
+  <span class="s3">var </span><span class="s1">extension = ext[</span><span class="s4">0</span><span class="s1">] !== </span><span class="s2">'.'</span>
+    <span class="s1">? </span><span class="s2">'.' </span><span class="s1">+ ext</span>
+    <span class="s1">: ext;</span>
+
+  <span class="s0">// store engine</span>
+  <span class="s3">this</span><span class="s1">.engines[extension] = fn;</span>
+
+  <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Proxy to `Router#param()` with one added api feature. The _name_ parameter 
+ * can be an array of names. 
+ * 
+ * See the Router#param() docs for more details. 
+ * 
+ * @param {String|Array} name 
+ * @param {Function} fn 
+ * @return {app} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.param = </span><span class="s3">function </span><span class="s1">param(name, fn) {</span>
+  <span class="s3">this</span><span class="s1">.lazyrouter();</span>
+
+  <span class="s3">if </span><span class="s1">(Array.isArray(name)) {</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; name.length; i++) {</span>
+      <span class="s3">this</span><span class="s1">.param(name[i], fn);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">return this</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">this</span><span class="s1">._router.param(name, fn);</span>
+
+  <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Assign `setting` to `val`, or return `setting`'s value. 
+ * 
+ *    app.set('foo', 'bar'); 
+ *    app.set('foo'); 
+ *    // =&gt; &quot;bar&quot; 
+ * 
+ * Mounted servers inherit their parent server's settings. 
+ * 
+ * @param {String} setting 
+ * @param {*} [val] 
+ * @return {Server} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.set = </span><span class="s3">function </span><span class="s1">set(setting, val) {</span>
+  <span class="s3">if </span><span class="s1">(arguments.length === </span><span class="s4">1</span><span class="s1">) {</span>
+    <span class="s0">// app.get(setting)</span>
+    <span class="s3">var </span><span class="s1">settings = </span><span class="s3">this</span><span class="s1">.settings</span>
+
+    <span class="s3">while </span><span class="s1">(settings &amp;&amp; settings !== Object.prototype) {</span>
+      <span class="s3">if </span><span class="s1">(hasOwnProperty.call(settings, setting)) {</span>
+        <span class="s3">return </span><span class="s1">settings[setting]</span>
+      <span class="s1">}</span>
+
+      <span class="s1">settings = Object.getPrototypeOf(settings)</span>
+    <span class="s1">}</span>
+
+    <span class="s3">return </span><span class="s1">undefined</span>
+  <span class="s1">}</span>
+
+  <span class="s1">debug(</span><span class="s2">'set &quot;%s&quot; to %o'</span><span class="s1">, setting, val);</span>
+
+  <span class="s0">// set value</span>
+  <span class="s3">this</span><span class="s1">.settings[setting] = val;</span>
+
+  <span class="s0">// trigger matched settings</span>
+  <span class="s3">switch </span><span class="s1">(setting) {</span>
+    <span class="s3">case </span><span class="s2">'etag'</span><span class="s1">:</span>
+      <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'etag fn'</span><span class="s1">, compileETag(val));</span>
+      <span class="s3">break</span><span class="s1">;</span>
+    <span class="s3">case </span><span class="s2">'query parser'</span><span class="s1">:</span>
+      <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'query parser fn'</span><span class="s1">, compileQueryParser(val));</span>
+      <span class="s3">break</span><span class="s1">;</span>
+    <span class="s3">case </span><span class="s2">'trust proxy'</span><span class="s1">:</span>
+      <span class="s3">this</span><span class="s1">.set(</span><span class="s2">'trust proxy fn'</span><span class="s1">, compileTrust(val));</span>
+
+      <span class="s0">// trust proxy inherit back-compat</span>
+      <span class="s1">Object.defineProperty(</span><span class="s3">this</span><span class="s1">.settings, trustProxyDefaultSymbol, {</span>
+        <span class="s1">configurable: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">value: </span><span class="s3">false</span>
+      <span class="s1">});</span>
+
+      <span class="s3">break</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Return the app's absolute pathname 
+ * based on the parent(s) that have 
+ * mounted it. 
+ * 
+ * For example if the application was 
+ * mounted as &quot;/admin&quot;, which itself 
+ * was mounted as &quot;/blog&quot; then the 
+ * return value would be &quot;/blog/admin&quot;. 
+ * 
+ * @return {String} 
+ * @private 
+ */</span>
+
+<span class="s1">app.path = </span><span class="s3">function </span><span class="s1">path() {</span>
+  <span class="s3">return this</span><span class="s1">.parent</span>
+    <span class="s1">? </span><span class="s3">this</span><span class="s1">.parent.path() + </span><span class="s3">this</span><span class="s1">.mountpath</span>
+    <span class="s1">: </span><span class="s2">''</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Check if `setting` is enabled (truthy). 
+ * 
+ *    app.enabled('foo') 
+ *    // =&gt; false 
+ * 
+ *    app.enable('foo') 
+ *    app.enabled('foo') 
+ *    // =&gt; true 
+ * 
+ * @param {String} setting 
+ * @return {Boolean} 
+ * @public 
+ */</span>
+
+<span class="s1">app.enabled = </span><span class="s3">function </span><span class="s1">enabled(setting) {</span>
+  <span class="s3">return </span><span class="s1">Boolean(</span><span class="s3">this</span><span class="s1">.set(setting));</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Check if `setting` is disabled. 
+ * 
+ *    app.disabled('foo') 
+ *    // =&gt; true 
+ * 
+ *    app.enable('foo') 
+ *    app.disabled('foo') 
+ *    // =&gt; false 
+ * 
+ * @param {String} setting 
+ * @return {Boolean} 
+ * @public 
+ */</span>
+
+<span class="s1">app.disabled = </span><span class="s3">function </span><span class="s1">disabled(setting) {</span>
+  <span class="s3">return </span><span class="s1">!</span><span class="s3">this</span><span class="s1">.set(setting);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Enable `setting`. 
+ * 
+ * @param {String} setting 
+ * @return {app} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.enable = </span><span class="s3">function </span><span class="s1">enable(setting) {</span>
+  <span class="s3">return this</span><span class="s1">.set(setting, </span><span class="s3">true</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Disable `setting`. 
+ * 
+ * @param {String} setting 
+ * @return {app} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.disable = </span><span class="s3">function </span><span class="s1">disable(setting) {</span>
+  <span class="s3">return this</span><span class="s1">.set(setting, </span><span class="s3">false</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Delegate `.VERB(...)` calls to `router.VERB(...)`. 
+ */</span>
+
+<span class="s1">methods.forEach(</span><span class="s3">function</span><span class="s1">(method){</span>
+  <span class="s1">app[method] = </span><span class="s3">function</span><span class="s1">(path){</span>
+    <span class="s3">if </span><span class="s1">(method === </span><span class="s2">'get' </span><span class="s1">&amp;&amp; arguments.length === </span><span class="s4">1</span><span class="s1">) {</span>
+      <span class="s0">// app.get(setting)</span>
+      <span class="s3">return this</span><span class="s1">.set(path);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">this</span><span class="s1">.lazyrouter();</span>
+
+    <span class="s3">var </span><span class="s1">route = </span><span class="s3">this</span><span class="s1">._router.route(path);</span>
+    <span class="s1">route[method].apply(route, slice.call(arguments, </span><span class="s4">1</span><span class="s1">));</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+  <span class="s1">};</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * Special-cased &quot;all&quot; method, applying the given route `path`, 
+ * middleware, and callback to _every_ HTTP method. 
+ * 
+ * @param {String} path 
+ * @param {Function} ... 
+ * @return {app} for chaining 
+ * @public 
+ */</span>
+
+<span class="s1">app.all = </span><span class="s3">function </span><span class="s1">all(path) {</span>
+  <span class="s3">this</span><span class="s1">.lazyrouter();</span>
+
+  <span class="s3">var </span><span class="s1">route = </span><span class="s3">this</span><span class="s1">._router.route(path);</span>
+  <span class="s3">var </span><span class="s1">args = slice.call(arguments, </span><span class="s4">1</span><span class="s1">);</span>
+
+  <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; methods.length; i++) {</span>
+    <span class="s1">route[methods[i]].apply(route, args);</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">// del -&gt; delete alias</span>
+
+<span class="s1">app.del = deprecate.</span><span class="s3">function</span><span class="s1">(app.</span><span class="s3">delete</span><span class="s1">, </span><span class="s2">'app.del: Use app.delete instead'</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Render the given view `name` name with `options` 
+ * and a callback accepting an error and the 
+ * rendered template string. 
+ * 
+ * Example: 
+ * 
+ *    app.render('email', { name: 'Tobi' }, function(err, html){ 
+ *      // ... 
+ *    }) 
+ * 
+ * @param {String} name 
+ * @param {Object|Function} options or fn 
+ * @param {Function} callback 
+ * @public 
+ */</span>
+
+<span class="s1">app.render = </span><span class="s3">function </span><span class="s1">render(name, options, callback) {</span>
+  <span class="s3">var </span><span class="s1">cache = </span><span class="s3">this</span><span class="s1">.cache;</span>
+  <span class="s3">var </span><span class="s1">done = callback;</span>
+  <span class="s3">var </span><span class="s1">engines = </span><span class="s3">this</span><span class="s1">.engines;</span>
+  <span class="s3">var </span><span class="s1">opts = options;</span>
+  <span class="s3">var </span><span class="s1">renderOptions = {};</span>
+  <span class="s3">var </span><span class="s1">view;</span>
+
+  <span class="s0">// support callback function as second arg</span>
+  <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">) {</span>
+    <span class="s1">done = options;</span>
+    <span class="s1">opts = {};</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// merge app.locals</span>
+  <span class="s1">merge(renderOptions, </span><span class="s3">this</span><span class="s1">.locals);</span>
+
+  <span class="s0">// merge options._locals</span>
+  <span class="s3">if </span><span class="s1">(opts._locals) {</span>
+    <span class="s1">merge(renderOptions, opts._locals);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// merge options</span>
+  <span class="s1">merge(renderOptions, opts);</span>
+
+  <span class="s0">// set .cache unless explicitly provided</span>
+  <span class="s3">if </span><span class="s1">(renderOptions.cache == </span><span class="s3">null</span><span class="s1">) {</span>
+    <span class="s1">renderOptions.cache = </span><span class="s3">this</span><span class="s1">.enabled(</span><span class="s2">'view cache'</span><span class="s1">);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// primed cache</span>
+  <span class="s3">if </span><span class="s1">(renderOptions.cache) {</span>
+    <span class="s1">view = cache[name];</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// view</span>
+  <span class="s3">if </span><span class="s1">(!view) {</span>
+    <span class="s3">var </span><span class="s1">View = </span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'view'</span><span class="s1">);</span>
+
+    <span class="s1">view = </span><span class="s3">new </span><span class="s1">View(name, {</span>
+      <span class="s1">defaultEngine: </span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'view engine'</span><span class="s1">),</span>
+      <span class="s1">root: </span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'views'</span><span class="s1">),</span>
+      <span class="s1">engines: engines</span>
+    <span class="s1">});</span>
+
+    <span class="s3">if </span><span class="s1">(!view.path) {</span>
+      <span class="s3">var </span><span class="s1">dirs = Array.isArray(view.root) &amp;&amp; view.root.length &gt; </span><span class="s4">1</span>
+        <span class="s1">? </span><span class="s2">'directories &quot;' </span><span class="s1">+ view.root.slice(</span><span class="s4">0</span><span class="s1">, -</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'&quot;, &quot;'</span><span class="s1">) + </span><span class="s2">'&quot; or &quot;' </span><span class="s1">+ view.root[view.root.length - </span><span class="s4">1</span><span class="s1">] + </span><span class="s2">'&quot;'</span>
+        <span class="s1">: </span><span class="s2">'directory &quot;' </span><span class="s1">+ view.root + </span><span class="s2">'&quot;'</span>
+      <span class="s3">var </span><span class="s1">err = </span><span class="s3">new </span><span class="s1">Error(</span><span class="s2">'Failed to lookup view &quot;' </span><span class="s1">+ name + </span><span class="s2">'&quot; in views ' </span><span class="s1">+ dirs);</span>
+      <span class="s1">err.view = view;</span>
+      <span class="s3">return </span><span class="s1">done(err);</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// prime the cache</span>
+    <span class="s3">if </span><span class="s1">(renderOptions.cache) {</span>
+      <span class="s1">cache[name] = view;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// render</span>
+  <span class="s1">tryRender(view, renderOptions, done);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Listen for connections. 
+ * 
+ * A node `http.Server` is returned, with this 
+ * application (which is a `Function`) as its 
+ * callback. If you wish to create both an HTTP 
+ * and HTTPS server you may do so with the &quot;http&quot; 
+ * and &quot;https&quot; modules as shown here: 
+ * 
+ *    var http = require('http') 
+ *      , https = require('https') 
+ *      , express = require('express') 
+ *      , app = express(); 
+ * 
+ *    http.createServer(app).listen(80); 
+ *    https.createServer({ ... }, app).listen(443); 
+ * 
+ * @return {http.Server} 
+ * @public 
+ */</span>
+
+<span class="s1">app.listen = </span><span class="s3">function </span><span class="s1">listen() {</span>
+  <span class="s3">var </span><span class="s1">server = http.createServer(</span><span class="s3">this</span><span class="s1">);</span>
+  <span class="s3">return </span><span class="s1">server.listen.apply(server, arguments);</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Log error using console.error. 
+ * 
+ * @param {Error} err 
+ * @private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">logerror(err) {</span>
+  <span class="s0">/* istanbul ignore next */</span>
+  <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.get(</span><span class="s2">'env'</span><span class="s1">) !== </span><span class="s2">'test'</span><span class="s1">) console.error(err.stack || err.toString());</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Try rendering a view. 
+ * @private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">tryRender(view, options, callback) {</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">view.render(options, callback);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+    <span class="s1">callback(err);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

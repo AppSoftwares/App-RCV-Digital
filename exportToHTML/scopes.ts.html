@@ -1,0 +1,369 @@
+<html>
+<head>
+<title>scopes.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #7a7e85;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+scopes.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ StringReader, StringWriter } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./strings</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ comma, decodeInteger, encodeInteger, hasMoreVlq, semicolon } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./vlq</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">EMPTY: any</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+
+<span class="s0">type </span><span class="s2">Line = number;</span>
+<span class="s0">type </span><span class="s2">Column = number;</span>
+<span class="s0">type </span><span class="s2">Kind = number;</span>
+<span class="s0">type </span><span class="s2">Name = number;</span>
+<span class="s0">type </span><span class="s2">Var = number;</span>
+<span class="s0">type </span><span class="s2">SourcesIndex = number;</span>
+<span class="s0">type </span><span class="s2">ScopesIndex = number;</span>
+
+<span class="s0">type </span><span class="s2">Mix&lt;A, B, O&gt; = </span><span class="s1">(</span><span class="s2">A &amp; O</span><span class="s1">) </span><span class="s2">| </span><span class="s1">(</span><span class="s2">B &amp; O</span><span class="s1">)</span><span class="s2">;</span>
+
+<span class="s0">export type </span><span class="s2">OriginalScope = Mix&lt;</span>
+  <span class="s1">[</span><span class="s2">Line, Column, Line, Column, Kind</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s1">[</span><span class="s2">Line, Column, Line, Column, Kind, Name</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s2">{ vars: Var</span><span class="s1">[] </span><span class="s2">}</span>
+<span class="s2">&gt;;</span>
+
+<span class="s0">export type </span><span class="s2">GeneratedRange = Mix&lt;</span>
+  <span class="s1">[</span><span class="s2">Line, Column, Line, Column</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s1">[</span><span class="s2">Line, Column, Line, Column, SourcesIndex, ScopesIndex</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s2">{</span>
+    <span class="s2">callsite: CallSite | null;</span>
+    <span class="s2">bindings: Binding</span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s2">isScope: boolean;</span>
+  <span class="s2">}</span>
+<span class="s2">&gt;;</span>
+<span class="s0">export type </span><span class="s2">CallSite = </span><span class="s1">[</span><span class="s2">SourcesIndex, Line, Column</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s0">type </span><span class="s2">Binding = BindingExpressionRange</span><span class="s1">[]</span><span class="s2">;</span>
+<span class="s0">export type </span><span class="s2">BindingExpressionRange = </span><span class="s1">[</span><span class="s2">Name</span><span class="s1">] </span><span class="s2">| </span><span class="s1">[</span><span class="s2">Name, Line, Column</span><span class="s1">]</span><span class="s2">;</span>
+
+<span class="s0">export function </span><span class="s4">decodeOriginalScopes</span><span class="s2">(input: string): OriginalScope</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">const </span><span class="s2">{ length } = input;</span>
+  <span class="s0">const </span><span class="s2">reader = new </span><span class="s4">StringReader</span><span class="s1">(</span><span class="s2">input</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">scopes: OriginalScope</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">stack: OriginalScope</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">line = </span><span class="s5">0</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s2">; reader.pos &lt; length; reader.pos++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">line = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, line</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">column = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, length</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">last = stack.</span><span class="s4">pop</span><span class="s1">()</span><span class="s2">!;</span>
+      <span class="s2">last</span><span class="s1">[</span><span class="s5">2</span><span class="s1">] </span><span class="s2">= line;</span>
+      <span class="s2">last</span><span class="s1">[</span><span class="s5">3</span><span class="s1">] </span><span class="s2">= column;</span>
+      <span class="s0">continue</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">kind = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">fields = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">hasName = fields &amp; </span><span class="s5">0b0001</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s4">scope</span><span class="s2">: OriginalScope = </span><span class="s1">(</span>
+      <span class="s2">hasName ? </span><span class="s1">[</span><span class="s2">line, column, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, kind, </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)] </span><span class="s2">: </span><span class="s1">[</span><span class="s2">line, column, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, kind</span><span class="s1">]</span>
+    <span class="s1">) </span><span class="s0">as </span><span class="s2">OriginalScope;</span>
+
+    <span class="s0">let </span><span class="s2">vars: Var</span><span class="s1">[] </span><span class="s2">= EMPTY;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, length</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s2">vars = </span><span class="s1">[]</span><span class="s2">;</span>
+      <span class="s0">do </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">varsIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">vars.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">varsIndex</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, length</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">scope.vars = vars;</span>
+
+    <span class="s2">scopes.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">scope</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">stack.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">scope</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">scopes;</span>
+<span class="s2">}</span>
+
+<span class="s0">export function </span><span class="s4">encodeOriginalScopes</span><span class="s2">(scopes: OriginalScope</span><span class="s1">[]</span><span class="s2">): string {</span>
+  <span class="s0">const </span><span class="s2">writer = new </span><span class="s4">StringWriter</span><span class="s1">()</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; scopes.</span><span class="s1">length</span><span class="s2">; </span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">i = </span><span class="s4">_encodeOriginalScopes</span><span class="s1">(</span><span class="s2">scopes, i, writer, </span><span class="s1">[</span><span class="s5">0</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">writer.</span><span class="s4">flush</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">_encodeOriginalScopes</span><span class="s2">(</span>
+  <span class="s2">scopes: OriginalScope</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">index: number,</span>
+  <span class="s2">writer: StringWriter,</span>
+  <span class="s2">state: </span><span class="s1">[</span>
+    <span class="s2">number, // </span><span class="s6">GenColumn</span>
+  <span class="s1">]</span><span class="s2">,</span>
+<span class="s2">): number {</span>
+  <span class="s0">const </span><span class="s2">scope = scopes</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">{ </span><span class="s5">0</span><span class="s2">: startLine, </span><span class="s5">1</span><span class="s2">: startColumn, </span><span class="s5">2</span><span class="s2">: endLine, </span><span class="s5">3</span><span class="s2">: endColumn, </span><span class="s5">4</span><span class="s2">: kind, vars } = scope;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">index &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">comma</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, startLine, state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, startColumn, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, kind, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">fields = scope.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">6 </span><span class="s2">? </span><span class="s5">0b0001 </span><span class="s2">: </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, fields, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">scope.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">6</span><span class="s1">) </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, scope</span><span class="s1">[</span><span class="s5">5</span><span class="s1">]</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">v of vars</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, v, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s2">index++; index &lt; scopes.</span><span class="s1">length</span><span class="s2">; </span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">next = scopes</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">{ </span><span class="s5">0</span><span class="s2">: l, </span><span class="s5">1</span><span class="s2">: c } = next;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">l &gt; endLine || </span><span class="s1">(</span><span class="s2">l === endLine &amp;&amp; c &gt;= endColumn</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">break</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">index = </span><span class="s4">_encodeOriginalScopes</span><span class="s1">(</span><span class="s2">scopes, index, writer, state</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">comma</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, endLine, state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, endColumn, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s2">index;</span>
+<span class="s2">}</span>
+
+<span class="s0">export function </span><span class="s4">decodeGeneratedRanges</span><span class="s2">(input: string): GeneratedRange</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">const </span><span class="s2">{ length } = input;</span>
+  <span class="s0">const </span><span class="s2">reader = new </span><span class="s4">StringReader</span><span class="s1">(</span><span class="s2">input</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">ranges: GeneratedRange</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">stack: GeneratedRange</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+
+  <span class="s0">let </span><span class="s2">genLine = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">definitionSourcesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">definitionScopeIndex = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">callsiteSourcesIndex = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">callsiteLine = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">callsiteColumn = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">bindingLine = </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s0">let </span><span class="s2">bindingColumn = </span><span class="s5">0</span><span class="s2">;</span>
+
+  <span class="s0">do </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">semi = reader.</span><span class="s4">indexOf</span><span class="s1">(</span><span class="s2">'</span><span class="s3">;</span><span class="s2">'</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">genColumn = </span><span class="s5">0</span><span class="s2">;</span>
+
+    <span class="s0">for </span><span class="s1">(</span><span class="s2">; reader.pos &lt; semi; reader.pos++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">genColumn = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, genColumn</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, semi</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">last = stack.</span><span class="s4">pop</span><span class="s1">()</span><span class="s2">!;</span>
+        <span class="s2">last</span><span class="s1">[</span><span class="s5">2</span><span class="s1">] </span><span class="s2">= genLine;</span>
+        <span class="s2">last</span><span class="s1">[</span><span class="s5">3</span><span class="s1">] </span><span class="s2">= genColumn;</span>
+        <span class="s0">continue</span><span class="s2">;</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">fields = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">hasDefinition = fields &amp; </span><span class="s5">0b0001</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">hasCallsite = fields &amp; </span><span class="s5">0b0010</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">hasScope = fields &amp; </span><span class="s5">0b0100</span><span class="s2">;</span>
+
+      <span class="s0">let </span><span class="s2">callsite: CallSite | null = </span><span class="s7">null</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">bindings: Binding</span><span class="s1">[] </span><span class="s2">= EMPTY;</span>
+      <span class="s0">let </span><span class="s2">range: GeneratedRange;</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">hasDefinition</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">defSourcesIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, definitionSourcesIndex</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">definitionScopeIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span>
+          <span class="s2">reader,</span>
+          <span class="s2">definitionSourcesIndex === defSourcesIndex ? definitionScopeIndex : </span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">)</span><span class="s2">;</span>
+
+        <span class="s2">definitionSourcesIndex = defSourcesIndex;</span>
+        <span class="s2">range = </span><span class="s1">[</span><span class="s2">genLine, genColumn, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, defSourcesIndex, definitionScopeIndex</span><span class="s1">] </span><span class="s0">as </span><span class="s2">GeneratedRange;</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">range = </span><span class="s1">[</span><span class="s2">genLine, genColumn, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">] </span><span class="s0">as </span><span class="s2">GeneratedRange;</span>
+      <span class="s2">}</span>
+
+      <span class="s2">range.isScope = !!hasScope;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">hasCallsite</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">prevCsi = callsiteSourcesIndex;</span>
+        <span class="s0">const </span><span class="s2">prevLine = callsiteLine;</span>
+        <span class="s2">callsiteSourcesIndex = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, callsiteSourcesIndex</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">sameSource = prevCsi === callsiteSourcesIndex;</span>
+        <span class="s2">callsiteLine = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, sameSource ? callsiteLine : </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">callsiteColumn = </span><span class="s4">decodeInteger</span><span class="s1">(</span>
+          <span class="s2">reader,</span>
+          <span class="s2">sameSource &amp;&amp; prevLine === callsiteLine ? callsiteColumn : </span><span class="s5">0</span><span class="s2">,</span>
+        <span class="s1">)</span><span class="s2">;</span>
+
+        <span class="s2">callsite = </span><span class="s1">[</span><span class="s2">callsiteSourcesIndex, callsiteLine, callsiteColumn</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s2">}</span>
+      <span class="s2">range.callsite = callsite;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, semi</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">bindings = </span><span class="s1">[]</span><span class="s2">;</span>
+        <span class="s0">do </span><span class="s2">{</span>
+          <span class="s2">bindingLine = genLine;</span>
+          <span class="s2">bindingColumn = genColumn;</span>
+          <span class="s0">const </span><span class="s2">expressionsCount = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+          <span class="s0">let </span><span class="s2">expressionRanges: BindingExpressionRange</span><span class="s1">[]</span><span class="s2">;</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">expressionsCount &lt; -</span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">expressionRanges = </span><span class="s1">[[</span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)]]</span><span class="s2">;</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = -</span><span class="s5">1</span><span class="s2">; i &gt; expressionsCount; i--</span><span class="s1">) </span><span class="s2">{</span>
+              <span class="s0">const </span><span class="s2">prevBl = bindingLine;</span>
+              <span class="s2">bindingLine = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, bindingLine</span><span class="s1">)</span><span class="s2">;</span>
+              <span class="s2">bindingColumn = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, bindingLine === prevBl ? bindingColumn : </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+              <span class="s0">const </span><span class="s2">expression = </span><span class="s4">decodeInteger</span><span class="s1">(</span><span class="s2">reader, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+              <span class="s2">expressionRanges.</span><span class="s4">push</span><span class="s1">([</span><span class="s2">expression, bindingLine, bindingColumn</span><span class="s1">])</span><span class="s2">;</span>
+            <span class="s2">}</span>
+          <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">expressionRanges = </span><span class="s1">[[</span><span class="s2">expressionsCount</span><span class="s1">]]</span><span class="s2">;</span>
+          <span class="s2">}</span>
+          <span class="s2">bindings.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">expressionRanges</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s4">hasMoreVlq</span><span class="s1">(</span><span class="s2">reader, semi</span><span class="s1">))</span><span class="s2">;</span>
+      <span class="s2">}</span>
+      <span class="s2">range.bindings = bindings;</span>
+
+      <span class="s2">ranges.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">range</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">stack.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">range</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s2">genLine++;</span>
+    <span class="s2">reader.pos = semi + </span><span class="s5">1</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">reader.pos &lt; length</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s2">ranges;</span>
+<span class="s2">}</span>
+
+<span class="s0">export function </span><span class="s4">encodeGeneratedRanges</span><span class="s2">(ranges: GeneratedRange</span><span class="s1">[]</span><span class="s2">): string {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">ranges.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">0</span><span class="s1">) </span><span class="s0">return </span><span class="s2">'';</span>
+
+  <span class="s0">const </span><span class="s2">writer = new </span><span class="s4">StringWriter</span><span class="s1">()</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; ranges.</span><span class="s1">length</span><span class="s2">; </span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">i = </span><span class="s4">_encodeGeneratedRanges</span><span class="s1">(</span><span class="s2">ranges, i, writer, </span><span class="s1">[</span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s2">, </span><span class="s5">0</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">return </span><span class="s2">writer.</span><span class="s4">flush</span><span class="s1">()</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">_encodeGeneratedRanges</span><span class="s2">(</span>
+  <span class="s2">ranges: GeneratedRange</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">index: number,</span>
+  <span class="s2">writer: StringWriter,</span>
+  <span class="s2">state: </span><span class="s1">[</span>
+    <span class="s2">number, // </span><span class="s6">GenLine</span>
+    <span class="s2">number, // </span><span class="s6">GenColumn</span>
+    <span class="s2">number, // </span><span class="s6">DefSourcesIndex</span>
+    <span class="s2">number, // </span><span class="s6">DefScopesIndex</span>
+    <span class="s2">number, // </span><span class="s6">CallSourcesIndex</span>
+    <span class="s2">number, // </span><span class="s6">CallLine</span>
+    <span class="s2">number, // </span><span class="s6">CallColumn</span>
+  <span class="s1">]</span><span class="s2">,</span>
+<span class="s2">): number {</span>
+  <span class="s0">const </span><span class="s2">range = ranges</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">{</span>
+    <span class="s5">0</span><span class="s2">: startLine,</span>
+    <span class="s5">1</span><span class="s2">: startColumn,</span>
+    <span class="s5">2</span><span class="s2">: endLine,</span>
+    <span class="s5">3</span><span class="s2">: endColumn,</span>
+    <span class="s2">isScope,</span>
+    <span class="s2">callsite,</span>
+    <span class="s2">bindings,</span>
+  <span class="s2">} = range;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">&lt; startLine</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s4">catchupLine</span><span class="s1">(</span><span class="s2">writer, state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, startLine</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">= startLine;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">index &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">comma</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s2">state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, range</span><span class="s1">[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">, state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">])</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">fields =</span>
+    <span class="s1">(</span><span class="s2">range.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">6 </span><span class="s2">? </span><span class="s5">0b0001 </span><span class="s2">: </span><span class="s5">0</span><span class="s1">) </span><span class="s2">| </span><span class="s1">(</span><span class="s2">callsite ? </span><span class="s5">0b0010 </span><span class="s2">: </span><span class="s5">0</span><span class="s1">) </span><span class="s2">| </span><span class="s1">(</span><span class="s2">isScope ? </span><span class="s5">0b0100 </span><span class="s2">: </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, fields, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">range.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">6</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">{ </span><span class="s5">4</span><span class="s2">: sourcesIndex, </span><span class="s5">5</span><span class="s2">: scopesIndex } = range;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">sourcesIndex !== state</span><span class="s1">[</span><span class="s5">2</span><span class="s1">]) </span><span class="s2">{</span>
+      <span class="s2">state</span><span class="s1">[</span><span class="s5">3</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">2</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, sourcesIndex, state</span><span class="s1">[</span><span class="s5">2</span><span class="s1">])</span><span class="s2">;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">3</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, scopesIndex, state</span><span class="s1">[</span><span class="s5">3</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">callsite</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">{ </span><span class="s5">0</span><span class="s2">: sourcesIndex, </span><span class="s5">1</span><span class="s2">: callLine, </span><span class="s5">2</span><span class="s2">: callColumn } = range.callsite!;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">sourcesIndex !== state</span><span class="s1">[</span><span class="s5">4</span><span class="s1">]) </span><span class="s2">{</span>
+      <span class="s2">state</span><span class="s1">[</span><span class="s5">5</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+      <span class="s2">state</span><span class="s1">[</span><span class="s5">6</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">callLine !== state</span><span class="s1">[</span><span class="s5">5</span><span class="s1">]) </span><span class="s2">{</span>
+      <span class="s2">state</span><span class="s1">[</span><span class="s5">6</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">4</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, sourcesIndex, state</span><span class="s1">[</span><span class="s5">4</span><span class="s1">])</span><span class="s2">;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">5</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, callLine, state</span><span class="s1">[</span><span class="s5">5</span><span class="s1">])</span><span class="s2">;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">6</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, callColumn, state</span><span class="s1">[</span><span class="s5">6</span><span class="s1">])</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">bindings</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">binding of bindings</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">binding.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">1</span><span class="s1">) </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, -binding.</span><span class="s1">length</span><span class="s2">, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">expression = binding</span><span class="s1">[</span><span class="s5">0</span><span class="s1">][</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, expression, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">bindingStartLine = startLine;</span>
+      <span class="s0">let </span><span class="s2">bindingStartColumn = startColumn;</span>
+      <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">1</span><span class="s2">; i &lt; binding.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">expRange = binding</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">bindingStartLine = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, expRange</span><span class="s1">[</span><span class="s5">1</span><span class="s1">]</span><span class="s2">!, bindingStartLine</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">bindingStartColumn = </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, expRange</span><span class="s1">[</span><span class="s5">2</span><span class="s1">]</span><span class="s2">!, bindingStartColumn</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, expRange</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">!, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s2">index++; index &lt; ranges.</span><span class="s1">length</span><span class="s2">; </span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">next = ranges</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">{ </span><span class="s5">0</span><span class="s2">: l, </span><span class="s5">1</span><span class="s2">: c } = next;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">l &gt; endLine || </span><span class="s1">(</span><span class="s2">l === endLine &amp;&amp; c &gt;= endColumn</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">break</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">index = </span><span class="s4">_encodeGeneratedRanges</span><span class="s1">(</span><span class="s2">ranges, index, writer, state</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">&lt; endLine</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s4">catchupLine</span><span class="s1">(</span><span class="s2">writer, state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, endLine</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">= endLine;</span>
+    <span class="s2">state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">= </span><span class="s5">0</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+    <span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">comma</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+  <span class="s2">state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">] </span><span class="s2">= </span><span class="s4">encodeInteger</span><span class="s1">(</span><span class="s2">writer, endColumn, state</span><span class="s1">[</span><span class="s5">1</span><span class="s1">])</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s2">index;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">catchupLine</span><span class="s2">(writer: StringWriter, lastLine: number, line: number) {</span>
+  <span class="s0">do </span><span class="s2">{</span>
+    <span class="s2">writer.</span><span class="s4">write</span><span class="s1">(</span><span class="s2">semicolon</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">while </span><span class="s1">(</span><span class="s2">++lastLine &lt; line</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

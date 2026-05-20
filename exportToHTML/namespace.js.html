@@ -1,0 +1,571 @@
+<html>
+<head>
+<title>namespace.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+namespace.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Namespace;</span>
+
+<span class="s2">// extends ReflectionObject</span>
+<span class="s3">var </span><span class="s1">ReflectionObject = require(</span><span class="s0">&quot;./object&quot;</span><span class="s1">);</span>
+<span class="s1">((Namespace.prototype = Object.create(ReflectionObject.prototype)).constructor = Namespace).className = </span><span class="s0">&quot;Namespace&quot;</span><span class="s1">;</span>
+
+<span class="s3">var </span><span class="s1">Field    = require(</span><span class="s0">&quot;./field&quot;</span><span class="s1">),</span>
+    <span class="s1">util     = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">),</span>
+    <span class="s1">OneOf    = require(</span><span class="s0">&quot;./oneof&quot;</span><span class="s1">);</span>
+
+<span class="s3">var </span><span class="s1">Type,    </span><span class="s2">// cyclic</span>
+    <span class="s1">Service,</span>
+    <span class="s1">Enum;</span>
+
+<span class="s2">/** 
+ * Constructs a new namespace instance. 
+ * @name Namespace 
+ * @classdesc Reflected namespace. 
+ * @extends NamespaceBase 
+ * @constructor 
+ * @param {string} name Namespace name 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ */</span>
+
+<span class="s2">/** 
+ * Constructs a namespace from JSON. 
+ * @memberof Namespace 
+ * @function 
+ * @param {string} name Namespace name 
+ * @param {Object.&lt;string,*&gt;} json JSON object 
+ * @returns {Namespace} Created namespace 
+ * @throws {TypeError} If arguments are invalid 
+ */</span>
+<span class="s1">Namespace.fromJSON = </span><span class="s3">function </span><span class="s1">fromJSON(name, json) {</span>
+    <span class="s3">return new </span><span class="s1">Namespace(name, json.options).addJSON(json.nested);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Converts an array of reflection objects to JSON. 
+ * @memberof Namespace 
+ * @param {ReflectionObject[]} array Object array 
+ * @param {IToJSONOptions} [toJSONOptions] JSON conversion options 
+ * @returns {Object.&lt;string,*&gt;|undefined} JSON object or `undefined` when array is empty 
+ */</span>
+<span class="s3">function </span><span class="s1">arrayToJSON(array, toJSONOptions) {</span>
+    <span class="s3">if </span><span class="s1">(!(array &amp;&amp; array.length))</span>
+        <span class="s3">return </span><span class="s1">undefined;</span>
+    <span class="s3">var </span><span class="s1">obj = {};</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; array.length; ++i)</span>
+        <span class="s1">obj[array[i].name] = array[i].toJSON(toJSONOptions);</span>
+    <span class="s3">return </span><span class="s1">obj;</span>
+<span class="s1">}</span>
+
+<span class="s1">Namespace.arrayToJSON = arrayToJSON;</span>
+
+<span class="s2">/** 
+ * Tests if the specified id is reserved. 
+ * @param {Array.&lt;number[]|string&gt;|undefined} reserved Array of reserved ranges and names 
+ * @param {number} id Id to test 
+ * @returns {boolean} `true` if reserved, otherwise `false` 
+ */</span>
+<span class="s1">Namespace.isReservedId = </span><span class="s3">function </span><span class="s1">isReservedId(reserved, id) {</span>
+    <span class="s3">if </span><span class="s1">(reserved)</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; reserved.length; ++i)</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">reserved[i] !== </span><span class="s0">&quot;string&quot; </span><span class="s1">&amp;&amp; reserved[i][</span><span class="s4">0</span><span class="s1">] &lt;= id &amp;&amp; reserved[i][</span><span class="s4">1</span><span class="s1">] &gt; id)</span>
+                <span class="s3">return true</span><span class="s1">;</span>
+    <span class="s3">return false</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Tests if the specified name is reserved. 
+ * @param {Array.&lt;number[]|string&gt;|undefined} reserved Array of reserved ranges and names 
+ * @param {string} name Name to test 
+ * @returns {boolean} `true` if reserved, otherwise `false` 
+ */</span>
+<span class="s1">Namespace.isReservedName = </span><span class="s3">function </span><span class="s1">isReservedName(reserved, name) {</span>
+    <span class="s3">if </span><span class="s1">(reserved)</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; reserved.length; ++i)</span>
+            <span class="s3">if </span><span class="s1">(reserved[i] === name)</span>
+                <span class="s3">return true</span><span class="s1">;</span>
+    <span class="s3">return false</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Not an actual constructor. Use {@link Namespace} instead. 
+ * @classdesc Base class of all reflection objects containing nested objects. This is not an actual class but here for the sake of having consistent type definitions. 
+ * @exports NamespaceBase 
+ * @extends ReflectionObject 
+ * @abstract 
+ * @constructor 
+ * @param {string} name Namespace name 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ * @see {@link Namespace} 
+ */</span>
+<span class="s3">function </span><span class="s1">Namespace(name, options) {</span>
+    <span class="s1">ReflectionObject.call(</span><span class="s3">this</span><span class="s1">, name, options);</span>
+
+    <span class="s2">/** 
+     * Nested objects by name. 
+     * @type {Object.&lt;string,ReflectionObject&gt;|undefined} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.nested = undefined; </span><span class="s2">// toJSON</span>
+
+    <span class="s2">/** 
+     * Cached nested objects as an array. 
+     * @type {ReflectionObject[]|null} 
+     * @private 
+     */</span>
+    <span class="s3">this</span><span class="s1">._nestedArray = </span><span class="s3">null</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Cache lookup calls for any objects contains anywhere under this namespace. 
+     * This drastically speeds up resolve for large cross-linked protos where the same 
+     * types are looked up repeatedly. 
+     * @type {Object.&lt;string,ReflectionObject|null&gt;} 
+     * @private 
+     */</span>
+    <span class="s3">this</span><span class="s1">._lookupCache = Object.create(</span><span class="s3">null</span><span class="s1">);</span>
+
+    <span class="s2">/** 
+     * Whether or not objects contained in this namespace need feature resolution. 
+     * @type {boolean} 
+     * @protected 
+     */</span>
+    <span class="s3">this</span><span class="s1">._needsRecursiveFeatureResolution = </span><span class="s3">true</span><span class="s1">;</span>
+
+    <span class="s2">/** 
+     * Whether or not objects contained in this namespace need a resolve. 
+     * @type {boolean} 
+     * @protected 
+     */</span>
+    <span class="s3">this</span><span class="s1">._needsRecursiveResolve = </span><span class="s3">true</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s3">function </span><span class="s1">clearCache(namespace) {</span>
+    <span class="s1">namespace._nestedArray = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s1">namespace._lookupCache = Object.create(</span><span class="s3">null</span><span class="s1">);</span>
+
+    <span class="s2">// Also clear parent caches, since they include nested lookups.</span>
+    <span class="s3">var </span><span class="s1">parent = namespace;</span>
+    <span class="s3">while</span><span class="s1">(parent = parent.parent) {</span>
+        <span class="s1">parent._lookupCache = Object.create(</span><span class="s3">null</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">namespace;</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Nested objects of this namespace as an array for iteration. 
+ * @name NamespaceBase#nestedArray 
+ * @type {ReflectionObject[]} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(Namespace.prototype, </span><span class="s0">&quot;nestedArray&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">return this</span><span class="s1">._nestedArray || (</span><span class="s3">this</span><span class="s1">._nestedArray = util.toArray(</span><span class="s3">this</span><span class="s1">.nested));</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Namespace descriptor. 
+ * @interface INamespace 
+ * @property {Object.&lt;string,*&gt;} [options] Namespace options 
+ * @property {Object.&lt;string,AnyNestedObject&gt;} [nested] Nested object descriptors 
+ */</span>
+
+<span class="s2">/** 
+ * Any extension field descriptor. 
+ * @typedef AnyExtensionField 
+ * @type {IExtensionField|IExtensionMapField} 
+ */</span>
+
+<span class="s2">/** 
+ * Any nested object descriptor. 
+ * @typedef AnyNestedObject 
+ * @type {IEnum|IType|IService|AnyExtensionField|INamespace|IOneOf} 
+ */</span>
+
+<span class="s2">/** 
+ * Converts this namespace to a namespace descriptor. 
+ * @param {IToJSONOptions} [toJSONOptions] JSON conversion options 
+ * @returns {INamespace} Namespace descriptor 
+ */</span>
+<span class="s1">Namespace.prototype.toJSON = </span><span class="s3">function </span><span class="s1">toJSON(toJSONOptions) {</span>
+    <span class="s3">return </span><span class="s1">util.toObject([</span>
+        <span class="s0">&quot;options&quot; </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.options,</span>
+        <span class="s0">&quot;nested&quot;  </span><span class="s1">, arrayToJSON(</span><span class="s3">this</span><span class="s1">.nestedArray, toJSONOptions)</span>
+    <span class="s1">]);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Adds nested objects to this namespace from nested object descriptors. 
+ * @param {Object.&lt;string,AnyNestedObject&gt;} nestedJson Any nested object descriptors 
+ * @returns {Namespace} `this` 
+ */</span>
+<span class="s1">Namespace.prototype.addJSON = </span><span class="s3">function </span><span class="s1">addJSON(nestedJson) {</span>
+    <span class="s3">var </span><span class="s1">ns = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s2">/* istanbul ignore else */</span>
+    <span class="s3">if </span><span class="s1">(nestedJson) {</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">names = Object.keys(nestedJson), i = </span><span class="s4">0</span><span class="s1">, nested; i &lt; names.length; ++i) {</span>
+            <span class="s1">nested = nestedJson[names[i]];</span>
+            <span class="s1">ns.add( </span><span class="s2">// most to least likely</span>
+                <span class="s1">( nested.fields !== undefined</span>
+                <span class="s1">? Type.fromJSON</span>
+                <span class="s1">: nested.values !== undefined</span>
+                <span class="s1">? Enum.fromJSON</span>
+                <span class="s1">: nested.methods !== undefined</span>
+                <span class="s1">? Service.fromJSON</span>
+                <span class="s1">: nested.id !== undefined</span>
+                <span class="s1">? Field.fromJSON</span>
+                <span class="s1">: Namespace.fromJSON )(names[i], nested)</span>
+            <span class="s1">);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Gets the nested object of the specified name. 
+ * @param {string} name Nested object name 
+ * @returns {ReflectionObject|null} The reflection object or `null` if it doesn't exist 
+ */</span>
+<span class="s1">Namespace.prototype.get = </span><span class="s3">function </span><span class="s1">get(name) {</span>
+    <span class="s3">return this</span><span class="s1">.nested &amp;&amp; Object.prototype.hasOwnProperty.call(</span><span class="s3">this</span><span class="s1">.nested, name)</span>
+        <span class="s1">? </span><span class="s3">this</span><span class="s1">.nested[name]</span>
+        <span class="s1">: </span><span class="s3">null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Gets the values of the nested {@link Enum|enum} of the specified name. 
+ * This methods differs from {@link Namespace#get|get} in that it returns an enum's values directly and throws instead of returning `null`. 
+ * @param {string} name Nested enum name 
+ * @returns {Object.&lt;string,number&gt;} Enum values 
+ * @throws {Error} If there is no such enum 
+ */</span>
+<span class="s1">Namespace.prototype.getEnum = </span><span class="s3">function </span><span class="s1">getEnum(name) {</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.nested &amp;&amp; Object.prototype.hasOwnProperty.call(</span><span class="s3">this</span><span class="s1">.nested, name) &amp;&amp; </span><span class="s3">this</span><span class="s1">.nested[name] </span><span class="s3">instanceof </span><span class="s1">Enum)</span>
+        <span class="s3">return this</span><span class="s1">.nested[name].values;</span>
+    <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;no such enum: &quot; </span><span class="s1">+ name);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Adds a nested object to this namespace. 
+ * @param {ReflectionObject} object Nested object to add 
+ * @returns {Namespace} `this` 
+ * @throws {TypeError} If arguments are invalid 
+ * @throws {Error} If there is already a nested object with this name 
+ */</span>
+<span class="s1">Namespace.prototype.add = </span><span class="s3">function </span><span class="s1">add(object) {</span>
+
+    <span class="s3">if </span><span class="s1">(!(object </span><span class="s3">instanceof </span><span class="s1">Field &amp;&amp; object.extend !== undefined || object </span><span class="s3">instanceof </span><span class="s1">Type  || object </span><span class="s3">instanceof </span><span class="s1">OneOf || object </span><span class="s3">instanceof </span><span class="s1">Enum || object </span><span class="s3">instanceof </span><span class="s1">Service || object </span><span class="s3">instanceof </span><span class="s1">Namespace))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;object must be a valid nested object&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(object.name === </span><span class="s0">&quot;__proto__&quot;</span><span class="s1">)</span>
+        <span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.nested)</span>
+        <span class="s3">this</span><span class="s1">.nested = {};</span>
+    <span class="s3">else </span><span class="s1">{</span>
+        <span class="s3">var </span><span class="s1">prev = </span><span class="s3">this</span><span class="s1">.get(object.name);</span>
+        <span class="s3">if </span><span class="s1">(prev) {</span>
+            <span class="s3">if </span><span class="s1">(prev </span><span class="s3">instanceof </span><span class="s1">Namespace &amp;&amp; object </span><span class="s3">instanceof </span><span class="s1">Namespace &amp;&amp; !(prev </span><span class="s3">instanceof </span><span class="s1">Type || prev </span><span class="s3">instanceof </span><span class="s1">Service)) {</span>
+                <span class="s2">// replace plain namespace but keep existing nested elements and options</span>
+                <span class="s3">var </span><span class="s1">nested = prev.nestedArray;</span>
+                <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; nested.length; ++i)</span>
+                    <span class="s1">object.add(nested[i]);</span>
+                <span class="s3">this</span><span class="s1">.remove(prev);</span>
+                <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">.nested)</span>
+                    <span class="s3">this</span><span class="s1">.nested = {};</span>
+                <span class="s1">object.setOptions(prev.options, </span><span class="s3">true</span><span class="s1">);</span>
+
+            <span class="s1">} </span><span class="s3">else</span>
+                <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;duplicate name '&quot; </span><span class="s1">+ object.name + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">this</span><span class="s1">.nested[object.name] = object;</span>
+
+    <span class="s3">if </span><span class="s1">(!(</span><span class="s3">this instanceof </span><span class="s1">Type || </span><span class="s3">this instanceof </span><span class="s1">Service || </span><span class="s3">this instanceof </span><span class="s1">Enum || </span><span class="s3">this instanceof </span><span class="s1">Field)) {</span>
+        <span class="s2">// This is a package or a root namespace.</span>
+        <span class="s3">if </span><span class="s1">(!object._edition) {</span>
+            <span class="s2">// Make sure that some edition is set if it hasn't already been specified.</span>
+            <span class="s1">object._edition = object._defaultEdition;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s3">this</span><span class="s1">._needsRecursiveFeatureResolution = </span><span class="s3">true</span><span class="s1">;</span>
+    <span class="s3">this</span><span class="s1">._needsRecursiveResolve = </span><span class="s3">true</span><span class="s1">;</span>
+
+    <span class="s2">// Also clear parent caches, since they need to recurse down.</span>
+    <span class="s3">var </span><span class="s1">parent = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s3">while</span><span class="s1">(parent = parent.parent) {</span>
+        <span class="s1">parent._needsRecursiveFeatureResolution = </span><span class="s3">true</span><span class="s1">;</span>
+        <span class="s1">parent._needsRecursiveResolve = </span><span class="s3">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s1">object.onAdd(</span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return </span><span class="s1">clearCache(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Removes a nested object from this namespace. 
+ * @param {ReflectionObject} object Nested object to remove 
+ * @returns {Namespace} `this` 
+ * @throws {TypeError} If arguments are invalid 
+ * @throws {Error} If `object` is not a member of this namespace 
+ */</span>
+<span class="s1">Namespace.prototype.remove = </span><span class="s3">function </span><span class="s1">remove(object) {</span>
+
+    <span class="s3">if </span><span class="s1">(!(object </span><span class="s3">instanceof </span><span class="s1">ReflectionObject))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;object must be a ReflectionObject&quot;</span><span class="s1">);</span>
+    <span class="s3">if </span><span class="s1">(object.parent !== </span><span class="s3">this</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">Error(object + </span><span class="s0">&quot; is not a member of &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">delete this</span><span class="s1">.nested[object.name];</span>
+    <span class="s3">if </span><span class="s1">(!Object.keys(</span><span class="s3">this</span><span class="s1">.nested).length)</span>
+        <span class="s3">this</span><span class="s1">.nested = undefined;</span>
+
+    <span class="s1">object.onRemove(</span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return </span><span class="s1">clearCache(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Defines additial namespaces within this one if not yet existing. 
+ * @param {string|string[]} path Path to create 
+ * @param {*} [json] Nested types to create from JSON 
+ * @returns {Namespace} Pointer to the last namespace created or `this` if path is empty 
+ */</span>
+<span class="s1">Namespace.prototype.define = </span><span class="s3">function </span><span class="s1">define(path, json) {</span>
+
+    <span class="s3">if </span><span class="s1">(util.isString(path))</span>
+        <span class="s1">path = path.split(</span><span class="s0">&quot;.&quot;</span><span class="s1">);</span>
+    <span class="s3">else if </span><span class="s1">(!Array.isArray(path))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;illegal path&quot;</span><span class="s1">);</span>
+    <span class="s3">if </span><span class="s1">(path &amp;&amp; path.length &amp;&amp; path[</span><span class="s4">0</span><span class="s1">] === </span><span class="s0">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;path must be relative&quot;</span><span class="s1">);</span>
+
+    <span class="s3">var </span><span class="s1">ptr = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s3">while </span><span class="s1">(path.length &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+        <span class="s3">var </span><span class="s1">part = path.shift();</span>
+        <span class="s3">if </span><span class="s1">(ptr.nested &amp;&amp; ptr.nested[part]) {</span>
+            <span class="s1">ptr = ptr.nested[part];</span>
+            <span class="s3">if </span><span class="s1">(!(ptr </span><span class="s3">instanceof </span><span class="s1">Namespace))</span>
+                <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;path conflicts with non-namespace objects&quot;</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s3">else</span>
+            <span class="s1">ptr.add(ptr = </span><span class="s3">new </span><span class="s1">Namespace(part));</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(json)</span>
+        <span class="s1">ptr.addJSON(json);</span>
+    <span class="s3">return </span><span class="s1">ptr;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Resolves this namespace's and all its nested objects' type references. Useful to validate a reflection tree, but comes at a cost. 
+ * @returns {Namespace} `this` 
+ */</span>
+<span class="s1">Namespace.prototype.resolveAll = </span><span class="s3">function </span><span class="s1">resolveAll() {</span>
+    <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">._needsRecursiveResolve) </span><span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">this</span><span class="s1">._resolveFeaturesRecursive(</span><span class="s3">this</span><span class="s1">._edition);</span>
+
+    <span class="s3">var </span><span class="s1">nested = </span><span class="s3">this</span><span class="s1">.nestedArray, i = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s3">this</span><span class="s1">.resolve();</span>
+    <span class="s3">while </span><span class="s1">(i &lt; nested.length)</span>
+        <span class="s3">if </span><span class="s1">(nested[i] </span><span class="s3">instanceof </span><span class="s1">Namespace)</span>
+            <span class="s1">nested[i++].resolveAll();</span>
+        <span class="s3">else</span>
+            <span class="s1">nested[i++].resolve();</span>
+    <span class="s3">this</span><span class="s1">._needsRecursiveResolve = </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">Namespace.prototype._resolveFeaturesRecursive = </span><span class="s3">function </span><span class="s1">_resolveFeaturesRecursive(edition) {</span>
+    <span class="s3">if </span><span class="s1">(!</span><span class="s3">this</span><span class="s1">._needsRecursiveFeatureResolution) </span><span class="s3">return this</span><span class="s1">;</span>
+    <span class="s3">this</span><span class="s1">._needsRecursiveFeatureResolution = </span><span class="s3">false</span><span class="s1">;</span>
+
+    <span class="s1">edition = </span><span class="s3">this</span><span class="s1">._edition || edition;</span>
+
+    <span class="s1">ReflectionObject.prototype._resolveFeaturesRecursive.call(</span><span class="s3">this</span><span class="s1">, edition);</span>
+    <span class="s3">this</span><span class="s1">.nestedArray.forEach(nested =&gt; {</span>
+        <span class="s1">nested._resolveFeaturesRecursive(edition);</span>
+    <span class="s1">});</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Recursively looks up the reflection object matching the specified path in the scope of this namespace. 
+ * @param {string|string[]} path Path to look up 
+ * @param {*|Array.&lt;*&gt;} filterTypes Filter types, any combination of the constructors of `protobuf.Type`, `protobuf.Enum`, `protobuf.Service` etc. 
+ * @param {boolean} [parentAlreadyChecked=false] If known, whether the parent has already been checked 
+ * @returns {ReflectionObject|null} Looked up object or `null` if none could be found 
+ */</span>
+<span class="s1">Namespace.prototype.lookup = </span><span class="s3">function </span><span class="s1">lookup(path, filterTypes, parentAlreadyChecked) {</span>
+    <span class="s2">/* istanbul ignore next */</span>
+    <span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">filterTypes === </span><span class="s0">&quot;boolean&quot;</span><span class="s1">) {</span>
+        <span class="s1">parentAlreadyChecked = filterTypes;</span>
+        <span class="s1">filterTypes = undefined;</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(filterTypes &amp;&amp; !Array.isArray(filterTypes))</span>
+        <span class="s1">filterTypes = [ filterTypes ];</span>
+
+    <span class="s3">if </span><span class="s1">(util.isString(path) &amp;&amp; path.length) {</span>
+        <span class="s3">if </span><span class="s1">(path === </span><span class="s0">&quot;.&quot;</span><span class="s1">)</span>
+            <span class="s3">return this</span><span class="s1">.root;</span>
+        <span class="s1">path = path.split(</span><span class="s0">&quot;.&quot;</span><span class="s1">);</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(!path.length)</span>
+        <span class="s3">return this</span><span class="s1">;</span>
+
+    <span class="s3">var </span><span class="s1">flatPath = path.join(</span><span class="s0">&quot;.&quot;</span><span class="s1">);</span>
+
+    <span class="s2">// Start at root if path is absolute</span>
+    <span class="s3">if </span><span class="s1">(path[</span><span class="s4">0</span><span class="s1">] === </span><span class="s0">&quot;&quot;</span><span class="s1">)</span>
+        <span class="s3">return this</span><span class="s1">.root.lookup(path.slice(</span><span class="s4">1</span><span class="s1">), filterTypes);</span>
+
+    <span class="s2">// Early bailout for objects with matching absolute paths</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.root._fullyQualifiedObjects &amp;&amp; </span><span class="s3">this</span><span class="s1">.root._fullyQualifiedObjects[</span><span class="s0">&quot;.&quot; </span><span class="s1">+ flatPath];</span>
+    <span class="s3">if </span><span class="s1">(found &amp;&amp; (!filterTypes || filterTypes.indexOf(found.constructor) &gt; -</span><span class="s4">1</span><span class="s1">)) {</span>
+        <span class="s3">return </span><span class="s1">found;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Do a regular lookup at this namespace and below</span>
+    <span class="s1">found = </span><span class="s3">this</span><span class="s1">._lookupImpl(path, flatPath);</span>
+    <span class="s3">if </span><span class="s1">(found &amp;&amp; (!filterTypes || filterTypes.indexOf(found.constructor) &gt; -</span><span class="s4">1</span><span class="s1">)) {</span>
+        <span class="s3">return </span><span class="s1">found;</span>
+    <span class="s1">}</span>
+
+    <span class="s3">if </span><span class="s1">(parentAlreadyChecked)</span>
+        <span class="s3">return null</span><span class="s1">;</span>
+
+    <span class="s2">// If there hasn't been a match, walk up the tree and look more broadly</span>
+    <span class="s3">var </span><span class="s1">current = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s3">while </span><span class="s1">(current.parent) {</span>
+        <span class="s1">found = current.parent._lookupImpl(path, flatPath);</span>
+        <span class="s3">if </span><span class="s1">(found &amp;&amp; (!filterTypes || filterTypes.indexOf(found.constructor) &gt; -</span><span class="s4">1</span><span class="s1">)) {</span>
+            <span class="s3">return </span><span class="s1">found;</span>
+        <span class="s1">}</span>
+        <span class="s1">current = current.parent;</span>
+    <span class="s1">}</span>
+    <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Internal helper for lookup that handles searching just at this namespace and below along with caching. 
+ * @param {string[]} path Path to look up 
+ * @param {string} flatPath Flattened version of the path to use as a cache key 
+ * @returns {ReflectionObject|null} Looked up object or `null` if none could be found 
+ * @private 
+ */</span>
+<span class="s1">Namespace.prototype._lookupImpl = </span><span class="s3">function </span><span class="s1">lookup(path, flatPath) {</span>
+    <span class="s3">if</span><span class="s1">(Object.prototype.hasOwnProperty.call(</span><span class="s3">this</span><span class="s1">._lookupCache, flatPath)) {</span>
+        <span class="s3">return this</span><span class="s1">._lookupCache[flatPath];</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Test if the first part matches any nested object, and if so, traverse if path contains more</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.get(path[</span><span class="s4">0</span><span class="s1">]);</span>
+    <span class="s3">var </span><span class="s1">exact = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s3">if </span><span class="s1">(found) {</span>
+        <span class="s3">if </span><span class="s1">(path.length === </span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s1">exact = found;</span>
+        <span class="s1">} </span><span class="s3">else if </span><span class="s1">(found </span><span class="s3">instanceof </span><span class="s1">Namespace) {</span>
+            <span class="s1">path = path.slice(</span><span class="s4">1</span><span class="s1">);</span>
+            <span class="s1">exact = found._lookupImpl(path, path.join(</span><span class="s0">&quot;.&quot;</span><span class="s1">));</span>
+        <span class="s1">}</span>
+
+    <span class="s2">// Otherwise try each nested namespace</span>
+    <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s3">this</span><span class="s1">.nestedArray.length; ++i)</span>
+            <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">._nestedArray[i] </span><span class="s3">instanceof </span><span class="s1">Namespace &amp;&amp; (found = </span><span class="s3">this</span><span class="s1">._nestedArray[i]._lookupImpl(path, flatPath)))</span>
+                <span class="s1">exact = found;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">// Set this even when null, so that when we walk up the tree we can quickly bail on repeated checks back down.</span>
+    <span class="s3">this</span><span class="s1">._lookupCache[flatPath] = exact;</span>
+    <span class="s3">return </span><span class="s1">exact;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Looks up the reflection object at the specified path, relative to this namespace. 
+ * @name NamespaceBase#lookup 
+ * @function 
+ * @param {string|string[]} path Path to look up 
+ * @param {boolean} [parentAlreadyChecked=false] Whether the parent has already been checked 
+ * @returns {ReflectionObject|null} Looked up object or `null` if none could be found 
+ * @variation 2 
+ */</span>
+<span class="s2">// lookup(path: string, [parentAlreadyChecked: boolean])</span>
+
+<span class="s2">/** 
+ * Looks up the {@link Type|type} at the specified path, relative to this namespace. 
+ * Besides its signature, this methods differs from {@link Namespace#lookup|lookup} in that it throws instead of returning `null`. 
+ * @param {string|string[]} path Path to look up 
+ * @returns {Type} Looked up type 
+ * @throws {Error} If `path` does not point to a type 
+ */</span>
+<span class="s1">Namespace.prototype.lookupType = </span><span class="s3">function </span><span class="s1">lookupType(path) {</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.lookup(path, [ Type ]);</span>
+    <span class="s3">if </span><span class="s1">(!found)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;no such type: &quot; </span><span class="s1">+ path);</span>
+    <span class="s3">return </span><span class="s1">found;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Looks up the values of the {@link Enum|enum} at the specified path, relative to this namespace. 
+ * Besides its signature, this methods differs from {@link Namespace#lookup|lookup} in that it throws instead of returning `null`. 
+ * @param {string|string[]} path Path to look up 
+ * @returns {Enum} Looked up enum 
+ * @throws {Error} If `path` does not point to an enum 
+ */</span>
+<span class="s1">Namespace.prototype.lookupEnum = </span><span class="s3">function </span><span class="s1">lookupEnum(path) {</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.lookup(path, [ Enum ]);</span>
+    <span class="s3">if </span><span class="s1">(!found)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;no such Enum '&quot; </span><span class="s1">+ path + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return </span><span class="s1">found;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Looks up the {@link Type|type} or {@link Enum|enum} at the specified path, relative to this namespace. 
+ * Besides its signature, this methods differs from {@link Namespace#lookup|lookup} in that it throws instead of returning `null`. 
+ * @param {string|string[]} path Path to look up 
+ * @returns {Type} Looked up type or enum 
+ * @throws {Error} If `path` does not point to a type or enum 
+ */</span>
+<span class="s1">Namespace.prototype.lookupTypeOrEnum = </span><span class="s3">function </span><span class="s1">lookupTypeOrEnum(path) {</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.lookup(path, [ Type, Enum ]);</span>
+    <span class="s3">if </span><span class="s1">(!found)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;no such Type or Enum '&quot; </span><span class="s1">+ path + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return </span><span class="s1">found;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Looks up the {@link Service|service} at the specified path, relative to this namespace. 
+ * Besides its signature, this methods differs from {@link Namespace#lookup|lookup} in that it throws instead of returning `null`. 
+ * @param {string|string[]} path Path to look up 
+ * @returns {Service} Looked up service 
+ * @throws {Error} If `path` does not point to a service 
+ */</span>
+<span class="s1">Namespace.prototype.lookupService = </span><span class="s3">function </span><span class="s1">lookupService(path) {</span>
+    <span class="s3">var </span><span class="s1">found = </span><span class="s3">this</span><span class="s1">.lookup(path, [ Service ]);</span>
+    <span class="s3">if </span><span class="s1">(!found)</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">&quot;no such Service '&quot; </span><span class="s1">+ path + </span><span class="s0">&quot;' in &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return </span><span class="s1">found;</span>
+<span class="s1">};</span>
+
+<span class="s2">// Sets up cyclic dependencies (called in index-light)</span>
+<span class="s1">Namespace._configure = </span><span class="s3">function</span><span class="s1">(Type_, Service_, Enum_) {</span>
+    <span class="s1">Type    = Type_;</span>
+    <span class="s1">Service = Service_;</span>
+    <span class="s1">Enum    = Enum_;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

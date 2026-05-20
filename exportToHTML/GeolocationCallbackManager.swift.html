@@ -1,0 +1,183 @@
+<html>
+<head>
+<title>GeolocationCallbackManager.swift</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #56a8f5;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GeolocationCallbackManager.swift</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">Capacitor</span>
+<span class="s0">import </span><span class="s2">IONGeolocationLib</span>
+
+<span class="s0">private enum </span><span class="s2">GeolocationCallbackType {</span>
+    <span class="s0">case </span><span class="s2">requestPermissions</span>
+    <span class="s0">case </span><span class="s2">location</span>
+    <span class="s0">case </span><span class="s2">watch</span>
+
+    <span class="s0">var </span><span class="s1">shouldKeepCallback: </span><span class="s2">Bool {</span>
+        <span class="s2">self == </span><span class="s1">.</span><span class="s2">watch</span>
+    <span class="s2">}</span>
+
+    <span class="s0">var </span><span class="s1">shouldClearAfterSending: </span><span class="s2">Bool {</span>
+        <span class="s2">self == </span><span class="s1">.</span><span class="s2">location || self == </span><span class="s1">.</span><span class="s2">requestPermissions</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">private struct </span><span class="s2">GeolocationCallbackGroup {</span>
+    <span class="s0">let </span><span class="s1">ids: </span><span class="s2">[</span><span class="s1">CAPPluginCall</span><span class="s2">]</span>
+    <span class="s0">let </span><span class="s1">type: GeolocationCallbackType 
+</span><span class="s2">}</span>
+
+<span class="s0">final class </span><span class="s2">GeolocationCallbackManager {</span>
+    <span class="s0">private</span><span class="s2">(</span><span class="s0">set</span><span class="s2">) </span><span class="s0">var </span><span class="s1">requestPermissionsCallbacks: </span><span class="s2">[</span><span class="s1">CAPPluginCall</span><span class="s2">]</span>
+    <span class="s0">private</span><span class="s2">(</span><span class="s0">set</span><span class="s2">) </span><span class="s0">var </span><span class="s1">locationCallbacks: </span><span class="s2">[</span><span class="s1">CAPPluginCall</span><span class="s2">]</span>
+    <span class="s0">private</span><span class="s2">(</span><span class="s0">set</span><span class="s2">) </span><span class="s0">var </span><span class="s1">watchCallbacks: </span><span class="s2">[String: </span><span class="s1">CAPPluginCall</span><span class="s2">]</span>
+    <span class="s0">private</span><span class="s2">(</span><span class="s0">set</span><span class="s2">) </span><span class="s0">var </span><span class="s1">timeout: </span><span class="s2">Int?</span>
+    <span class="s0">private let </span><span class="s1">capacitorBridge: CAPBridgeProtocol</span><span class="s2">?</span>
+
+    <span class="s0">private var </span><span class="s1">allCallbackGroups: </span><span class="s2">[</span><span class="s1">GeolocationCallbackGroup</span><span class="s2">] {</span>
+        <span class="s1">[ 
+            .</span><span class="s0">init</span><span class="s2">(ids: </span><span class="s1">requestPermissionsCallbacks, </span><span class="s2">type: </span><span class="s1">.</span><span class="s2">requestPermissions)</span><span class="s1">, 
+            .</span><span class="s0">init</span><span class="s2">(ids: </span><span class="s1">locationCallbacks, </span><span class="s2">type: </span><span class="s1">.</span><span class="s2">location)</span><span class="s1">, 
+            .</span><span class="s0">init</span><span class="s2">(ids: Array(</span><span class="s1">watchCallbacks.values</span><span class="s2">)</span><span class="s1">, </span><span class="s2">type: </span><span class="s1">.</span><span class="s2">watch)</span>
+        <span class="s1">] 
+    </span><span class="s2">}</span>
+    <span class="s0">private var </span><span class="s1">requestPermissionsCallbackGroup: GeolocationCallbackGroup</span><span class="s2">? {</span>
+        <span class="s1">allCallbackGroups.</span><span class="s2">first { $0</span><span class="s1">.</span><span class="s2">type == </span><span class="s1">.</span><span class="s2">requestPermissions }</span>
+    <span class="s2">}</span>
+
+    <span class="s0">init</span><span class="s2">(</span><span class="s3">capacitorBridge</span><span class="s1">: CAPBridgeProtocol</span><span class="s2">?) {</span>
+        <span class="s2">self</span><span class="s1">.</span><span class="s2">capacitorBridge = </span><span class="s1">capacitorBridge 
+        </span><span class="s2">self</span><span class="s1">.</span><span class="s2">requestPermissionsCallbacks = </span><span class="s1">[] 
+        </span><span class="s2">self</span><span class="s1">.</span><span class="s2">locationCallbacks = </span><span class="s1">[] 
+        </span><span class="s2">self</span><span class="s1">.</span><span class="s2">watchCallbacks = </span><span class="s1">[</span><span class="s2">:</span><span class="s1">] 
+    </span><span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">addRequestPermissionsCallback</span><span class="s2">(</span><span class="s3">capacitorCall </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">saveCall(</span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s1">requestPermissionsCallbacks.</span><span class="s2">append(</span><span class="s1">call</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">addLocationCallback</span><span class="s2">(</span><span class="s3">capacitorCall </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">saveCall(</span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s1">locationCallbacks.</span><span class="s2">append(</span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s0">let </span><span class="s1">timeout </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">getInt(</span><span class="s1">Constants.</span><span class="s2">Arguments</span><span class="s1">.</span><span class="s2">timeout)</span>
+        <span class="s2">self</span><span class="s1">.</span><span class="s2">timeout = </span><span class="s1">timeout 
+    </span><span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">addWatchCallback</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">watchId</span><span class="s1">: </span><span class="s2">String</span><span class="s1">, </span><span class="s3">capacitorCall </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">saveCall(</span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s1">watchCallbacks</span><span class="s2">[</span><span class="s1">watchId</span><span class="s2">] = </span><span class="s1">call 
+        </span><span class="s0">let </span><span class="s1">timeout </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">getInt(</span><span class="s1">Constants.</span><span class="s2">Arguments</span><span class="s1">.</span><span class="s2">timeout)</span>
+        <span class="s2">self</span><span class="s1">.</span><span class="s2">timeout = </span><span class="s1">timeout 
+    </span><span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">clearRequestPermissionsCallbacks</span><span class="s2">() {</span>
+        <span class="s1">requestPermissionsCallbacks.</span><span class="s2">forEach {</span>
+            <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">releaseCall($0)</span>
+        <span class="s2">}</span>
+        <span class="s1">requestPermissionsCallbacks.</span><span class="s2">removeAll()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">clearWatchCallbackIfExists</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">watchId</span><span class="s1">: </span><span class="s2">String) {</span>
+        <span class="s0">if let </span><span class="s1">callbackToRemove </span><span class="s2">= </span><span class="s1">watchCallbacks</span><span class="s2">[</span><span class="s1">watchId</span><span class="s2">] {</span>
+            <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">releaseCall(</span><span class="s1">callbackToRemove</span><span class="s2">)</span>
+            <span class="s1">watchCallbacks.</span><span class="s2">removeValue(forKey: </span><span class="s1">watchId</span><span class="s2">)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">clearLocationCallbacks</span><span class="s2">() {</span>
+        <span class="s1">locationCallbacks.</span><span class="s2">forEach {</span>
+            <span class="s1">capacitorBridge</span><span class="s2">?</span><span class="s1">.</span><span class="s2">releaseCall($0)</span>
+        <span class="s2">}</span>
+        <span class="s1">locationCallbacks.</span><span class="s2">removeAll()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendSuccess</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s1">call.</span><span class="s2">resolve()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendSuccess</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall, </span><span class="s3">with </span><span class="s2">data</span><span class="s1">: PluginCallResultData</span><span class="s2">) {</span>
+        <span class="s1">call.</span><span class="s2">resolve(</span><span class="s1">data</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendRequestPermissionsSuccess</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">permissionsResult</span><span class="s1">: </span><span class="s2">String) {</span>
+        <span class="s0">if let </span><span class="s1">group </span><span class="s2">= </span><span class="s1">requestPermissionsCallbackGroup </span><span class="s2">{</span>
+            <span class="s0">let </span><span class="s1">data </span><span class="s2">= </span><span class="s1">[ 
+                Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">ResultKey</span><span class="s1">.</span><span class="s2">location: </span><span class="s1">permissionsResult, 
+                Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">ResultKey</span><span class="s1">.</span><span class="s2">coarseLocation: </span><span class="s1">permissionsResult 
+            ] 
+            </span><span class="s2">send(</span><span class="s1">.</span><span class="s2">success(</span><span class="s1">data</span><span class="s2">)</span><span class="s1">, </span><span class="s2">to: </span><span class="s1">group</span><span class="s2">)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendSuccess</span><span class="s2">(</span><span class="s3">with </span><span class="s2">position</span><span class="s1">: IONGLOCPositionModel</span><span class="s2">) {</span>
+        <span class="s2">createPluginResult(status: </span><span class="s1">.</span><span class="s2">success(</span><span class="s1">position.</span><span class="s2">toJSObject()))</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendError</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall, </span><span class="s3">error</span><span class="s1">: GeolocationError</span><span class="s2">) {</span>
+        <span class="s0">let </span><span class="s1">errorModel </span><span class="s2">= </span><span class="s1">error.</span><span class="s2">toCodeMessagePair()</span>
+        <span class="s1">call.</span><span class="s2">reject(</span><span class="s1">errorModel.1, errorModel.0</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">sendError</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">error</span><span class="s1">: GeolocationError</span><span class="s2">) {</span>
+        <span class="s2">createPluginResult(status: </span><span class="s1">.error</span><span class="s2">(</span><span class="s1">error.</span><span class="s2">toCodeMessagePair()))</span>
+
+        <span class="s0">if case </span><span class="s1">.timeout </span><span class="s2">= </span><span class="s1">error </span><span class="s2">{</span>
+            <span class="s1">watchCallbacks.keys.</span><span class="s2">forEach { clearWatchCallbackIfExists($0) }</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">private enum </span><span class="s2">CallResultStatus {</span>
+    <span class="s0">typealias </span><span class="s2">SuccessModel = </span><span class="s1">JSObject</span>
+    <span class="s0">typealias </span><span class="s2">ErrorModel = (</span><span class="s1">code: </span><span class="s2">String</span><span class="s1">, message: </span><span class="s2">String)</span>
+
+    <span class="s0">case </span><span class="s2">success(</span><span class="s3">_ </span><span class="s2">data: </span><span class="s1">SuccessModel</span><span class="s2">)</span>
+    <span class="s0">case </span><span class="s2">error(</span><span class="s3">_ </span><span class="s2">codeAndMessage: </span><span class="s1">ErrorModel</span><span class="s2">)</span>
+<span class="s2">}</span>
+
+<span class="s0">private extension </span><span class="s2">GeolocationCallbackManager {</span>
+
+    <span class="s0">func </span><span class="s3">createPluginResult</span><span class="s2">(</span><span class="s3">status</span><span class="s1">: CallResultStatus</span><span class="s2">) {</span>
+        <span class="s1">allCallbackGroups.</span><span class="s2">forEach {</span>
+            <span class="s2">send(</span><span class="s1">status, </span><span class="s2">to: $0)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">send</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">callResultStatus</span><span class="s1">: CallResultStatus, </span><span class="s3">to </span><span class="s2">group</span><span class="s1">: GeolocationCallbackGroup</span><span class="s2">) {</span>
+        <span class="s1">group.</span><span class="s2">ids</span><span class="s1">.</span><span class="s2">forEach { </span><span class="s1">call </span><span class="s0">in</span>
+            <span class="s1">call.</span><span class="s2">keepAlive = </span><span class="s1">group.</span><span class="s2">type</span><span class="s1">.</span><span class="s2">shouldKeepCallback</span>
+            <span class="s0">switch </span><span class="s1">callResultStatus </span><span class="s2">{</span>
+            <span class="s0">case </span><span class="s1">.</span><span class="s2">success(</span><span class="s0">let </span><span class="s1">data</span><span class="s2">):</span>
+                <span class="s1">call.</span><span class="s2">resolve(</span><span class="s1">data</span><span class="s2">)</span>
+            <span class="s0">case </span><span class="s1">.error</span><span class="s2">(</span><span class="s0">let </span><span class="s1">error</span><span class="s2">):</span>
+                <span class="s1">call.</span><span class="s2">reject(</span><span class="s1">error.</span><span class="s2">message</span><span class="s1">, error.</span><span class="s2">code)</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">group.type.shouldClearAfterSending </span><span class="s2">{</span>
+            <span class="s2">clearCallbacks(for: </span><span class="s1">group.</span><span class="s2">type)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">clearCallbacks</span><span class="s2">(</span><span class="s3">for </span><span class="s2">type</span><span class="s1">: GeolocationCallbackType</span><span class="s2">) {</span>
+        <span class="s0">if case </span><span class="s1">.location </span><span class="s2">= </span><span class="s1">type </span><span class="s2">{</span>
+            <span class="s2">clearLocationCallbacks()</span>
+        <span class="s2">} </span><span class="s0">else if case </span><span class="s1">.requestPermissions </span><span class="s2">= </span><span class="s1">type </span><span class="s2">{</span>
+            <span class="s2">clearRequestPermissionsCallbacks()</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

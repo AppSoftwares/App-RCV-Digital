@@ -1,0 +1,383 @@
+<html>
+<head>
+<title>normalize-and-load-metadata.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+normalize-and-load-metadata.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.</span><span class="s2">default </span><span class="s1">= normalizeModuleAndLoadMetadata;</span>
+<span class="s1">exports.hasExports = hasExports;</span>
+<span class="s1">exports.isSideEffectImport = isSideEffectImport;</span>
+<span class="s1">exports.validateImportInteropOption = validateImportInteropOption;</span>
+<span class="s2">var </span><span class="s1">_path = require(</span><span class="s0">&quot;path&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_helperValidatorIdentifier = require(</span><span class="s0">&quot;@babel/helper-validator-identifier&quot;</span><span class="s1">);</span>
+<span class="s2">function </span><span class="s1">hasExports(metadata) {</span>
+  <span class="s2">return </span><span class="s1">metadata.hasExports;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">isSideEffectImport(source) {</span>
+  <span class="s2">return </span><span class="s1">source.imports.size === </span><span class="s3">0 </span><span class="s1">&amp;&amp; source.importsNamespace.size === </span><span class="s3">0 </span><span class="s1">&amp;&amp; source.reexports.size === </span><span class="s3">0 </span><span class="s1">&amp;&amp; source.reexportNamespace.size === </span><span class="s3">0 </span><span class="s1">&amp;&amp; !source.reexportAll;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">validateImportInteropOption(importInterop) {</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">importInterop !== </span><span class="s0">&quot;function&quot; </span><span class="s1">&amp;&amp; importInterop !== </span><span class="s0">&quot;none&quot; </span><span class="s1">&amp;&amp; importInterop !== </span><span class="s0">&quot;babel&quot; </span><span class="s1">&amp;&amp; importInterop !== </span><span class="s0">&quot;node&quot;</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(`.importInterop must be one of </span><span class="s0">&quot;none&quot;</span><span class="s1">, </span><span class="s0">&quot;babel&quot;</span><span class="s1">, </span><span class="s0">&quot;node&quot;</span><span class="s1">, or a </span><span class="s2">function </span><span class="s1">returning one of those values (received ${importInterop}).`);</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">importInterop;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">resolveImportInterop(importInterop, source, filename) {</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">importInterop === </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+    <span class="s2">return </span><span class="s1">validateImportInteropOption(importInterop(source, filename));</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">importInterop;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">normalizeModuleAndLoadMetadata(programPath, exportName, {</span>
+  <span class="s1">importInterop,</span>
+  <span class="s1">initializeReexports = </span><span class="s2">false</span><span class="s1">,</span>
+  <span class="s1">getWrapperPayload,</span>
+  <span class="s1">esNamespaceOnly = </span><span class="s2">false</span><span class="s1">,</span>
+  <span class="s1">filename</span>
+<span class="s1">}) {</span>
+  <span class="s2">if </span><span class="s1">(!exportName) {</span>
+    <span class="s1">exportName = programPath.scope.generateUidIdentifier(</span><span class="s0">&quot;exports&quot;</span><span class="s1">).name;</span>
+  <span class="s1">}</span>
+  <span class="s1">const stringSpecifiers = </span><span class="s2">new </span><span class="s1">Set();</span>
+  <span class="s1">nameAnonymousExports(programPath);</span>
+  <span class="s1">const {</span>
+    <span class="s1">local,</span>
+    <span class="s1">sources,</span>
+    <span class="s1">hasExports</span>
+  <span class="s1">} = getModuleMetadata(programPath, {</span>
+    <span class="s1">initializeReexports,</span>
+    <span class="s1">getWrapperPayload</span>
+  <span class="s1">}, stringSpecifiers);</span>
+  <span class="s1">removeImportExportDeclarations(programPath);</span>
+  <span class="s2">for </span><span class="s1">(const [source, metadata] of sources) {</span>
+    <span class="s1">const {</span>
+      <span class="s1">importsNamespace,</span>
+      <span class="s1">imports</span>
+    <span class="s1">} = metadata;</span>
+    <span class="s2">if </span><span class="s1">(importsNamespace.size &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; imports.size === </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">const [nameOfnamespace] = importsNamespace;</span>
+      <span class="s1">metadata.name = nameOfnamespace;</span>
+    <span class="s1">}</span>
+    <span class="s1">const resolvedInterop = resolveImportInterop(importInterop, source, filename);</span>
+    <span class="s2">if </span><span class="s1">(resolvedInterop === </span><span class="s0">&quot;none&quot;</span><span class="s1">) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;none&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(resolvedInterop === </span><span class="s0">&quot;node&quot; </span><span class="s1">&amp;&amp; metadata.interop === </span><span class="s0">&quot;namespace&quot;</span><span class="s1">) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;node-namespace&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(resolvedInterop === </span><span class="s0">&quot;node&quot; </span><span class="s1">&amp;&amp; metadata.interop === </span><span class="s0">&quot;default&quot;</span><span class="s1">) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;node-default&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(esNamespaceOnly &amp;&amp; metadata.interop === </span><span class="s0">&quot;namespace&quot;</span><span class="s1">) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;default&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">exportName,</span>
+    <span class="s1">exportNameListName: </span><span class="s2">null</span><span class="s1">,</span>
+    <span class="s1">hasExports,</span>
+    <span class="s1">local,</span>
+    <span class="s1">source: sources,</span>
+    <span class="s1">stringSpecifiers</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getExportSpecifierName(path, stringSpecifiers) {</span>
+  <span class="s2">if </span><span class="s1">(path.isIdentifier()) {</span>
+    <span class="s2">return </span><span class="s1">path.node.name;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(path.isStringLiteral()) {</span>
+    <span class="s1">const stringValue = path.node.value;</span>
+    <span class="s2">if </span><span class="s1">(!(</span><span class="s3">0</span><span class="s1">, _helperValidatorIdentifier.isIdentifierName)(stringValue)) {</span>
+      <span class="s1">stringSpecifiers.add(stringValue);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">stringValue;</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s2">throw new </span><span class="s1">Error(`Expected export specifier to be either Identifier or StringLiteral, got ${path.node.type}`);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">assertExportSpecifier(path) {</span>
+  <span class="s2">if </span><span class="s1">(path.isExportSpecifier()) {</span>
+    <span class="s2">return</span><span class="s1">;</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(path.isExportNamespaceSpecifier()) {</span>
+    <span class="s2">throw </span><span class="s1">path.buildCodeFrameError(</span><span class="s0">&quot;Export namespace should be first transformed by `@babel/plugin-transform-export-namespace-from`.&quot;</span><span class="s1">);</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s2">throw </span><span class="s1">path.buildCodeFrameError(</span><span class="s0">&quot;Unexpected export specifier type&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getModuleMetadata(programPath, {</span>
+  <span class="s1">getWrapperPayload,</span>
+  <span class="s1">initializeReexports</span>
+<span class="s1">}, stringSpecifiers) {</span>
+  <span class="s1">const localData = getLocalExportMetadata(programPath, initializeReexports, stringSpecifiers);</span>
+  <span class="s1">const importNodes = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const sourceData = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const getData = (sourceNode, node) =&gt; {</span>
+    <span class="s1">const source = sourceNode.value;</span>
+    <span class="s1">let data = sourceData.get(source);</span>
+    <span class="s2">if </span><span class="s1">(!data) {</span>
+      <span class="s1">data = {</span>
+        <span class="s1">name: programPath.scope.generateUidIdentifier((</span><span class="s3">0</span><span class="s1">, _path.basename)(source, (</span><span class="s3">0</span><span class="s1">, _path.extname)(source))).name,</span>
+        <span class="s1">interop: </span><span class="s0">&quot;none&quot;</span><span class="s1">,</span>
+        <span class="s1">loc: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">imports: </span><span class="s2">new </span><span class="s1">Map(),</span>
+        <span class="s1">importsNamespace: </span><span class="s2">new </span><span class="s1">Set(),</span>
+        <span class="s1">reexports: </span><span class="s2">new </span><span class="s1">Map(),</span>
+        <span class="s1">reexportNamespace: </span><span class="s2">new </span><span class="s1">Set(),</span>
+        <span class="s1">reexportAll: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">wrap: </span><span class="s2">null</span><span class="s1">,</span>
+        <span class="s1">get lazy() {</span>
+          <span class="s2">return this</span><span class="s1">.wrap === </span><span class="s0">&quot;lazy&quot;</span><span class="s1">;</span>
+        <span class="s1">},</span>
+        <span class="s1">referenced: </span><span class="s2">false</span>
+      <span class="s1">};</span>
+      <span class="s1">sourceData.set(source, data);</span>
+      <span class="s1">importNodes.set(source, [node]);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">importNodes.get(source).push(node);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">data;</span>
+  <span class="s1">};</span>
+  <span class="s1">let hasExports = </span><span class="s2">false</span><span class="s1">;</span>
+  <span class="s1">programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).forEach(child =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(child.isImportDeclaration()) {</span>
+      <span class="s1">const data = getData(child.node.source, child.node);</span>
+      <span class="s2">if </span><span class="s1">(!data.loc) data.loc = child.node.loc;</span>
+      <span class="s1">child.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).forEach(spec =&gt; {</span>
+        <span class="s2">if </span><span class="s1">(spec.isImportDefaultSpecifier()) {</span>
+          <span class="s1">const localName = spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">).node.name;</span>
+          <span class="s1">data.imports.set(localName, </span><span class="s0">&quot;default&quot;</span><span class="s1">);</span>
+          <span class="s1">const reexport = localData.get(localName);</span>
+          <span class="s2">if </span><span class="s1">(reexport) {</span>
+            <span class="s1">localData.</span><span class="s2">delete</span><span class="s1">(localName);</span>
+            <span class="s1">reexport.names.forEach(name =&gt; {</span>
+              <span class="s1">data.reexports.set(name, </span><span class="s0">&quot;default&quot;</span><span class="s1">);</span>
+            <span class="s1">});</span>
+            <span class="s1">data.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(spec.isImportNamespaceSpecifier()) {</span>
+          <span class="s1">const localName = spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">).node.name;</span>
+          <span class="s1">data.importsNamespace.add(localName);</span>
+          <span class="s1">const reexport = localData.get(localName);</span>
+          <span class="s2">if </span><span class="s1">(reexport) {</span>
+            <span class="s1">localData.</span><span class="s2">delete</span><span class="s1">(localName);</span>
+            <span class="s1">reexport.names.forEach(name =&gt; {</span>
+              <span class="s1">data.reexportNamespace.add(name);</span>
+            <span class="s1">});</span>
+            <span class="s1">data.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(spec.isImportSpecifier()) {</span>
+          <span class="s1">const importName = getExportSpecifierName(spec.get(</span><span class="s0">&quot;imported&quot;</span><span class="s1">), stringSpecifiers);</span>
+          <span class="s1">const localName = spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">).node.name;</span>
+          <span class="s1">data.imports.set(localName, importName);</span>
+          <span class="s1">const reexport = localData.get(localName);</span>
+          <span class="s2">if </span><span class="s1">(reexport) {</span>
+            <span class="s1">localData.</span><span class="s2">delete</span><span class="s1">(localName);</span>
+            <span class="s1">reexport.names.forEach(name =&gt; {</span>
+              <span class="s1">data.reexports.set(name, importName);</span>
+            <span class="s1">});</span>
+            <span class="s1">data.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">});</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportAllDeclaration()) {</span>
+      <span class="s1">hasExports = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">const data = getData(child.node.source, child.node);</span>
+      <span class="s2">if </span><span class="s1">(!data.loc) data.loc = child.node.loc;</span>
+      <span class="s1">data.reexportAll = {</span>
+        <span class="s1">loc: child.node.loc</span>
+      <span class="s1">};</span>
+      <span class="s1">data.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportNamedDeclaration() &amp;&amp; child.node.source) {</span>
+      <span class="s1">hasExports = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">const data = getData(child.node.source, child.node);</span>
+      <span class="s2">if </span><span class="s1">(!data.loc) data.loc = child.node.loc;</span>
+      <span class="s1">child.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).forEach(spec =&gt; {</span>
+        <span class="s1">assertExportSpecifier(spec);</span>
+        <span class="s1">const importName = getExportSpecifierName(spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">), stringSpecifiers);</span>
+        <span class="s1">const exportName = getExportSpecifierName(spec.get(</span><span class="s0">&quot;exported&quot;</span><span class="s1">), stringSpecifiers);</span>
+        <span class="s1">data.reexports.set(exportName, importName);</span>
+        <span class="s1">data.referenced = </span><span class="s2">true</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(exportName === </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">) {</span>
+          <span class="s2">throw </span><span class="s1">spec.get(</span><span class="s0">&quot;exported&quot;</span><span class="s1">).buildCodeFrameError(</span><span class="s0">'Illegal export &quot;__esModule&quot;.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+      <span class="s1">});</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportNamedDeclaration() || child.isExportDefaultDeclaration()) {</span>
+      <span class="s1">hasExports = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+  <span class="s2">for </span><span class="s1">(const metadata of sourceData.values()) {</span>
+    <span class="s1">let needsDefault = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s1">let needsNamed = </span><span class="s2">false</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(metadata.importsNamespace.size &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">needsDefault = </span><span class="s2">true</span><span class="s1">;</span>
+      <span class="s1">needsNamed = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(metadata.reexportAll) {</span>
+      <span class="s1">needsNamed = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">(const importName of metadata.imports.values()) {</span>
+      <span class="s2">if </span><span class="s1">(importName === </span><span class="s0">&quot;default&quot;</span><span class="s1">) needsDefault = </span><span class="s2">true</span><span class="s1">;</span><span class="s2">else </span><span class="s1">needsNamed = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">(const importName of metadata.reexports.values()) {</span>
+      <span class="s2">if </span><span class="s1">(importName === </span><span class="s0">&quot;default&quot;</span><span class="s1">) needsDefault = </span><span class="s2">true</span><span class="s1">;</span><span class="s2">else </span><span class="s1">needsNamed = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(needsDefault &amp;&amp; needsNamed) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;namespace&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(needsDefault) {</span>
+      <span class="s1">metadata.interop = </span><span class="s0">&quot;default&quot;</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(getWrapperPayload) {</span>
+    <span class="s2">for </span><span class="s1">(const [source, metadata] of sourceData) {</span>
+      <span class="s1">metadata.wrap = getWrapperPayload(source, metadata, importNodes.get(source));</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">hasExports,</span>
+    <span class="s1">local: localData,</span>
+    <span class="s1">sources: sourceData</span>
+  <span class="s1">};</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">getLocalExportMetadata(programPath, initializeReexports, stringSpecifiers) {</span>
+  <span class="s1">const bindingKindLookup = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const programScope = programPath.scope;</span>
+  <span class="s1">const programChildren = programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">);</span>
+  <span class="s1">programChildren.forEach(child =&gt; {</span>
+    <span class="s1">let kind;</span>
+    <span class="s2">if </span><span class="s1">(child.isImportDeclaration()) {</span>
+      <span class="s1">kind = </span><span class="s0">&quot;import&quot;</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">if </span><span class="s1">(child.isExportDefaultDeclaration()) {</span>
+        <span class="s1">child = child.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(child.isExportNamedDeclaration()) {</span>
+        <span class="s2">if </span><span class="s1">(child.node.declaration) {</span>
+          <span class="s1">child = child.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(initializeReexports &amp;&amp; child.node.source &amp;&amp; child.get(</span><span class="s0">&quot;source&quot;</span><span class="s1">).isStringLiteral()) {</span>
+          <span class="s1">child.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).forEach(spec =&gt; {</span>
+            <span class="s1">assertExportSpecifier(spec);</span>
+            <span class="s1">bindingKindLookup.set(spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">).node.name, </span><span class="s0">&quot;block&quot;</span><span class="s1">);</span>
+          <span class="s1">});</span>
+          <span class="s2">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(child.isFunctionDeclaration()) {</span>
+        <span class="s1">kind = </span><span class="s0">&quot;hoisted&quot;</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isClassDeclaration()) {</span>
+        <span class="s1">kind = </span><span class="s0">&quot;block&quot;</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isVariableDeclaration({</span>
+        <span class="s1">kind: </span><span class="s0">&quot;var&quot;</span>
+      <span class="s1">})) {</span>
+        <span class="s1">kind = </span><span class="s0">&quot;var&quot;</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isVariableDeclaration()) {</span>
+        <span class="s1">kind = </span><span class="s0">&quot;block&quot;</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">Object.keys(child.getOuterBindingIdentifiers()).forEach(name =&gt; {</span>
+      <span class="s1">bindingKindLookup.set(name, kind);</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+  <span class="s1">const localMetadata = </span><span class="s2">new </span><span class="s1">Map();</span>
+  <span class="s1">const getLocalMetadata = idPath =&gt; {</span>
+    <span class="s1">const localName = idPath.node.name;</span>
+    <span class="s1">let metadata = localMetadata.get(localName);</span>
+    <span class="s2">if </span><span class="s1">(!metadata) {</span>
+      <span class="s2">var </span><span class="s1">_bindingKindLookup$ge, _programScope$getBind;</span>
+      <span class="s1">const kind = (_bindingKindLookup$ge = bindingKindLookup.get(localName)) != </span><span class="s2">null </span><span class="s1">? _bindingKindLookup$ge : (_programScope$getBind = programScope.getBinding(localName)) == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: _programScope$getBind.kind;</span>
+      <span class="s2">if </span><span class="s1">(kind === undefined) {</span>
+        <span class="s2">throw </span><span class="s1">idPath.buildCodeFrameError(`Exporting local </span><span class="s0">&quot;${localName}&quot;</span><span class="s1">, which is not declared.`);</span>
+      <span class="s1">}</span>
+      <span class="s1">metadata = {</span>
+        <span class="s1">names: [],</span>
+        <span class="s1">kind</span>
+      <span class="s1">};</span>
+      <span class="s1">localMetadata.set(localName, metadata);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">metadata;</span>
+  <span class="s1">};</span>
+  <span class="s1">programChildren.forEach(child =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(child.isExportNamedDeclaration() &amp;&amp; (initializeReexports || !child.node.source)) {</span>
+      <span class="s2">if </span><span class="s1">(child.node.declaration) {</span>
+        <span class="s1">const declaration = child.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+        <span class="s1">const ids = declaration.getOuterBindingIdentifierPaths();</span>
+        <span class="s1">Object.keys(ids).forEach(name =&gt; {</span>
+          <span class="s2">if </span><span class="s1">(name === </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">) {</span>
+            <span class="s2">throw </span><span class="s1">declaration.buildCodeFrameError(</span><span class="s0">'Illegal export &quot;__esModule&quot;.'</span><span class="s1">);</span>
+          <span class="s1">}</span>
+          <span class="s1">getLocalMetadata(ids[name]).names.push(name);</span>
+        <span class="s1">});</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">child.get(</span><span class="s0">&quot;specifiers&quot;</span><span class="s1">).forEach(spec =&gt; {</span>
+          <span class="s1">const local = spec.get(</span><span class="s0">&quot;local&quot;</span><span class="s1">);</span>
+          <span class="s1">const exported = spec.get(</span><span class="s0">&quot;exported&quot;</span><span class="s1">);</span>
+          <span class="s1">const localMetadata = getLocalMetadata(local);</span>
+          <span class="s1">const exportName = getExportSpecifierName(exported, stringSpecifiers);</span>
+          <span class="s2">if </span><span class="s1">(exportName === </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">) {</span>
+            <span class="s2">throw </span><span class="s1">exported.buildCodeFrameError(</span><span class="s0">'Illegal export &quot;__esModule&quot;.'</span><span class="s1">);</span>
+          <span class="s1">}</span>
+          <span class="s1">localMetadata.names.push(exportName);</span>
+        <span class="s1">});</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportDefaultDeclaration()) {</span>
+      <span class="s1">const declaration = child.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(declaration.isFunctionDeclaration() || declaration.isClassDeclaration()) {</span>
+        <span class="s1">getLocalMetadata(declaration.get(</span><span class="s0">&quot;id&quot;</span><span class="s1">)).names.push(</span><span class="s0">&quot;default&quot;</span><span class="s1">);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">throw </span><span class="s1">declaration.buildCodeFrameError(</span><span class="s0">&quot;Unexpected default expression export.&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+  <span class="s2">return </span><span class="s1">localMetadata;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">nameAnonymousExports(programPath) {</span>
+  <span class="s1">programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).forEach(child =&gt; {</span>
+    <span class="s2">var </span><span class="s1">_child$splitExportDec;</span>
+    <span class="s2">if </span><span class="s1">(!child.isExportDefaultDeclaration()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">(_child$splitExportDec = child.splitExportDeclaration) != </span><span class="s2">null </span><span class="s1">? _child$splitExportDec : child.splitExportDeclaration = require(</span><span class="s0">&quot;@babel/traverse&quot;</span><span class="s1">).NodePath.prototype.splitExportDeclaration;</span>
+    <span class="s1">child.splitExportDeclaration();</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">removeImportExportDeclarations(programPath) {</span>
+  <span class="s1">programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).forEach(child =&gt; {</span>
+    <span class="s2">if </span><span class="s1">(child.isImportDeclaration()) {</span>
+      <span class="s1">child.remove();</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportNamedDeclaration()) {</span>
+      <span class="s2">if </span><span class="s1">(child.node.declaration) {</span>
+        <span class="s1">child.node.declaration._blockHoist = child.node._blockHoist;</span>
+        <span class="s1">child.replaceWith(child.node.declaration);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">child.remove();</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportDefaultDeclaration()) {</span>
+      <span class="s1">const declaration = child.get(</span><span class="s0">&quot;declaration&quot;</span><span class="s1">);</span>
+      <span class="s2">if </span><span class="s1">(declaration.isFunctionDeclaration() || declaration.isClassDeclaration()) {</span>
+        <span class="s1">declaration._blockHoist = child.node._blockHoist;</span>
+        <span class="s1">child.replaceWith(declaration);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">throw </span><span class="s1">declaration.buildCodeFrameError(</span><span class="s0">&quot;Unexpected default expression export.&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(child.isExportAllDeclaration()) {</span>
+      <span class="s1">child.remove();</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=normalize-and-load-metadata.js.map</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,584 @@
+<html>
+<head>
+<title>VisualElement.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+VisualElement.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ warnOnce, secondsToMilliseconds, isNumericalString, isZeroValueString, SubscriptionManager } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ KeyframeResolver } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animation/keyframes/KeyframesResolver.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ NativeAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animation/NativeAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ acceleratedValues } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animation/waapi/utils/accelerated-values.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ microtask } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/microtask.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ time } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/sync-time.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createBox } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../projection/geometry/models.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ motionValue } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../value/index.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ complex } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../value/types/complex/index.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getAnimatableNone } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../value/types/utils/animatable-none.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ findValueType } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../value/types/utils/find.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isMotionValue } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../value/utils/is-motion-value.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ visualElementStore } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./store.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isControllingVariants, isVariantNode } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/is-controlling-variants.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ transformProps } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/keys-transform.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ updateMotionValuesFromProps } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/motion-values.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ initPrefersReducedMotion } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/reduced-motion/index.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ resolveVariantFromProps } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/resolve-variants.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ hasReducedMotionListener, prefersReducedMotion } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/reduced-motion/state.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frame, cancelFrame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/frame.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">propEventHandlers = </span><span class="s1">[</span>
+    <span class="s2">&quot;</span><span class="s3">AnimationStart</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">AnimationComplete</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">Update</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">BeforeLayoutMeasure</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">LayoutMeasure</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">LayoutAnimationStart</span><span class="s2">&quot;,</span>
+    <span class="s2">&quot;</span><span class="s3">LayoutAnimationComplete</span><span class="s2">&quot;,</span>
+<span class="s1">]</span><span class="s2">;</span>
+<span class="s2">/**</span>
+ <span class="s4">* Static feature definitions - can be injected by framework layer 
+ </span><span class="s2">*/</span>
+<span class="s0">let </span><span class="s2">featureDefinitions = {};</span>
+<span class="s2">/**</span>
+ <span class="s4">* Set feature definitions for all VisualElements. 
+ * This should be called by the framework layer (e.g., framer-motion) during initialization. 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">setFeatureDefinitions</span><span class="s2">(definitions) {</span>
+    <span class="s2">featureDefinitions = definitions;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Get the current feature definitions 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">getFeatureDefinitions</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">featureDefinitions;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* A VisualElement is an imperative abstraction around UI elements such as 
+ * HTMLElement, SVGElement, Three.Object3D etc. 
+ </span><span class="s2">*/</span>
+<span class="s0">class </span><span class="s2">VisualElement {</span>
+    <span class="s2">/**</span>
+     <span class="s4">* This method takes React props and returns found MotionValues. For example, HTML 
+     * MotionValues will be found within the style prop, whereas for Three.js within attribute arrays. 
+     * 
+     * This isn't an abstract method as it needs calling in the constructor, but it is 
+     * intended to be one. 
+     </span><span class="s2">*/</span>
+    <span class="s5">scrapeMotionValuesFromProps</span><span class="s2">(_props, _prevProps, _visualElement) {</span>
+        <span class="s0">return </span><span class="s2">{};</span>
+    <span class="s2">}</span>
+    <span class="s0">constructor</span><span class="s2">({ parent, props, presenceContext, reducedMotionConfig, skipAnimations, blockInitialAnimation, visualState, }, options = {}) {</span>
+        <span class="s2">/**</span>
+         <span class="s4">* A reference to the current underlying Instance, e.g. a HTMLElement 
+         * or Three.Mesh etc. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.current = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* A set containing references to this VisualElement's children. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.children = new </span><span class="s5">Set</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Determine what role this visual element should take in the variant tree. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.isVariantNode = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">this.isControllingVariants = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Decides whether this VisualElement should animate in reduced motion 
+         * mode. 
+         * 
+         * TODO: This is currently set on every individual VisualElement but feels 
+         * like it could be set globally. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.shouldReduceMotion = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Decides whether animations should be skipped for this VisualElement. 
+         * Useful for E2E tests and visual regression testing. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.shouldSkipAnimations = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* A map of all motion values attached to this visual element. Motion 
+         * values are source of truth for any given animated value. A motion 
+         * value might be provided externally by the component via props. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.values = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.KeyframeResolver = KeyframeResolver;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Cleanup functions for active features (hover/tap/exit etc) 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.features = {};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* A map of every subscription that binds the provided or generated 
+         * motion values onChange listeners to this visual element. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.valueSubscriptions = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* A reference to the previously-provided motion values as returned 
+         * from scrapeMotionValuesFromProps. We use the keys in here to determine 
+         * if any motion values need to be removed after props are updated. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.prevMotionValues = {};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Track whether this element has been mounted before, to detect 
+         * remounts after Suspense unmount/remount cycles. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.hasBeenMounted = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* An object containing a SubscriptionManager for each active event. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.events = {};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* An object containing an unsubscribe function for each prop event subscription. 
+         * For example, every &quot;Update&quot; event can have multiple subscribers via 
+         * VisualElement.on(), but only one of those can be defined via the onUpdate prop. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.propEventSubscriptions = {};</span>
+        <span class="s2">this.</span><span class="s5">notifyUpdate </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">this.</span><span class="s5">notify</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">Update</span><span class="s2">&quot;, this.latestValues</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">render </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.current</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s5">triggerBuild</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s5">renderInstance</span><span class="s1">(</span><span class="s2">this.current, this.renderState, this.props.style, this.projection</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">this.renderScheduledAt = </span><span class="s7">0.0</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">scheduleRender </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">now = time.</span><span class="s5">now</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.renderScheduledAt &lt; now</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.renderScheduledAt = now;</span>
+                <span class="s2">frame.</span><span class="s5">render</span><span class="s1">(</span><span class="s2">this.render, </span><span class="s6">false</span><span class="s2">, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">};</span>
+        <span class="s0">const </span><span class="s2">{ latestValues, renderState } = visualState;</span>
+        <span class="s2">this.latestValues = latestValues;</span>
+        <span class="s2">this.baseTarget = { ...latestValues };</span>
+        <span class="s2">this.initialValues = props.initial ? { ...latestValues } : {};</span>
+        <span class="s2">this.renderState = renderState;</span>
+        <span class="s2">this.parent = parent;</span>
+        <span class="s2">this.props = props;</span>
+        <span class="s2">this.presenceContext = presenceContext;</span>
+        <span class="s2">this.depth = parent ? parent.depth + </span><span class="s7">1 </span><span class="s2">: </span><span class="s7">0</span><span class="s2">;</span>
+        <span class="s2">this.reducedMotionConfig = reducedMotionConfig;</span>
+        <span class="s2">this.skipAnimationsConfig = skipAnimations;</span>
+        <span class="s2">this.options = options;</span>
+        <span class="s2">this.blockInitialAnimation = </span><span class="s5">Boolean</span><span class="s1">(</span><span class="s2">blockInitialAnimation</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.isControllingVariants = </span><span class="s5">isControllingVariants</span><span class="s1">(</span><span class="s2">props</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.isVariantNode = </span><span class="s5">isVariantNode</span><span class="s1">(</span><span class="s2">props</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.isVariantNode</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.variantChildren = new </span><span class="s5">Set</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.manuallyAnimateOnMount = </span><span class="s5">Boolean</span><span class="s1">(</span><span class="s2">parent &amp;&amp; parent.current</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Any motion values that are provided to the element when created 
+         * aren't yet bound to the element, as this would technically be impure. 
+         * However, we iterate through the motion values and set them to the 
+         * initial values for this component. 
+         * 
+         * TODO: This is impure and we should look at changing this to run on mount. 
+         * Doing so will break some tests but this isn't necessarily a breaking change, 
+         * more a reflection of the test. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">{ willChange, ...initialMotionValues } = this.</span><span class="s5">scrapeMotionValuesFromProps</span><span class="s1">(</span><span class="s2">props, {}, this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in initialMotionValues</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">value = initialMotionValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">!== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; </span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">value.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">])</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s5">mount</span><span class="s2">(instance) {</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If this element has been mounted before (e.g. after a Suspense 
+         * unmount/remount), reset motion values to their initial state 
+         * so animations replay correctly from initial → animate. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.hasBeenMounted</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in this.initialValues</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.values.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">?.</span><span class="s5">jump</span><span class="s1">(</span><span class="s2">this.initialValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">])</span><span class="s2">;</span>
+                <span class="s2">this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= this.initialValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">this.current = instance;</span>
+        <span class="s2">visualElementStore.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">instance, this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.projection &amp;&amp; !this.projection.instance</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.projection.</span><span class="s5">mount</span><span class="s1">(</span><span class="s2">instance</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.parent &amp;&amp; this.isVariantNode &amp;&amp; !this.isControllingVariants</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.removeFromVariantTree = this.parent.</span><span class="s5">addVariantChild</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.values.</span><span class="s5">forEach</span><span class="s1">(</span><span class="s2">(value, key) </span><span class="s0">=&gt; </span><span class="s2">this.</span><span class="s5">bindToMotionValue</span><span class="s1">(</span><span class="s2">key, value</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Determine reduced motion preference. Only initialize the matchMedia 
+         * listener if we actually need the dynamic value (i.e., when config 
+         * is neither &quot;never&quot; nor &quot;always&quot;). 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.reducedMotionConfig === &quot;</span><span class="s3">never</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.shouldReduceMotion = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">this.reducedMotionConfig === &quot;</span><span class="s3">always</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.shouldReduceMotion = </span><span class="s6">true</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!hasReducedMotionListener.current</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s5">initPrefersReducedMotion</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">this.shouldReduceMotion = prefersReducedMotion.current;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">process.env.NODE_ENV !== &quot;</span><span class="s3">production</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s5">warnOnce</span><span class="s1">(</span><span class="s2">this.shouldReduceMotion !== </span><span class="s6">true</span><span class="s2">, &quot;</span><span class="s3">You have Reduced Motion enabled on your device. Animations may not appear as expected.</span><span class="s2">&quot;, &quot;</span><span class="s3">reduced-motion-disabled</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Set whether animations should be skipped based on the config. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.shouldSkipAnimations = this.skipAnimationsConfig ?? </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">this.parent?.</span><span class="s5">addChild</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">update</span><span class="s1">(</span><span class="s2">this.props, this.presenceContext</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.hasBeenMounted = </span><span class="s6">true</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">unmount</span><span class="s2">() {</span>
+        <span class="s2">this.projection &amp;&amp; this.projection.</span><span class="s5">unmount</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s5">cancelFrame</span><span class="s1">(</span><span class="s2">this.notifyUpdate</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s5">cancelFrame</span><span class="s1">(</span><span class="s2">this.render</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.valueSubscriptions.</span><span class="s5">forEach</span><span class="s1">(</span><span class="s2">(remove) </span><span class="s0">=&gt; </span><span class="s5">remove</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s2">this.valueSubscriptions.</span><span class="s5">clear</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.removeFromVariantTree &amp;&amp; this.</span><span class="s5">removeFromVariantTree</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.parent?.</span><span class="s5">removeChild</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in this.events</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.events</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">.</span><span class="s5">clear</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in this.features</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">feature = this.features</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">feature</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">feature.</span><span class="s5">unmount</span><span class="s1">()</span><span class="s2">;</span>
+                <span class="s2">feature.isMounted = </span><span class="s6">false</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">this.current = </span><span class="s6">null</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">addChild</span><span class="s2">(child) {</span>
+        <span class="s2">this.children.</span><span class="s5">add</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.enteringChildren ?? </span><span class="s1">(</span><span class="s2">this.enteringChildren = new </span><span class="s5">Set</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s2">this.enteringChildren.</span><span class="s5">add</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">removeChild</span><span class="s2">(child) {</span>
+        <span class="s2">this.children.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.enteringChildren &amp;&amp; this.enteringChildren.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">bindToMotionValue</span><span class="s2">(key, value) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.valueSubscriptions.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s2">this.valueSubscriptions.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">value.accelerate &amp;&amp;</span>
+            <span class="s2">acceleratedValues.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">) </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">this.current instanceof HTMLElement</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">{ factory, keyframes, times, ease, duration } = value.accelerate;</span>
+            <span class="s0">const </span><span class="s2">animation = new </span><span class="s5">NativeAnimation</span><span class="s1">(</span><span class="s2">{</span>
+                <span class="s1">element</span><span class="s2">: this.current,</span>
+                <span class="s1">name</span><span class="s2">: key,</span>
+                <span class="s2">keyframes,</span>
+                <span class="s2">times,</span>
+                <span class="s2">ease,</span>
+                <span class="s1">duration</span><span class="s2">: </span><span class="s5">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">duration</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">cleanup = </span><span class="s5">factory</span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">this.valueSubscriptions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">key, () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s5">cleanup</span><span class="s1">()</span><span class="s2">;</span>
+                <span class="s2">animation.</span><span class="s5">cancel</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">valueIsTransform = transformProps.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">valueIsTransform &amp;&amp; this.onBindTransform</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">onBindTransform</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">removeOnChange = value.</span><span class="s5">on</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">change</span><span class="s2">&quot;, (latestValue) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= latestValue;</span>
+            <span class="s2">this.props.onUpdate &amp;&amp; frame.</span><span class="s5">preRender</span><span class="s1">(</span><span class="s2">this.notifyUpdate</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">valueIsTransform &amp;&amp; this.projection</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.projection.isTransformDirty = </span><span class="s6">true</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">this.</span><span class="s5">scheduleRender</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">let </span><span class="s2">removeSyncCheck;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof window !== &quot;</span><span class="s3">undefined</span><span class="s2">&quot; &amp;&amp;</span>
+            <span class="s2">window.MotionCheckAppearSync</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">removeSyncCheck = window.</span><span class="s5">MotionCheckAppearSync</span><span class="s1">(</span><span class="s2">this, key, value</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.valueSubscriptions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">key, () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s5">removeOnChange</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">removeSyncCheck</span><span class="s1">)</span>
+                <span class="s5">removeSyncCheck</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">value.owner</span><span class="s1">)</span>
+                <span class="s2">value.</span><span class="s5">stop</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">sortNodePosition</span><span class="s2">(other) {</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If these nodes aren't even of the same type we can't compare their depth. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.current ||</span>
+            <span class="s2">!this.sortInstanceNodePosition ||</span>
+            <span class="s2">this.type !== other.type</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s7">0</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">this.</span><span class="s5">sortInstanceNodePosition</span><span class="s1">(</span><span class="s2">this.current, other.current</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">updateFeatures</span><span class="s2">() {</span>
+        <span class="s0">let </span><span class="s2">key = &quot;</span><span class="s3">animation</span><span class="s2">&quot;;</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s2">key in featureDefinitions</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">featureDefinition = featureDefinitions</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!featureDefinition</span><span class="s1">)</span>
+                <span class="s0">continue</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ isEnabled, Feature: FeatureConstructor } = featureDefinition;</span>
+            <span class="s2">/**</span>
+             <span class="s4">* If this feature is enabled but not active, make a new instance. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.features</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">FeatureConstructor &amp;&amp;</span>
+                <span class="s5">isEnabled</span><span class="s1">(</span><span class="s2">this.props</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">this.features</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= new </span><span class="s5">FeatureConstructor</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s4">* If we have a feature, mount or update it. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.features</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">feature = this.features</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">feature.isMounted</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">feature.</span><span class="s5">update</span><span class="s1">()</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s0">else </span><span class="s2">{</span>
+                    <span class="s2">feature.</span><span class="s5">mount</span><span class="s1">()</span><span class="s2">;</span>
+                    <span class="s2">feature.isMounted = </span><span class="s6">true</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s5">triggerBuild</span><span class="s2">() {</span>
+        <span class="s2">this.</span><span class="s5">build</span><span class="s1">(</span><span class="s2">this.renderState, this.latestValues, this.props</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Measure the current viewport box with or without transforms. 
+     * Only measures axis-aligned boxes, rotate and skew must be manually 
+     * removed with a re-render to work. 
+     </span><span class="s2">*/</span>
+    <span class="s5">measureViewportBox</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.current</span>
+            <span class="s2">? this.</span><span class="s5">measureInstanceViewportBox</span><span class="s1">(</span><span class="s2">this.current, this.props</span><span class="s1">)</span>
+            <span class="s2">: </span><span class="s5">createBox</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">getStaticValue</span><span class="s2">(key) {</span>
+        <span class="s0">return </span><span class="s2">this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">setStaticValue</span><span class="s2">(key, value) {</span>
+        <span class="s2">this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Update the provided props. Ensure any newly-added motion values are 
+     * added to our map, old ones removed, and listeners updated. 
+     </span><span class="s2">*/</span>
+    <span class="s5">update</span><span class="s2">(props, presenceContext) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">props.transformTemplate || this.props.transformTemplate</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">scheduleRender</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.prevProps = this.props;</span>
+        <span class="s2">this.props = props;</span>
+        <span class="s2">this.prevPresenceContext = this.presenceContext;</span>
+        <span class="s2">this.presenceContext = presenceContext;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Update prop event handlers ie onAnimationStart, onAnimationComplete 
+         </span><span class="s2">*/</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; propEventHandlers.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">key = propEventHandlers</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.propEventSubscriptions</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]) </span><span class="s2">{</span>
+                <span class="s2">this.propEventSubscriptions</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]()</span><span class="s2">;</span>
+                <span class="s2">delete this.propEventSubscriptions</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">listenerName = </span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">on</span><span class="s2">&quot; + key</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">listener = props</span><span class="s1">[</span><span class="s2">listenerName</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">listener</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.propEventSubscriptions</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= this.</span><span class="s5">on</span><span class="s1">(</span><span class="s2">key, listener</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">this.prevMotionValues = </span><span class="s5">updateMotionValuesFromProps</span><span class="s1">(</span><span class="s2">this, this.</span><span class="s5">scrapeMotionValuesFromProps</span><span class="s1">(</span><span class="s2">props, this.prevProps || {}, this</span><span class="s1">)</span><span class="s2">, this.prevMotionValues</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.handleChildMotionValue</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">handleChildMotionValue</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s5">getProps</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.props;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Returns the variant definition with a given name. 
+     </span><span class="s2">*/</span>
+    <span class="s5">getVariant</span><span class="s2">(name) {</span>
+        <span class="s0">return </span><span class="s2">this.props.variants ? this.props.variants</span><span class="s1">[</span><span class="s2">name</span><span class="s1">] </span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Returns the defined default transition on this component. 
+     </span><span class="s2">*/</span>
+    <span class="s5">getDefaultTransition</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.props.transition;</span>
+    <span class="s2">}</span>
+    <span class="s5">getTransformPagePoint</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.props.transformPagePoint;</span>
+    <span class="s2">}</span>
+    <span class="s5">getClosestVariantNode</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.isVariantNode</span>
+            <span class="s2">? this</span>
+            <span class="s2">: this.parent</span>
+                <span class="s2">? this.parent.</span><span class="s5">getClosestVariantNode</span><span class="s1">()</span>
+                <span class="s2">: </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Add a child visual element to our set of children. 
+     </span><span class="s2">*/</span>
+    <span class="s5">addVariantChild</span><span class="s2">(child) {</span>
+        <span class="s0">const </span><span class="s2">closestVariantNode = this.</span><span class="s5">getClosestVariantNode</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">closestVariantNode</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">closestVariantNode.variantChildren &amp;&amp;</span>
+                <span class="s2">closestVariantNode.variantChildren.</span><span class="s5">add</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">closestVariantNode.variantChildren.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">child</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Add a motion value and bind it to this visual element. 
+     </span><span class="s2">*/</span>
+    <span class="s5">addValue</span><span class="s2">(key, value) {</span>
+        <span class="s2">// </span><span class="s4">Remove existing value if it exists</span>
+        <span class="s0">const </span><span class="s2">existingValue = this.values.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">value !== existingValue</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">existingValue</span><span class="s1">)</span>
+                <span class="s2">this.</span><span class="s5">removeValue</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s5">bindToMotionValue</span><span class="s1">(</span><span class="s2">key, value</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">this.values.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">key, value</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value.</span><span class="s5">get</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Remove a motion value and unbind any active subscriptions. 
+     </span><span class="s2">*/</span>
+    <span class="s5">removeValue</span><span class="s2">(key) {</span>
+        <span class="s2">this.values.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">unsubscribe = this.valueSubscriptions.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">unsubscribe</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s5">unsubscribe</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">this.valueSubscriptions.</span><span class="s5">delete</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">delete this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">removeValueFromRenderState</span><span class="s1">(</span><span class="s2">key, this.renderState</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Check whether we have a motion value for this key 
+     </span><span class="s2">*/</span>
+    <span class="s5">hasValue</span><span class="s2">(key) {</span>
+        <span class="s0">return </span><span class="s2">this.values.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">getValue</span><span class="s2">(key, defaultValue) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.props.values &amp;&amp; this.props.values</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">this.props.values</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">let </span><span class="s2">value = this.values.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">value === </span><span class="s6">undefined </span><span class="s2">&amp;&amp; defaultValue !== </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">value = </span><span class="s5">motionValue</span><span class="s1">(</span><span class="s2">defaultValue === </span><span class="s6">null </span><span class="s2">? </span><span class="s6">undefined </span><span class="s2">: defaultValue, { </span><span class="s1">owner</span><span class="s2">: this }</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s5">addValue</span><span class="s1">(</span><span class="s2">key, value</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">value;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* If we're trying to animate to a previously unencountered value, 
+     * we need to check for it in our state and as a last resort read it 
+     * directly from the instance (which might have performance implications). 
+     </span><span class="s2">*/</span>
+    <span class="s5">readValue</span><span class="s2">(key, target) {</span>
+        <span class="s0">let </span><span class="s2">value = this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">!== </span><span class="s6">undefined </span><span class="s2">|| !this.current</span>
+            <span class="s2">? this.latestValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span>
+            <span class="s2">: this.</span><span class="s5">getBaseTargetFromProps</span><span class="s1">(</span><span class="s2">this.props, key</span><span class="s1">) </span><span class="s2">??</span>
+                <span class="s2">this.</span><span class="s5">readValueFromInstance</span><span class="s1">(</span><span class="s2">this.current, key, this.options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">value !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; value !== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof value === &quot;</span><span class="s3">string</span><span class="s2">&quot; &amp;&amp;</span>
+                <span class="s1">(</span><span class="s5">isNumericalString</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">|| </span><span class="s5">isZeroValueString</span><span class="s1">(</span><span class="s2">value</span><span class="s1">))) </span><span class="s2">{</span>
+                <span class="s2">// </span><span class="s4">If this is a number read as a string, ie &quot;0&quot; or &quot;200&quot;, convert it to a number</span>
+                <span class="s2">value = </span><span class="s5">parseFloat</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">else if </span><span class="s1">(</span><span class="s2">!</span><span class="s5">findValueType</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">&amp;&amp; complex.</span><span class="s5">test</span><span class="s1">(</span><span class="s2">target</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">value = </span><span class="s5">getAnimatableNone</span><span class="s1">(</span><span class="s2">key, target</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">this.</span><span class="s5">setBaseTarget</span><span class="s1">(</span><span class="s2">key, </span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">? value.</span><span class="s5">get</span><span class="s1">() </span><span class="s2">: value</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">? value.</span><span class="s5">get</span><span class="s1">() </span><span class="s2">: value;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Set the base target to later animate back to. This is currently 
+     * only hydrated on creation and when we first read a value. 
+     </span><span class="s2">*/</span>
+    <span class="s5">setBaseTarget</span><span class="s2">(key, value) {</span>
+        <span class="s2">this.baseTarget</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= value;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Find the base target for a value thats been removed from all animation 
+     * props. 
+     </span><span class="s2">*/</span>
+    <span class="s5">getBaseTarget</span><span class="s2">(key) {</span>
+        <span class="s0">const </span><span class="s2">{ initial } = this.props;</span>
+        <span class="s0">let </span><span class="s2">valueFromInitial;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof initial === &quot;</span><span class="s3">string</span><span class="s2">&quot; || typeof initial === &quot;</span><span class="s3">object</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">variant = </span><span class="s5">resolveVariantFromProps</span><span class="s1">(</span><span class="s2">this.props, initial, this.presenceContext?.custom</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">variant</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">valueFromInitial = variant</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If this value still exists in the current initial variant, read that. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">initial &amp;&amp; valueFromInitial !== </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">valueFromInitial;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Alternatively, if this VisualElement config has defined a getBaseTarget 
+         * so we can read the value from an alternative source, try that. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">target = this.</span><span class="s5">getBaseTargetFromProps</span><span class="s1">(</span><span class="s2">this.props, key</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">target !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; !</span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">target</span><span class="s1">))</span>
+            <span class="s0">return </span><span class="s2">target;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* If the value was initially defined on initial, but it doesn't any more, 
+         * return undefined. Otherwise return the value as initially read from the DOM. 
+         </span><span class="s2">*/</span>
+        <span class="s0">return </span><span class="s2">this.initialValues</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">!== </span><span class="s6">undefined </span><span class="s2">&amp;&amp;</span>
+            <span class="s2">valueFromInitial === </span><span class="s6">undefined</span>
+            <span class="s2">? </span><span class="s6">undefined</span>
+            <span class="s2">: this.baseTarget</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">on</span><span class="s2">(eventName, callback) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.events</span><span class="s1">[</span><span class="s2">eventName</span><span class="s1">]) </span><span class="s2">{</span>
+            <span class="s2">this.events</span><span class="s1">[</span><span class="s2">eventName</span><span class="s1">] </span><span class="s2">= new </span><span class="s5">SubscriptionManager</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">this.events</span><span class="s1">[</span><span class="s2">eventName</span><span class="s1">]</span><span class="s2">.</span><span class="s5">add</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">notify</span><span class="s2">(eventName, ...args) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.events</span><span class="s1">[</span><span class="s2">eventName</span><span class="s1">]) </span><span class="s2">{</span>
+            <span class="s2">this.events</span><span class="s1">[</span><span class="s2">eventName</span><span class="s1">]</span><span class="s2">.</span><span class="s5">notify</span><span class="s1">(</span><span class="s2">...args</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s5">scheduleRenderMicrotask</span><span class="s2">() {</span>
+        <span class="s2">microtask.</span><span class="s5">render</span><span class="s1">(</span><span class="s2">this.render</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ VisualElement, getFeatureDefinitions, setFeatureDefinitions };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=VisualElement.mjs.map</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,334 @@
+<html>
+<head>
+<title>detect-libc.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+detect-libc.js</font>
+</center></td></tr></table>
+<pre><span class="s0">// Copyright 2017 Lovell Fuller and others.</span>
+<span class="s0">// SPDX-License-Identifier: Apache-2.0</span>
+
+<span class="s2">'use strict'</span><span class="s1">;</span>
+
+<span class="s1">const childProcess = require(</span><span class="s2">'child_process'</span><span class="s1">);</span>
+<span class="s1">const { isLinux, getReport } = require(</span><span class="s2">'./process'</span><span class="s1">);</span>
+<span class="s1">const { LDD_PATH, SELF_PATH, readFile, readFileSync } = require(</span><span class="s2">'./filesystem'</span><span class="s1">);</span>
+<span class="s1">const { interpreterPath } = require(</span><span class="s2">'./elf'</span><span class="s1">);</span>
+
+<span class="s1">let cachedFamilyInterpreter;</span>
+<span class="s1">let cachedFamilyFilesystem;</span>
+<span class="s1">let cachedVersionFilesystem;</span>
+
+<span class="s1">const command = </span><span class="s2">'getconf GNU_LIBC_VERSION 2&gt;&amp;1 || true; ldd --version 2&gt;&amp;1 || true'</span><span class="s1">;</span>
+<span class="s1">let commandOut = </span><span class="s2">''</span><span class="s1">;</span>
+
+<span class="s1">const safeCommand = () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(!commandOut) {</span>
+    <span class="s3">return new </span><span class="s1">Promise((resolve) =&gt; {</span>
+      <span class="s1">childProcess.exec(command, (err, out) =&gt; {</span>
+        <span class="s1">commandOut = err ? </span><span class="s2">' ' </span><span class="s1">: out;</span>
+        <span class="s1">resolve(commandOut);</span>
+      <span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">commandOut;</span>
+<span class="s1">};</span>
+
+<span class="s1">const safeCommandSync = () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(!commandOut) {</span>
+    <span class="s3">try </span><span class="s1">{</span>
+      <span class="s1">commandOut = childProcess.execSync(command, { encoding: </span><span class="s2">'utf8' </span><span class="s1">});</span>
+    <span class="s1">} </span><span class="s3">catch </span><span class="s1">(_err) {</span>
+      <span class="s1">commandOut = </span><span class="s2">' '</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">commandOut;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * A String constant containing the value `glibc`. 
+ * @type {string} 
+ * @public 
+ */</span>
+<span class="s1">const GLIBC = </span><span class="s2">'glibc'</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * A Regexp constant to get the GLIBC Version. 
+ * @type {string} 
+ */</span>
+<span class="s1">const RE_GLIBC_VERSION = /LIBC[a-z0-9 \-).]*?(\d+\.\d+)/i;</span>
+
+<span class="s0">/** 
+ * A String constant containing the value `musl`. 
+ * @type {string} 
+ * @public 
+ */</span>
+<span class="s1">const MUSL = </span><span class="s2">'musl'</span><span class="s1">;</span>
+
+<span class="s1">const isFileMusl = (f) =&gt; f.includes(</span><span class="s2">'libc.musl-'</span><span class="s1">) || f.includes(</span><span class="s2">'ld-musl-'</span><span class="s1">);</span>
+
+<span class="s1">const familyFromReport = () =&gt; {</span>
+  <span class="s1">const report = getReport();</span>
+  <span class="s3">if </span><span class="s1">(report.header &amp;&amp; report.header.glibcVersionRuntime) {</span>
+    <span class="s3">return </span><span class="s1">GLIBC;</span>
+  <span class="s1">}</span>
+  <span class="s3">if </span><span class="s1">(Array.isArray(report.sharedObjects)) {</span>
+    <span class="s3">if </span><span class="s1">(report.sharedObjects.some(isFileMusl)) {</span>
+      <span class="s3">return </span><span class="s1">MUSL;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromCommand = (out) =&gt; {</span>
+  <span class="s1">const [getconf, ldd1] = out.split(/[\r\n]+/);</span>
+  <span class="s3">if </span><span class="s1">(getconf &amp;&amp; getconf.includes(GLIBC)) {</span>
+    <span class="s3">return </span><span class="s1">GLIBC;</span>
+  <span class="s1">}</span>
+  <span class="s3">if </span><span class="s1">(ldd1 &amp;&amp; ldd1.includes(MUSL)) {</span>
+    <span class="s3">return </span><span class="s1">MUSL;</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromInterpreterPath = (path) =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(path) {</span>
+    <span class="s3">if </span><span class="s1">(path.includes(</span><span class="s2">'/ld-musl-'</span><span class="s1">)) {</span>
+      <span class="s3">return </span><span class="s1">MUSL;</span>
+    <span class="s1">} </span><span class="s3">else if </span><span class="s1">(path.includes(</span><span class="s2">'/ld-linux-'</span><span class="s1">)) {</span>
+      <span class="s3">return </span><span class="s1">GLIBC;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">const getFamilyFromLddContent = (content) =&gt; {</span>
+  <span class="s1">content = content.toString();</span>
+  <span class="s3">if </span><span class="s1">(content.includes(</span><span class="s2">'musl'</span><span class="s1">)) {</span>
+    <span class="s3">return </span><span class="s1">MUSL;</span>
+  <span class="s1">}</span>
+  <span class="s3">if </span><span class="s1">(content.includes(</span><span class="s2">'GNU C Library'</span><span class="s1">)) {</span>
+    <span class="s3">return </span><span class="s1">GLIBC;</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromFilesystem = async () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedFamilyFilesystem !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedFamilyFilesystem;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedFamilyFilesystem = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const lddContent = await readFile(LDD_PATH);</span>
+    <span class="s1">cachedFamilyFilesystem = getFamilyFromLddContent(lddContent);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedFamilyFilesystem;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromFilesystemSync = () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedFamilyFilesystem !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedFamilyFilesystem;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedFamilyFilesystem = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const lddContent = readFileSync(LDD_PATH);</span>
+    <span class="s1">cachedFamilyFilesystem = getFamilyFromLddContent(lddContent);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedFamilyFilesystem;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromInterpreter = async () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedFamilyInterpreter !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedFamilyInterpreter;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedFamilyInterpreter = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const selfContent = await readFile(SELF_PATH);</span>
+    <span class="s1">const path = interpreterPath(selfContent);</span>
+    <span class="s1">cachedFamilyInterpreter = familyFromInterpreterPath(path);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedFamilyInterpreter;</span>
+<span class="s1">};</span>
+
+<span class="s1">const familyFromInterpreterSync = () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedFamilyInterpreter !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedFamilyInterpreter;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedFamilyInterpreter = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const selfContent = readFileSync(SELF_PATH);</span>
+    <span class="s1">const path = interpreterPath(selfContent);</span>
+    <span class="s1">cachedFamilyInterpreter = familyFromInterpreterPath(path);</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedFamilyInterpreter;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Resolves with the libc family when it can be determined, `null` otherwise. 
+ * @returns {Promise&lt;?string&gt;} 
+ */</span>
+<span class="s1">const family = async () =&gt; {</span>
+  <span class="s1">let family = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">if </span><span class="s1">(isLinux()) {</span>
+    <span class="s1">family = await familyFromInterpreter();</span>
+    <span class="s3">if </span><span class="s1">(!family) {</span>
+      <span class="s1">family = await familyFromFilesystem();</span>
+      <span class="s3">if </span><span class="s1">(!family) {</span>
+        <span class="s1">family = familyFromReport();</span>
+      <span class="s1">}</span>
+      <span class="s3">if </span><span class="s1">(!family) {</span>
+        <span class="s1">const out = await safeCommand();</span>
+        <span class="s1">family = familyFromCommand(out);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">family;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the libc family when it can be determined, `null` otherwise. 
+ * @returns {?string} 
+ */</span>
+<span class="s1">const familySync = () =&gt; {</span>
+  <span class="s1">let family = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">if </span><span class="s1">(isLinux()) {</span>
+    <span class="s1">family = familyFromInterpreterSync();</span>
+    <span class="s3">if </span><span class="s1">(!family) {</span>
+      <span class="s1">family = familyFromFilesystemSync();</span>
+      <span class="s3">if </span><span class="s1">(!family) {</span>
+        <span class="s1">family = familyFromReport();</span>
+      <span class="s1">}</span>
+      <span class="s3">if </span><span class="s1">(!family) {</span>
+        <span class="s1">const out = safeCommandSync();</span>
+        <span class="s1">family = familyFromCommand(out);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">family;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Resolves `true` only when the platform is Linux and the libc family is not `glibc`. 
+ * @returns {Promise&lt;boolean&gt;} 
+ */</span>
+<span class="s1">const isNonGlibcLinux = async () =&gt; isLinux() &amp;&amp; await family() !== GLIBC;</span>
+
+<span class="s0">/** 
+ * Returns `true` only when the platform is Linux and the libc family is not `glibc`. 
+ * @returns {boolean} 
+ */</span>
+<span class="s1">const isNonGlibcLinuxSync = () =&gt; isLinux() &amp;&amp; familySync() !== GLIBC;</span>
+
+<span class="s1">const versionFromFilesystem = async () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedVersionFilesystem !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedVersionFilesystem;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedVersionFilesystem = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const lddContent = await readFile(LDD_PATH);</span>
+    <span class="s1">const versionMatch = lddContent.match(RE_GLIBC_VERSION);</span>
+    <span class="s3">if </span><span class="s1">(versionMatch) {</span>
+      <span class="s1">cachedVersionFilesystem = versionMatch[</span><span class="s4">1</span><span class="s1">];</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedVersionFilesystem;</span>
+<span class="s1">};</span>
+
+<span class="s1">const versionFromFilesystemSync = () =&gt; {</span>
+  <span class="s3">if </span><span class="s1">(cachedVersionFilesystem !== undefined) {</span>
+    <span class="s3">return </span><span class="s1">cachedVersionFilesystem;</span>
+  <span class="s1">}</span>
+  <span class="s1">cachedVersionFilesystem = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s1">const lddContent = readFileSync(LDD_PATH);</span>
+    <span class="s1">const versionMatch = lddContent.match(RE_GLIBC_VERSION);</span>
+    <span class="s3">if </span><span class="s1">(versionMatch) {</span>
+      <span class="s1">cachedVersionFilesystem = versionMatch[</span><span class="s4">1</span><span class="s1">];</span>
+    <span class="s1">}</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(e) {}</span>
+  <span class="s3">return </span><span class="s1">cachedVersionFilesystem;</span>
+<span class="s1">};</span>
+
+<span class="s1">const versionFromReport = () =&gt; {</span>
+  <span class="s1">const report = getReport();</span>
+  <span class="s3">if </span><span class="s1">(report.header &amp;&amp; report.header.glibcVersionRuntime) {</span>
+    <span class="s3">return </span><span class="s1">report.header.glibcVersionRuntime;</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">const versionSuffix = (s) =&gt; s.trim().split(/\s+/)[</span><span class="s4">1</span><span class="s1">];</span>
+
+<span class="s1">const versionFromCommand = (out) =&gt; {</span>
+  <span class="s1">const [getconf, ldd1, ldd2] = out.split(/[\r\n]+/);</span>
+  <span class="s3">if </span><span class="s1">(getconf &amp;&amp; getconf.includes(GLIBC)) {</span>
+    <span class="s3">return </span><span class="s1">versionSuffix(getconf);</span>
+  <span class="s1">}</span>
+  <span class="s3">if </span><span class="s1">(ldd1 &amp;&amp; ldd2 &amp;&amp; ldd1.includes(MUSL)) {</span>
+    <span class="s3">return </span><span class="s1">versionSuffix(ldd2);</span>
+  <span class="s1">}</span>
+  <span class="s3">return null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Resolves with the libc version when it can be determined, `null` otherwise. 
+ * @returns {Promise&lt;?string&gt;} 
+ */</span>
+<span class="s1">const version = async () =&gt; {</span>
+  <span class="s1">let version = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">if </span><span class="s1">(isLinux()) {</span>
+    <span class="s1">version = await versionFromFilesystem();</span>
+    <span class="s3">if </span><span class="s1">(!version) {</span>
+      <span class="s1">version = versionFromReport();</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(!version) {</span>
+      <span class="s1">const out = await safeCommand();</span>
+      <span class="s1">version = versionFromCommand(out);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">version;</span>
+<span class="s1">};</span>
+
+<span class="s0">/** 
+ * Returns the libc version when it can be determined, `null` otherwise. 
+ * @returns {?string} 
+ */</span>
+<span class="s1">const versionSync = () =&gt; {</span>
+  <span class="s1">let version = </span><span class="s3">null</span><span class="s1">;</span>
+  <span class="s3">if </span><span class="s1">(isLinux()) {</span>
+    <span class="s1">version = versionFromFilesystemSync();</span>
+    <span class="s3">if </span><span class="s1">(!version) {</span>
+      <span class="s1">version = versionFromReport();</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(!version) {</span>
+      <span class="s1">const out = safeCommandSync();</span>
+      <span class="s1">version = versionFromCommand(out);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s3">return </span><span class="s1">version;</span>
+<span class="s1">};</span>
+
+<span class="s1">module.exports = {</span>
+  <span class="s1">GLIBC,</span>
+  <span class="s1">MUSL,</span>
+  <span class="s1">family,</span>
+  <span class="s1">familySync,</span>
+  <span class="s1">isNonGlibcLinux,</span>
+  <span class="s1">isNonGlibcLinuxSync,</span>
+  <span class="s1">version,</span>
+  <span class="s1">versionSync</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

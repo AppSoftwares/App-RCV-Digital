@@ -1,0 +1,284 @@
+<html>
+<head>
+<title>webauthn.errors.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+webauthn.errors.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* eslint-disable @typescript-eslint/ban-ts-comment */</span>
+<span class="s1">import { isValidDomain } from </span><span class="s2">'./webauthn'</span><span class="s1">;</span>
+<span class="s0">/** 
+ * A custom Error used to return a more nuanced error detailing _why_ one of the eight documented 
+ * errors in the spec was raised after calling `navigator.credentials.create()` or 
+ * `navigator.credentials.get()`: 
+ * 
+ * - `AbortError` 
+ * - `ConstraintError` 
+ * - `InvalidStateError` 
+ * - `NotAllowedError` 
+ * - `NotSupportedError` 
+ * - `SecurityError` 
+ * - `TypeError` 
+ * - `UnknownError` 
+ * 
+ * Error messages were determined through investigation of the spec to determine under which 
+ * scenarios a given error would be raised. 
+ */</span>
+<span class="s1">export class WebAuthnError extends Error {</span>
+    <span class="s1">constructor({ message, code, cause, name, }) {</span>
+        <span class="s3">var </span><span class="s1">_a;</span>
+        <span class="s0">// @ts-ignore: help Rollup understand that `cause` is okay to set</span>
+        <span class="s1">super(message, { cause });</span>
+        <span class="s3">this</span><span class="s1">.__isWebAuthnError = </span><span class="s3">true</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.name = (_a = name !== </span><span class="s3">null </span><span class="s1">&amp;&amp; name !== </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">? name : (cause </span><span class="s3">instanceof </span><span class="s1">Error ? cause.name : undefined)) !== </span><span class="s3">null </span><span class="s1">&amp;&amp; _a !== </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">? _a : </span><span class="s2">'Unknown Error'</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.code = code;</span>
+    <span class="s1">}</span>
+    <span class="s1">toJSON() {</span>
+        <span class="s3">return </span><span class="s1">{</span>
+            <span class="s1">name: </span><span class="s3">this</span><span class="s1">.name,</span>
+            <span class="s1">message: </span><span class="s3">this</span><span class="s1">.message,</span>
+            <span class="s1">code: </span><span class="s3">this</span><span class="s1">.code,</span>
+        <span class="s1">};</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Error class for unknown WebAuthn errors. 
+ * Wraps unexpected errors that don't match known WebAuthn error conditions. 
+ */</span>
+<span class="s1">export class WebAuthnUnknownError extends WebAuthnError {</span>
+    <span class="s1">constructor(message, originalError) {</span>
+        <span class="s1">super({</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'</span><span class="s1">,</span>
+            <span class="s1">cause: originalError,</span>
+            <span class="s1">message,</span>
+        <span class="s1">});</span>
+        <span class="s3">this</span><span class="s1">.name = </span><span class="s2">'WebAuthnUnknownError'</span><span class="s1">;</span>
+        <span class="s3">this</span><span class="s1">.originalError = originalError;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Type guard to check if an error is a WebAuthnError. 
+ * @param {unknown} error - The error to check 
+ * @returns {boolean} True if the error is a WebAuthnError 
+ */</span>
+<span class="s1">export </span><span class="s3">function </span><span class="s1">isWebAuthnError(error) {</span>
+    <span class="s3">return typeof </span><span class="s1">error === </span><span class="s2">'object' </span><span class="s1">&amp;&amp; error !== </span><span class="s3">null </span><span class="s1">&amp;&amp; </span><span class="s2">'__isWebAuthnError' </span><span class="s3">in </span><span class="s1">error;</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Attempt to intuit _why_ an error was raised after calling `navigator.credentials.create()`. 
+ * Maps browser errors to specific WebAuthn error codes for better debugging. 
+ * @param {Object} params - Error identification parameters 
+ * @param {Error} params.error - The error thrown by the browser 
+ * @param {CredentialCreationOptions} params.options - The options passed to credentials.create() 
+ * @returns {WebAuthnError} A WebAuthnError with a specific error code 
+ * @see {@link https://w3c.github.io/webauthn/#sctn-createCredential W3C WebAuthn Spec - Create Credential} 
+ */</span>
+<span class="s1">export </span><span class="s3">function </span><span class="s1">identifyRegistrationError({ error, options, }) {</span>
+    <span class="s3">var </span><span class="s1">_a, _b, _c;</span>
+    <span class="s1">const { publicKey } = options;</span>
+    <span class="s3">if </span><span class="s1">(!publicKey) {</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s2">'options was missing required publicKey property'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(error.name === </span><span class="s2">'AbortError'</span><span class="s1">) {</span>
+        <span class="s3">if </span><span class="s1">(options.signal </span><span class="s3">instanceof </span><span class="s1">AbortSignal) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 16)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'Registration ceremony was sent an abort signal'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_CEREMONY_ABORTED'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'ConstraintError'</span><span class="s1">) {</span>
+        <span class="s3">if </span><span class="s1">(((_a = publicKey.authenticatorSelection) === </span><span class="s3">null </span><span class="s1">|| _a === </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">? </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">: _a.requireResidentKey) === </span><span class="s3">true</span><span class="s1">) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 4)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'Discoverable credentials were required but no available authenticator supported it'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_MISSING_DISCOVERABLE_CREDENTIAL_SUPPORT'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span>
+        <span class="s0">// @ts-ignore: `mediation` doesn't yet exist on CredentialCreationOptions but it's possible as of Sept 2024</span>
+        <span class="s1">options.mediation === </span><span class="s2">'conditional' </span><span class="s1">&amp;&amp;</span>
+            <span class="s1">((_b = publicKey.authenticatorSelection) === </span><span class="s3">null </span><span class="s1">|| _b === </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">? </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">: _b.userVerification) === </span><span class="s2">'required'</span><span class="s1">) {</span>
+            <span class="s0">// https://w3c.github.io/webauthn/#sctn-createCredential (Step 22.4)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'User verification was required during automatic registration but it could not be performed'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_AUTO_REGISTER_USER_VERIFICATION_FAILURE'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(((_c = publicKey.authenticatorSelection) === </span><span class="s3">null </span><span class="s1">|| _c === </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">? </span><span class="s3">void </span><span class="s4">0 </span><span class="s1">: _c.userVerification) === </span><span class="s2">'required'</span><span class="s1">) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 5)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'User verification was required but no available authenticator supported it'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_MISSING_USER_VERIFICATION_SUPPORT'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'InvalidStateError'</span><span class="s1">) {</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 20)</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 3)</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: </span><span class="s2">'The authenticator was previously registered'</span><span class="s1">,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'NotAllowedError'</span><span class="s1">) {</span>
+        <span class="s0">/** 
+         * Pass the error directly through. Platforms are overloading this error beyond what the spec 
+         * defines and we don't want to overwrite potentially useful error messages. 
+         */</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: error.message,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'NotSupportedError'</span><span class="s1">) {</span>
+        <span class="s1">const validPubKeyCredParams = publicKey.pubKeyCredParams.filter((param) =&gt; param.type === </span><span class="s2">'public-key'</span><span class="s1">);</span>
+        <span class="s3">if </span><span class="s1">(validPubKeyCredParams.length === </span><span class="s4">0</span><span class="s1">) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 10)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'No entry in pubKeyCredParams was of type &quot;public-key&quot;'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_MALFORMED_PUBKEYCREDPARAMS'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 2)</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: </span><span class="s2">'No available authenticator supported any of the specified pubKeyCredParams algorithms'</span><span class="s1">,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_NO_SUPPORTED_PUBKEYCREDPARAMS_ALG'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'SecurityError'</span><span class="s1">) {</span>
+        <span class="s1">const effectiveDomain = window.location.hostname;</span>
+        <span class="s3">if </span><span class="s1">(!isValidDomain(effectiveDomain)) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 7)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: `${window.location.hostname} is an invalid domain`,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_INVALID_DOMAIN'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(publicKey.rp.id !== effectiveDomain) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 8)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: `The RP ID </span><span class="s2">&quot;${publicKey.rp.id}&quot; </span><span class="s1">is invalid </span><span class="s3">for this </span><span class="s1">domain`,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_INVALID_RP_ID'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'TypeError'</span><span class="s1">) {</span>
+        <span class="s3">if </span><span class="s1">(publicKey.user.id.byteLength &lt; </span><span class="s4">1 </span><span class="s1">|| publicKey.user.id.byteLength &gt; </span><span class="s4">64</span><span class="s1">) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 5)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'User ID was not between 1 and 64 characters'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_INVALID_USER_ID_LENGTH'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'UnknownError'</span><span class="s1">) {</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 1)</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-make-cred (Step 8)</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: </span><span class="s2">'The authenticator was unable to process the specified options, or could not create a new credential'</span><span class="s1">,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_GENERAL_ERROR'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+        <span class="s1">message: </span><span class="s2">'a Non-Webauthn related error has occurred'</span><span class="s1">,</span>
+        <span class="s1">code: </span><span class="s2">'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'</span><span class="s1">,</span>
+        <span class="s1">cause: error,</span>
+    <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s0">/** 
+ * Attempt to intuit _why_ an error was raised after calling `navigator.credentials.get()`. 
+ * Maps browser errors to specific WebAuthn error codes for better debugging. 
+ * @param {Object} params - Error identification parameters 
+ * @param {Error} params.error - The error thrown by the browser 
+ * @param {CredentialRequestOptions} params.options - The options passed to credentials.get() 
+ * @returns {WebAuthnError} A WebAuthnError with a specific error code 
+ * @see {@link https://w3c.github.io/webauthn/#sctn-getAssertion W3C WebAuthn Spec - Get Assertion} 
+ */</span>
+<span class="s1">export </span><span class="s3">function </span><span class="s1">identifyAuthenticationError({ error, options, }) {</span>
+    <span class="s1">const { publicKey } = options;</span>
+    <span class="s3">if </span><span class="s1">(!publicKey) {</span>
+        <span class="s3">throw </span><span class="s1">Error(</span><span class="s2">'options was missing required publicKey property'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">if </span><span class="s1">(error.name === </span><span class="s2">'AbortError'</span><span class="s1">) {</span>
+        <span class="s3">if </span><span class="s1">(options.signal </span><span class="s3">instanceof </span><span class="s1">AbortSignal) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-createCredential (Step 16)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: </span><span class="s2">'Authentication ceremony was sent an abort signal'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_CEREMONY_ABORTED'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'NotAllowedError'</span><span class="s1">) {</span>
+        <span class="s0">/** 
+         * Pass the error directly through. Platforms are overloading this error beyond what the spec 
+         * defines and we don't want to overwrite potentially useful error messages. 
+         */</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: error.message,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'SecurityError'</span><span class="s1">) {</span>
+        <span class="s1">const effectiveDomain = window.location.hostname;</span>
+        <span class="s3">if </span><span class="s1">(!isValidDomain(effectiveDomain)) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-discover-from-external-source (Step 5)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: `${window.location.hostname} is an invalid domain`,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_INVALID_DOMAIN'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(publicKey.rpId !== effectiveDomain) {</span>
+            <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-discover-from-external-source (Step 6)</span>
+            <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+                <span class="s1">message: `The RP ID </span><span class="s2">&quot;${publicKey.rpId}&quot; </span><span class="s1">is invalid </span><span class="s3">for this </span><span class="s1">domain`,</span>
+                <span class="s1">code: </span><span class="s2">'ERROR_INVALID_RP_ID'</span><span class="s1">,</span>
+                <span class="s1">cause: error,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">else if </span><span class="s1">(error.name === </span><span class="s2">'UnknownError'</span><span class="s1">) {</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-get-assertion (Step 1)</span>
+        <span class="s0">// https://www.w3.org/TR/webauthn-2/#sctn-op-get-assertion (Step 12)</span>
+        <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+            <span class="s1">message: </span><span class="s2">'The authenticator was unable to process the specified options, or could not create a new assertion signature'</span><span class="s1">,</span>
+            <span class="s1">code: </span><span class="s2">'ERROR_AUTHENTICATOR_GENERAL_ERROR'</span><span class="s1">,</span>
+            <span class="s1">cause: error,</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+    <span class="s3">return new </span><span class="s1">WebAuthnError({</span>
+        <span class="s1">message: </span><span class="s2">'a Non-Webauthn related error has occurred'</span><span class="s1">,</span>
+        <span class="s1">code: </span><span class="s2">'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'</span><span class="s1">,</span>
+        <span class="s1">cause: error,</span>
+    <span class="s1">});</span>
+<span class="s1">}</span>
+<span class="s0">//# sourceMappingURL=webauthn.errors.js.map</span></pre>
+</body>
+</html>

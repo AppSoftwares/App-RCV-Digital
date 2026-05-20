@@ -1,0 +1,734 @@
+<html>
+<head>
+<title>RealtimeChannel.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+RealtimeChannel.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import { CHANNEL_EVENTS, CHANNEL_STATES } from </span><span class="s1">'./lib/constants'</span><span class="s0">;</span>
+<span class="s0">import RealtimePresence from </span><span class="s1">'./RealtimePresence'</span><span class="s0">;</span>
+<span class="s0">import * as Transformers from </span><span class="s1">'./lib/transformers'</span><span class="s0">;</span>
+<span class="s0">import { httpEndpointURL } from </span><span class="s1">'./lib/transformers'</span><span class="s0">;</span>
+<span class="s0">import { normalizeChannelError } from </span><span class="s1">'./lib/normalizeChannelError'</span><span class="s0">;</span>
+<span class="s0">import ChannelAdapter from </span><span class="s1">'./phoenix/channelAdapter'</span><span class="s0">;</span>
+<span class="s0">export </span><span class="s2">var </span><span class="s0">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT;</span>
+<span class="s0">(</span><span class="s2">function </span><span class="s0">(REALTIME_POSTGRES_CHANGES_LISTEN_EVENT) {</span>
+    <span class="s0">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT[</span><span class="s1">&quot;ALL&quot;</span><span class="s0">] = </span><span class="s1">&quot;*&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT[</span><span class="s1">&quot;INSERT&quot;</span><span class="s0">] = </span><span class="s1">&quot;INSERT&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT[</span><span class="s1">&quot;UPDATE&quot;</span><span class="s0">] = </span><span class="s1">&quot;UPDATE&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_POSTGRES_CHANGES_LISTEN_EVENT[</span><span class="s1">&quot;DELETE&quot;</span><span class="s0">] = </span><span class="s1">&quot;DELETE&quot;</span><span class="s0">;</span>
+<span class="s0">})(REALTIME_POSTGRES_CHANGES_LISTEN_EVENT || (REALTIME_POSTGRES_CHANGES_LISTEN_EVENT = {}));</span>
+<span class="s0">export </span><span class="s2">var </span><span class="s0">REALTIME_LISTEN_TYPES;</span>
+<span class="s0">(</span><span class="s2">function </span><span class="s0">(REALTIME_LISTEN_TYPES) {</span>
+    <span class="s0">REALTIME_LISTEN_TYPES[</span><span class="s1">&quot;BROADCAST&quot;</span><span class="s0">] = </span><span class="s1">&quot;broadcast&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_LISTEN_TYPES[</span><span class="s1">&quot;PRESENCE&quot;</span><span class="s0">] = </span><span class="s1">&quot;presence&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_LISTEN_TYPES[</span><span class="s1">&quot;POSTGRES_CHANGES&quot;</span><span class="s0">] = </span><span class="s1">&quot;postgres_changes&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_LISTEN_TYPES[</span><span class="s1">&quot;SYSTEM&quot;</span><span class="s0">] = </span><span class="s1">&quot;system&quot;</span><span class="s0">;</span>
+<span class="s0">})(REALTIME_LISTEN_TYPES || (REALTIME_LISTEN_TYPES = {}));</span>
+<span class="s0">export </span><span class="s2">var </span><span class="s0">REALTIME_SUBSCRIBE_STATES;</span>
+<span class="s0">(</span><span class="s2">function </span><span class="s0">(REALTIME_SUBSCRIBE_STATES) {</span>
+    <span class="s0">REALTIME_SUBSCRIBE_STATES[</span><span class="s1">&quot;SUBSCRIBED&quot;</span><span class="s0">] = </span><span class="s1">&quot;SUBSCRIBED&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_SUBSCRIBE_STATES[</span><span class="s1">&quot;TIMED_OUT&quot;</span><span class="s0">] = </span><span class="s1">&quot;TIMED_OUT&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_SUBSCRIBE_STATES[</span><span class="s1">&quot;CLOSED&quot;</span><span class="s0">] = </span><span class="s1">&quot;CLOSED&quot;</span><span class="s0">;</span>
+    <span class="s0">REALTIME_SUBSCRIBE_STATES[</span><span class="s1">&quot;CHANNEL_ERROR&quot;</span><span class="s0">] = </span><span class="s1">&quot;CHANNEL_ERROR&quot;</span><span class="s0">;</span>
+<span class="s0">})(REALTIME_SUBSCRIBE_STATES || (REALTIME_SUBSCRIBE_STATES = {}));</span>
+<span class="s0">export const REALTIME_CHANNEL_STATES = CHANNEL_STATES;</span>
+<span class="s3">/** A channel is the basic building block of Realtime 
+ * and narrows the scope of data flow to subscribed clients. 
+ * You can think of a channel as a chatroom where participants are able to see who's online 
+ * and send and receive messages. 
+ */</span>
+<span class="s0">export </span><span class="s2">default </span><span class="s0">class RealtimeChannel {</span>
+    <span class="s0">get state() {</span>
+        <span class="s2">return this</span><span class="s0">.channelAdapter.state;</span>
+    <span class="s0">}</span>
+    <span class="s0">set state(state) {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.state = state;</span>
+    <span class="s0">}</span>
+    <span class="s0">get joinedOnce() {</span>
+        <span class="s2">return this</span><span class="s0">.channelAdapter.joinedOnce;</span>
+    <span class="s0">}</span>
+    <span class="s0">get timeout() {</span>
+        <span class="s2">return this</span><span class="s0">.socket.timeout;</span>
+    <span class="s0">}</span>
+    <span class="s0">get joinPush() {</span>
+        <span class="s2">return this</span><span class="s0">.channelAdapter.joinPush;</span>
+    <span class="s0">}</span>
+    <span class="s0">get rejoinTimer() {</span>
+        <span class="s2">return this</span><span class="s0">.channelAdapter.rejoinTimer;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Creates a channel that can broadcast messages, sync presence, and listen to Postgres changes. 
+     * 
+     * The topic determines which realtime stream you are subscribing to. Config options let you 
+     * enable acknowledgement for broadcasts, presence tracking, or private channels. 
+     * 
+     * @category Realtime 
+     * 
+     * @example Using supabase-js (recommended) 
+     * ```ts 
+     * import { createClient } from '@supabase/supabase-js' 
+     * 
+     * const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+     * const channel = supabase.channel('room1') 
+     * channel 
+     *   .on('broadcast', { event: 'cursor-pos' }, (payload) =&gt; console.log(payload)) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @example Standalone import for bundle-sensitive environments 
+     * ```ts 
+     * import RealtimeClient from '@supabase/realtime-js' 
+     * 
+     * const client = new RealtimeClient('https://xyzcompany.supabase.co/realtime/v1', { 
+     *   params: { apikey: 'your-publishable-key' }, 
+     * }) 
+     * const channel = new RealtimeChannel('realtime:public:messages', { config: {} }, client) 
+     * ``` 
+     */</span>
+    <span class="s0">constructor(</span>
+    <span class="s3">/** Topic name can be any string. */</span>
+    <span class="s0">topic, params = { config: {} }, socket) {</span>
+        <span class="s2">var </span><span class="s0">_a, _b;</span>
+        <span class="s2">this</span><span class="s0">.topic = topic;</span>
+        <span class="s2">this</span><span class="s0">.params = params;</span>
+        <span class="s2">this</span><span class="s0">.socket = socket;</span>
+        <span class="s2">this</span><span class="s0">.bindings = {};</span>
+        <span class="s2">this</span><span class="s0">.subTopic = topic.replace(/^realtime:/i, </span><span class="s1">''</span><span class="s0">);</span>
+        <span class="s2">this</span><span class="s0">.params.config = Object.assign({</span>
+            <span class="s0">broadcast: { ack: </span><span class="s2">false</span><span class="s0">, self: </span><span class="s2">false </span><span class="s0">},</span>
+            <span class="s0">presence: { key: </span><span class="s1">''</span><span class="s0">, enabled: </span><span class="s2">false </span><span class="s0">},</span>
+            <span class="s0">private: </span><span class="s2">false</span><span class="s0">,</span>
+        <span class="s0">}, params.config);</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter = </span><span class="s2">new </span><span class="s0">ChannelAdapter(</span><span class="s2">this</span><span class="s0">.socket.socketAdapter, topic, </span><span class="s2">this</span><span class="s0">.params);</span>
+        <span class="s2">this</span><span class="s0">.presence = </span><span class="s2">new </span><span class="s0">RealtimePresence(</span><span class="s2">this</span><span class="s0">);</span>
+        <span class="s2">this</span><span class="s0">._onClose(() =&gt; {</span>
+            <span class="s2">this</span><span class="s0">.socket._remove(</span><span class="s2">this</span><span class="s0">);</span>
+        <span class="s0">});</span>
+        <span class="s2">this</span><span class="s0">._updateFilterTransform();</span>
+        <span class="s2">this</span><span class="s0">.broadcastEndpointURL = httpEndpointURL(</span><span class="s2">this</span><span class="s0">.socket.socketAdapter.endPointURL());</span>
+        <span class="s2">this</span><span class="s0">.private = </span><span class="s2">this</span><span class="s0">.params.config.private || </span><span class="s2">false</span><span class="s0">;</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.private &amp;&amp; ((_b = (_a = </span><span class="s2">this</span><span class="s0">.params.config) === </span><span class="s2">null </span><span class="s0">|| _a === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _a.broadcast) === </span><span class="s2">null </span><span class="s0">|| _b === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _b.replay)) {</span>
+            <span class="s2">throw new </span><span class="s0">Error(`tried to use replay on public channel </span><span class="s1">'${this.topic}'</span><span class="s0">. It must be a private channel.`);</span>
+        <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Subscribe registers your client with the server 
+     * @category Realtime 
+     */</span>
+    <span class="s0">subscribe(callback, timeout = </span><span class="s2">this</span><span class="s0">.timeout) {</span>
+        <span class="s2">var </span><span class="s0">_a, _b, _c;</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.socket.isConnected()) {</span>
+            <span class="s2">this</span><span class="s0">.socket.connect();</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.channelAdapter.isClosed()) {</span>
+            <span class="s0">const { config: { broadcast, presence, private: isPrivate }, } = </span><span class="s2">this</span><span class="s0">.params;</span>
+            <span class="s0">const postgres_changes = (_b = (_a = </span><span class="s2">this</span><span class="s0">.bindings.postgres_changes) === </span><span class="s2">null </span><span class="s0">|| _a === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _a.map((r) =&gt; r.filter)) !== </span><span class="s2">null </span><span class="s0">&amp;&amp; _b !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? _b : [];</span>
+            <span class="s0">const presence_enabled = (!!</span><span class="s2">this</span><span class="s0">.bindings[REALTIME_LISTEN_TYPES.PRESENCE] &amp;&amp;</span>
+                <span class="s2">this</span><span class="s0">.bindings[REALTIME_LISTEN_TYPES.PRESENCE].length &gt; </span><span class="s4">0</span><span class="s0">) ||</span>
+                <span class="s0">((_c = </span><span class="s2">this</span><span class="s0">.params.config.presence) === </span><span class="s2">null </span><span class="s0">|| _c === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _c.enabled) === </span><span class="s2">true</span><span class="s0">;</span>
+            <span class="s0">const accessTokenPayload = {};</span>
+            <span class="s0">const config = {</span>
+                <span class="s0">broadcast,</span>
+                <span class="s0">presence: Object.assign(Object.assign({}, presence), { enabled: presence_enabled }),</span>
+                <span class="s0">postgres_changes,</span>
+                <span class="s0">private: isPrivate,</span>
+            <span class="s0">};</span>
+            <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.socket.accessTokenValue) {</span>
+                <span class="s0">accessTokenPayload.access_token = </span><span class="s2">this</span><span class="s0">.socket.accessTokenValue;</span>
+            <span class="s0">}</span>
+            <span class="s2">this</span><span class="s0">._onError((reason) =&gt; {</span>
+                <span class="s0">callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, normalizeChannelError(reason));</span>
+            <span class="s0">});</span>
+            <span class="s2">this</span><span class="s0">._onClose(() =&gt; callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.CLOSED));</span>
+            <span class="s2">this</span><span class="s0">.updateJoinPayload(Object.assign({ config }, accessTokenPayload));</span>
+            <span class="s2">this</span><span class="s0">._updateFilterMessage();</span>
+            <span class="s2">this</span><span class="s0">.channelAdapter</span>
+                <span class="s0">.subscribe(timeout)</span>
+                <span class="s0">.receive(</span><span class="s1">'ok'</span><span class="s0">, async ({ postgres_changes }) =&gt; {</span>
+                <span class="s3">// Only refresh auth if using callback-based tokens</span>
+                <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.socket._isManualToken()) {</span>
+                    <span class="s2">this</span><span class="s0">.socket.setAuth();</span>
+                <span class="s0">}</span>
+                <span class="s2">if </span><span class="s0">(postgres_changes === undefined) {</span>
+                    <span class="s0">callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.SUBSCRIBED);</span>
+                    <span class="s2">return</span><span class="s0">;</span>
+                <span class="s0">}</span>
+                <span class="s2">this</span><span class="s0">._updatePostgresBindings(postgres_changes, callback);</span>
+            <span class="s0">})</span>
+                <span class="s0">.receive(</span><span class="s1">'error'</span><span class="s0">, (error) =&gt; {</span>
+                <span class="s2">this</span><span class="s0">.state = CHANNEL_STATES.errored;</span>
+                <span class="s0">const message = Object.values(error).join(</span><span class="s1">', '</span><span class="s0">) || </span><span class="s1">'error'</span><span class="s0">;</span>
+                <span class="s0">callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, </span><span class="s2">new </span><span class="s0">Error(message, { cause: error }));</span>
+            <span class="s0">})</span>
+                <span class="s0">.receive(</span><span class="s1">'timeout'</span><span class="s0">, () =&gt; {</span>
+                <span class="s0">callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.TIMED_OUT);</span>
+            <span class="s0">});</span>
+        <span class="s0">}</span>
+        <span class="s2">return this</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">_updatePostgresBindings(postgres_changes, callback) {</span>
+        <span class="s2">var </span><span class="s0">_a;</span>
+        <span class="s0">const clientPostgresBindings = </span><span class="s2">this</span><span class="s0">.bindings.postgres_changes;</span>
+        <span class="s0">const bindingsLen = (_a = clientPostgresBindings === </span><span class="s2">null </span><span class="s0">|| clientPostgresBindings === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: clientPostgresBindings.length) !== </span><span class="s2">null </span><span class="s0">&amp;&amp; _a !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? _a : </span><span class="s4">0</span><span class="s0">;</span>
+        <span class="s0">const newPostgresBindings = [];</span>
+        <span class="s2">for </span><span class="s0">(let i = </span><span class="s4">0</span><span class="s0">; i &lt; bindingsLen; i++) {</span>
+            <span class="s0">const clientPostgresBinding = clientPostgresBindings[i];</span>
+            <span class="s0">const { filter: { event, schema, table, filter }, } = clientPostgresBinding;</span>
+            <span class="s0">const serverPostgresFilter = postgres_changes &amp;&amp; postgres_changes[i];</span>
+            <span class="s2">if </span><span class="s0">(serverPostgresFilter &amp;&amp;</span>
+                <span class="s0">serverPostgresFilter.event === event &amp;&amp;</span>
+                <span class="s0">RealtimeChannel.isFilterValueEqual(serverPostgresFilter.schema, schema) &amp;&amp;</span>
+                <span class="s0">RealtimeChannel.isFilterValueEqual(serverPostgresFilter.table, table) &amp;&amp;</span>
+                <span class="s0">RealtimeChannel.isFilterValueEqual(serverPostgresFilter.filter, filter)) {</span>
+                <span class="s0">newPostgresBindings.push(Object.assign(Object.assign({}, clientPostgresBinding), { id: serverPostgresFilter.id }));</span>
+            <span class="s0">}</span>
+            <span class="s2">else </span><span class="s0">{</span>
+                <span class="s2">this</span><span class="s0">.unsubscribe();</span>
+                <span class="s2">this</span><span class="s0">.state = CHANNEL_STATES.errored;</span>
+                <span class="s0">callback === </span><span class="s2">null </span><span class="s0">|| callback === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: callback(REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR, </span><span class="s2">new </span><span class="s0">Error(</span><span class="s1">'mismatch between server and client bindings for postgres changes'</span><span class="s0">));</span>
+                <span class="s2">return</span><span class="s0">;</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s2">this</span><span class="s0">.bindings.postgres_changes = newPostgresBindings;</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.state != CHANNEL_STATES.errored &amp;&amp; callback) {</span>
+            <span class="s0">callback(REALTIME_SUBSCRIBE_STATES.SUBSCRIBED);</span>
+        <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Returns the current presence state for this channel. 
+     * 
+     * The shape is a map keyed by presence key (for example a user id) where each entry contains the 
+     * tracked metadata for that user. 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">presenceState() {</span>
+        <span class="s2">return this</span><span class="s0">.presence.state;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Sends the supplied payload to the presence tracker so other subscribers can see that this 
+     * client is online. Use `untrack` to stop broadcasting presence for the same key. 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">async track(payload, opts = {}) {</span>
+        <span class="s2">return </span><span class="s0">await </span><span class="s2">this</span><span class="s0">.send({</span>
+            <span class="s0">type: </span><span class="s1">'presence'</span><span class="s0">,</span>
+            <span class="s0">event: </span><span class="s1">'track'</span><span class="s0">,</span>
+            <span class="s0">payload,</span>
+        <span class="s0">}, opts.timeout || </span><span class="s2">this</span><span class="s0">.timeout);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Removes the current presence state for this client. 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">async untrack(opts = {}) {</span>
+        <span class="s2">return </span><span class="s0">await </span><span class="s2">this</span><span class="s0">.send({</span>
+            <span class="s0">type: </span><span class="s1">'presence'</span><span class="s0">,</span>
+            <span class="s0">event: </span><span class="s1">'untrack'</span><span class="s0">,</span>
+        <span class="s0">}, opts);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Listen to realtime events on this channel. 
+     * @category Realtime 
+     * 
+     * @remarks 
+     * - By default, Broadcast and Presence are enabled for all projects. 
+     * - By default, listening to database changes is disabled for new projects due to database performance and security concerns. You can turn it on by managing Realtime's [replication](/docs/guides/api#realtime-api-overview). 
+     * - You can receive the &quot;previous&quot; data for updates and deletes by setting the table's `REPLICA IDENTITY` to `FULL` (e.g., `ALTER TABLE your_table REPLICA IDENTITY FULL;`). 
+     * - Row level security is not applied to delete statements. When RLS is enabled and replica identity is set to full, only the primary key is sent to clients. 
+     * 
+     * @example Listen to broadcast messages 
+     * ```js 
+     * const channel = supabase.channel(&quot;room1&quot;) 
+     * 
+     * channel.on(&quot;broadcast&quot;, { event: &quot;cursor-pos&quot; }, (payload) =&gt; { 
+     *   console.log(&quot;Cursor position received!&quot;, payload); 
+     * }).subscribe((status) =&gt; { 
+     *   if (status === &quot;SUBSCRIBED&quot;) { 
+     *     channel.send({ 
+     *       type: &quot;broadcast&quot;, 
+     *       event: &quot;cursor-pos&quot;, 
+     *       payload: { x: Math.random(), y: Math.random() }, 
+     *     }); 
+     *   } 
+     * }); 
+     * ``` 
+     * 
+     * @example Listen to presence sync 
+     * ```js 
+     * const channel = supabase.channel('room1') 
+     * channel 
+     *   .on('presence', { event: 'sync' }, () =&gt; { 
+     *     console.log('Synced presence state: ', channel.presenceState()) 
+     *   }) 
+     *   .subscribe(async (status) =&gt; { 
+     *     if (status === 'SUBSCRIBED') { 
+     *       await channel.track({ online_at: new Date().toISOString() }) 
+     *     } 
+     *   }) 
+     * ``` 
+     * 
+     * @example Listen to presence join 
+     * ```js 
+     * const channel = supabase.channel('room1') 
+     * channel 
+     *   .on('presence', { event: 'join' }, ({ newPresences }) =&gt; { 
+     *     console.log('Newly joined presences: ', newPresences) 
+     *   }) 
+     *   .subscribe(async (status) =&gt; { 
+     *     if (status === 'SUBSCRIBED') { 
+     *       await channel.track({ online_at: new Date().toISOString() }) 
+     *     } 
+     *   }) 
+     * ``` 
+     * 
+     * @example Listen to presence leave 
+     * ```js 
+     * const channel = supabase.channel('room1') 
+     * channel 
+     *   .on('presence', { event: 'leave' }, ({ leftPresences }) =&gt; { 
+     *     console.log('Newly left presences: ', leftPresences) 
+     *   }) 
+     *   .subscribe(async (status) =&gt; { 
+     *     if (status === 'SUBSCRIBED') { 
+     *       await channel.track({ online_at: new Date().toISOString() }) 
+     *       await channel.untrack() 
+     *     } 
+     *   }) 
+     * ``` 
+     * 
+     * @example Listen to all database changes 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: '*', schema: '*' }, payload =&gt; { 
+     *     console.log('Change received!', payload) 
+     *   }) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @example Listen to a specific table 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: '*', schema: 'public', table: 'countries' }, payload =&gt; { 
+     *     console.log('Change received!', payload) 
+     *   }) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @example Listen to inserts 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'countries' }, payload =&gt; { 
+     *     console.log('Change received!', payload) 
+     *   }) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @exampleDescription Listen to updates 
+     * By default, Supabase will send only the updated record. If you want to receive the previous values as well you can 
+     * enable full replication for the table you are listening to: 
+     * 
+     * ```sql 
+     * alter table &quot;your_table&quot; replica identity full; 
+     * ``` 
+     * 
+     * @example Listen to updates 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'countries' }, payload =&gt; { 
+     *     console.log('Change received!', payload) 
+     *   }) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @exampleDescription Listen to deletes 
+     * By default, Supabase does not send deleted records. If you want to receive the deleted record you can 
+     * enable full replication for the table you are listening to: 
+     * 
+     * ```sql 
+     * alter table &quot;your_table&quot; replica identity full; 
+     * ``` 
+     * 
+     * @example Listen to deletes 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'countries' }, payload =&gt; { 
+     *     console.log('Change received!', payload) 
+     *   }) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @exampleDescription Listen to multiple events 
+     * You can chain listeners if you want to listen to multiple events for each table. 
+     * 
+     * @example Listen to multiple events 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'countries' }, handleRecordInserted) 
+     *   .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'countries' }, handleRecordDeleted) 
+     *   .subscribe() 
+     * ``` 
+     * 
+     * @exampleDescription Listen to row level changes 
+     * You can listen to individual rows using the format `{table}:{col}=eq.{val}` - where `{col}` is the column name, and `{val}` is the value which you want to match. 
+     * 
+     * @example Listen to row level changes 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'countries', filter: 'id=eq.200' }, handleRecordUpdated) 
+     *   .subscribe() 
+     * ``` 
+     */</span>
+    <span class="s0">on(type, filter, callback) {</span>
+        <span class="s0">const stateCheck = </span><span class="s2">this</span><span class="s0">.channelAdapter.isJoined() || </span><span class="s2">this</span><span class="s0">.channelAdapter.isJoining();</span>
+        <span class="s0">const typeCheck = type === REALTIME_LISTEN_TYPES.PRESENCE || type === REALTIME_LISTEN_TYPES.POSTGRES_CHANGES;</span>
+        <span class="s2">if </span><span class="s0">(stateCheck &amp;&amp; typeCheck) {</span>
+            <span class="s2">this</span><span class="s0">.socket.log(</span><span class="s1">'channel'</span><span class="s0">, `cannot add \`${type}\` callbacks </span><span class="s2">for </span><span class="s0">${</span><span class="s2">this</span><span class="s0">.topic} after \`subscribe()\`.`);</span>
+            <span class="s2">throw new </span><span class="s0">Error(`cannot add \`${type}\` callbacks </span><span class="s2">for </span><span class="s0">${</span><span class="s2">this</span><span class="s0">.topic} after \`subscribe()\`.`);</span>
+        <span class="s0">}</span>
+        <span class="s2">return this</span><span class="s0">._on(type, filter, callback);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Sends a broadcast message explicitly via REST API. 
+     * 
+     * This method always uses the REST API endpoint regardless of WebSocket connection state. 
+     * Useful when you want to guarantee REST delivery or when gradually migrating from implicit REST fallback. 
+     * 
+     * @param event The name of the broadcast event 
+     * @param payload Payload to be sent (required) 
+     * @param opts Options including timeout 
+     * @returns Promise resolving to object with success status, and error details if failed 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">async httpSend(event, payload, opts = {}) {</span>
+        <span class="s2">var </span><span class="s0">_a;</span>
+        <span class="s2">if </span><span class="s0">(payload === undefined || payload === </span><span class="s2">null</span><span class="s0">) {</span>
+            <span class="s2">return </span><span class="s0">Promise.reject(</span><span class="s2">new </span><span class="s0">Error(</span><span class="s1">'Payload is required for httpSend()'</span><span class="s0">));</span>
+        <span class="s0">}</span>
+        <span class="s0">const headers = {</span>
+            <span class="s0">apikey: </span><span class="s2">this</span><span class="s0">.socket.apiKey ? </span><span class="s2">this</span><span class="s0">.socket.apiKey : </span><span class="s1">''</span><span class="s0">,</span>
+            <span class="s1">'Content-Type'</span><span class="s0">: </span><span class="s1">'application/json'</span><span class="s0">,</span>
+        <span class="s0">};</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.socket.accessTokenValue) {</span>
+            <span class="s0">headers[</span><span class="s1">'Authorization'</span><span class="s0">] = `Bearer ${</span><span class="s2">this</span><span class="s0">.socket.accessTokenValue}`;</span>
+        <span class="s0">}</span>
+        <span class="s0">const options = {</span>
+            <span class="s0">method: </span><span class="s1">'POST'</span><span class="s0">,</span>
+            <span class="s0">headers,</span>
+            <span class="s0">body: JSON.stringify({</span>
+                <span class="s0">messages: [</span>
+                    <span class="s0">{</span>
+                        <span class="s0">topic: </span><span class="s2">this</span><span class="s0">.subTopic,</span>
+                        <span class="s0">event,</span>
+                        <span class="s0">payload: payload,</span>
+                        <span class="s0">private: </span><span class="s2">this</span><span class="s0">.private,</span>
+                    <span class="s0">},</span>
+                <span class="s0">],</span>
+            <span class="s0">}),</span>
+        <span class="s0">};</span>
+        <span class="s0">const response = await </span><span class="s2">this</span><span class="s0">._fetchWithTimeout(</span><span class="s2">this</span><span class="s0">.broadcastEndpointURL, options, (_a = opts.timeout) !== </span><span class="s2">null </span><span class="s0">&amp;&amp; _a !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? _a : </span><span class="s2">this</span><span class="s0">.timeout);</span>
+        <span class="s2">if </span><span class="s0">(response.status === </span><span class="s4">202</span><span class="s0">) {</span>
+            <span class="s2">return </span><span class="s0">{ success: </span><span class="s2">true </span><span class="s0">};</span>
+        <span class="s0">}</span>
+        <span class="s0">let errorMessage = response.statusText;</span>
+        <span class="s2">try </span><span class="s0">{</span>
+            <span class="s0">const errorBody = await response.json();</span>
+            <span class="s0">errorMessage = errorBody.error || errorBody.message || errorMessage;</span>
+        <span class="s0">}</span>
+        <span class="s2">catch </span><span class="s0">(_b) { }</span>
+        <span class="s2">return </span><span class="s0">Promise.reject(</span><span class="s2">new </span><span class="s0">Error(errorMessage));</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Sends a message into the channel. 
+     * 
+     * @param args Arguments to send to channel 
+     * @param args.type The type of event to send 
+     * @param args.event The name of the event being sent 
+     * @param args.payload Payload to be sent 
+     * @param opts Options to be used during the send process 
+     * 
+     * @category Realtime 
+     * 
+     * @remarks 
+     * - When using REST you don't need to subscribe to the channel 
+     * - REST calls are only available from 2.37.0 onwards 
+     * 
+     * @example Send a message via websocket 
+     * ```js 
+     * const channel = supabase.channel('room1') 
+     * 
+     * channel.subscribe((status) =&gt; { 
+     *   if (status === 'SUBSCRIBED') { 
+     *     channel.send({ 
+     *       type: 'broadcast', 
+     *       event: 'cursor-pos', 
+     *       payload: { x: Math.random(), y: Math.random() }, 
+     *     }) 
+     *   } 
+     * }) 
+     * ``` 
+     * 
+     * @exampleResponse Send a message via websocket 
+     * ```js 
+     * ok | timed out | error 
+     * ``` 
+     * 
+     * @example Send a message via REST 
+     * ```js 
+     * supabase 
+     *   .channel('room1') 
+     *   .httpSend('cursor-pos', { x: Math.random(), y: Math.random() }) 
+     * ``` 
+     */</span>
+    <span class="s0">async send(args, opts = {}) {</span>
+        <span class="s2">var </span><span class="s0">_a, _b;</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.channelAdapter.canPush() &amp;&amp; args.type === </span><span class="s1">'broadcast'</span><span class="s0">) {</span>
+            <span class="s0">console.warn(</span><span class="s1">'Realtime send() is automatically falling back to REST API. ' </span><span class="s0">+</span>
+                <span class="s1">'This behavior will be deprecated in the future. ' </span><span class="s0">+</span>
+                <span class="s1">'Please use httpSend() explicitly for REST delivery.'</span><span class="s0">);</span>
+            <span class="s0">const { event, payload: endpoint_payload } = args;</span>
+            <span class="s0">const headers = {</span>
+                <span class="s0">apikey: </span><span class="s2">this</span><span class="s0">.socket.apiKey ? </span><span class="s2">this</span><span class="s0">.socket.apiKey : </span><span class="s1">''</span><span class="s0">,</span>
+                <span class="s1">'Content-Type'</span><span class="s0">: </span><span class="s1">'application/json'</span><span class="s0">,</span>
+            <span class="s0">};</span>
+            <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.socket.accessTokenValue) {</span>
+                <span class="s0">headers[</span><span class="s1">'Authorization'</span><span class="s0">] = `Bearer ${</span><span class="s2">this</span><span class="s0">.socket.accessTokenValue}`;</span>
+            <span class="s0">}</span>
+            <span class="s0">const options = {</span>
+                <span class="s0">method: </span><span class="s1">'POST'</span><span class="s0">,</span>
+                <span class="s0">headers,</span>
+                <span class="s0">body: JSON.stringify({</span>
+                    <span class="s0">messages: [</span>
+                        <span class="s0">{</span>
+                            <span class="s0">topic: </span><span class="s2">this</span><span class="s0">.subTopic,</span>
+                            <span class="s0">event,</span>
+                            <span class="s0">payload: endpoint_payload,</span>
+                            <span class="s0">private: </span><span class="s2">this</span><span class="s0">.private,</span>
+                        <span class="s0">},</span>
+                    <span class="s0">],</span>
+                <span class="s0">}),</span>
+            <span class="s0">};</span>
+            <span class="s2">try </span><span class="s0">{</span>
+                <span class="s0">const response = await </span><span class="s2">this</span><span class="s0">._fetchWithTimeout(</span><span class="s2">this</span><span class="s0">.broadcastEndpointURL, options, (_a = opts.timeout) !== </span><span class="s2">null </span><span class="s0">&amp;&amp; _a !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? _a : </span><span class="s2">this</span><span class="s0">.timeout);</span>
+                <span class="s0">await ((_b = response.body) === </span><span class="s2">null </span><span class="s0">|| _b === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _b.cancel());</span>
+                <span class="s2">return </span><span class="s0">response.ok ? </span><span class="s1">'ok' </span><span class="s0">: </span><span class="s1">'error'</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s2">catch </span><span class="s0">(error) {</span>
+                <span class="s2">if </span><span class="s0">(error </span><span class="s2">instanceof </span><span class="s0">Error &amp;&amp; error.name === </span><span class="s1">'AbortError'</span><span class="s0">) {</span>
+                    <span class="s2">return </span><span class="s1">'timed out'</span><span class="s0">;</span>
+                <span class="s0">}</span>
+                <span class="s2">else </span><span class="s0">{</span>
+                    <span class="s2">return </span><span class="s1">'error'</span><span class="s0">;</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s2">else </span><span class="s0">{</span>
+            <span class="s2">return new </span><span class="s0">Promise((resolve) =&gt; {</span>
+                <span class="s2">var </span><span class="s0">_a, _b, _c;</span>
+                <span class="s0">const push = </span><span class="s2">this</span><span class="s0">.channelAdapter.push(args.type, args, opts.timeout || </span><span class="s2">this</span><span class="s0">.timeout);</span>
+                <span class="s2">if </span><span class="s0">(args.type === </span><span class="s1">'broadcast' </span><span class="s0">&amp;&amp; !((_c = (_b = (_a = </span><span class="s2">this</span><span class="s0">.params) === </span><span class="s2">null </span><span class="s0">|| _a === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _a.config) === </span><span class="s2">null </span><span class="s0">|| _b === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _b.broadcast) === </span><span class="s2">null </span><span class="s0">|| _c === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _c.ack)) {</span>
+                    <span class="s0">resolve(</span><span class="s1">'ok'</span><span class="s0">);</span>
+                <span class="s0">}</span>
+                <span class="s0">push.receive(</span><span class="s1">'ok'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'ok'</span><span class="s0">));</span>
+                <span class="s0">push.receive(</span><span class="s1">'error'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'error'</span><span class="s0">));</span>
+                <span class="s0">push.receive(</span><span class="s1">'timeout'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'timed out'</span><span class="s0">));</span>
+            <span class="s0">});</span>
+        <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Updates the payload that will be sent the next time the channel joins (reconnects). 
+     * Useful for rotating access tokens or updating config without re-creating the channel. 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">updateJoinPayload(payload) {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.updateJoinPayload(payload);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Leaves the channel. 
+     * 
+     * Unsubscribes from server events, and instructs channel to terminate on server. 
+     * Triggers onClose() hooks. 
+     * 
+     * To receive leave acknowledgements, use the a `receive` hook to bind to the server ack, ie: 
+     * channel.unsubscribe().receive(&quot;ok&quot;, () =&gt; alert(&quot;left!&quot;) ) 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">async unsubscribe(timeout = </span><span class="s2">this</span><span class="s0">.timeout) {</span>
+        <span class="s2">return new </span><span class="s0">Promise((resolve) =&gt; {</span>
+            <span class="s2">this</span><span class="s0">.channelAdapter</span>
+                <span class="s0">.unsubscribe(timeout)</span>
+                <span class="s0">.receive(</span><span class="s1">'ok'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'ok'</span><span class="s0">))</span>
+                <span class="s0">.receive(</span><span class="s1">'timeout'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'timed out'</span><span class="s0">))</span>
+                <span class="s0">.receive(</span><span class="s1">'error'</span><span class="s0">, () =&gt; resolve(</span><span class="s1">'error'</span><span class="s0">));</span>
+        <span class="s0">});</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Destroys and stops related timers. 
+     * 
+     * @category Realtime 
+     */</span>
+    <span class="s0">teardown() {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.teardown();</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">async _fetchWithTimeout(url, options, timeout) {</span>
+        <span class="s0">const controller = </span><span class="s2">new </span><span class="s0">AbortController();</span>
+        <span class="s0">const id = setTimeout(() =&gt; controller.abort(), timeout);</span>
+        <span class="s0">const response = await </span><span class="s2">this</span><span class="s0">.socket.fetch(url, Object.assign(Object.assign({}, options), { signal: controller.signal }));</span>
+        <span class="s0">clearTimeout(id);</span>
+        <span class="s2">return </span><span class="s0">response;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">_on(type, filter, callback) {</span>
+        <span class="s0">const typeLower = type.toLocaleLowerCase();</span>
+        <span class="s0">const ref = </span><span class="s2">this</span><span class="s0">.channelAdapter.on(type, callback);</span>
+        <span class="s0">const binding = {</span>
+            <span class="s0">type: typeLower,</span>
+            <span class="s0">filter: filter,</span>
+            <span class="s0">callback: callback,</span>
+            <span class="s0">ref: ref,</span>
+        <span class="s0">};</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.bindings[typeLower]) {</span>
+            <span class="s2">this</span><span class="s0">.bindings[typeLower].push(binding);</span>
+        <span class="s0">}</span>
+        <span class="s2">else </span><span class="s0">{</span>
+            <span class="s2">this</span><span class="s0">.bindings[typeLower] = [binding];</span>
+        <span class="s0">}</span>
+        <span class="s2">this</span><span class="s0">._updateFilterMessage();</span>
+        <span class="s2">return this</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Registers a callback that will be executed when the channel closes. 
+     * 
+     * @internal 
+     */</span>
+    <span class="s0">_onClose(callback) {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.onClose(callback);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Registers a callback that will be executed when the channel encounteres an error. 
+     * 
+     * @internal 
+     */</span>
+    <span class="s0">_onError(callback) {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.onError(callback);</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">_updateFilterMessage() {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.updateFilterBindings((binding, payload, ref) =&gt; {</span>
+            <span class="s2">var </span><span class="s0">_a, _b, _c, _d, _e, _f, _g;</span>
+            <span class="s0">const typeLower = binding.event.toLocaleLowerCase();</span>
+            <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">._notThisChannelEvent(typeLower, ref)) {</span>
+                <span class="s2">return false</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s0">const bind = (_a = </span><span class="s2">this</span><span class="s0">.bindings[typeLower]) === </span><span class="s2">null </span><span class="s0">|| _a === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _a.find((bind) =&gt; bind.ref === binding.ref);</span>
+            <span class="s2">if </span><span class="s0">(!bind) {</span>
+                <span class="s2">return true</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s2">if </span><span class="s0">([</span><span class="s1">'broadcast'</span><span class="s0">, </span><span class="s1">'presence'</span><span class="s0">, </span><span class="s1">'postgres_changes'</span><span class="s0">].includes(typeLower)) {</span>
+                <span class="s2">if </span><span class="s0">(</span><span class="s1">'id' </span><span class="s2">in </span><span class="s0">bind) {</span>
+                    <span class="s0">const bindId = bind.id;</span>
+                    <span class="s0">const bindEvent = (_b = bind.filter) === </span><span class="s2">null </span><span class="s0">|| _b === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _b.event;</span>
+                    <span class="s2">return </span><span class="s0">(bindId &amp;&amp;</span>
+                        <span class="s0">((_c = payload.ids) === </span><span class="s2">null </span><span class="s0">|| _c === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _c.includes(bindId)) &amp;&amp;</span>
+                        <span class="s0">(bindEvent === </span><span class="s1">'*' </span><span class="s0">||</span>
+                            <span class="s0">(bindEvent === </span><span class="s2">null </span><span class="s0">|| bindEvent === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: bindEvent.toLocaleLowerCase()) === ((_d = payload.data) === </span><span class="s2">null </span><span class="s0">|| _d === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _d.type.toLocaleLowerCase())));</span>
+                <span class="s0">}</span>
+                <span class="s2">else </span><span class="s0">{</span>
+                    <span class="s0">const bindEvent = (_f = (_e = bind === </span><span class="s2">null </span><span class="s0">|| bind === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: bind.filter) === </span><span class="s2">null </span><span class="s0">|| _e === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _e.event) === </span><span class="s2">null </span><span class="s0">|| _f === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _f.toLocaleLowerCase();</span>
+                    <span class="s2">return </span><span class="s0">bindEvent === </span><span class="s1">'*' </span><span class="s0">|| bindEvent === ((_g = payload === </span><span class="s2">null </span><span class="s0">|| payload === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: payload.event) === </span><span class="s2">null </span><span class="s0">|| _g === </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">: _g.toLocaleLowerCase());</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+            <span class="s2">else </span><span class="s0">{</span>
+                <span class="s2">return </span><span class="s0">bind.type.toLocaleLowerCase() === typeLower;</span>
+            <span class="s0">}</span>
+        <span class="s0">});</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">_notThisChannelEvent(event, ref) {</span>
+        <span class="s0">const { close, error, leave, join } = CHANNEL_EVENTS;</span>
+        <span class="s0">const events = [close, error, leave, join];</span>
+        <span class="s2">return </span><span class="s0">ref &amp;&amp; events.includes(event) &amp;&amp; ref !== </span><span class="s2">this</span><span class="s0">.joinPush.ref;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">_updateFilterTransform() {</span>
+        <span class="s2">this</span><span class="s0">.channelAdapter.updatePayloadTransform((event, payload, ref) =&gt; {</span>
+            <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">payload === </span><span class="s1">'object' </span><span class="s0">&amp;&amp; </span><span class="s1">'ids' </span><span class="s2">in </span><span class="s0">payload) {</span>
+                <span class="s0">const postgresChanges = payload.data;</span>
+                <span class="s0">const { schema, table, commit_timestamp, type, errors } = postgresChanges;</span>
+                <span class="s0">const enrichedPayload = {</span>
+                    <span class="s0">schema: schema,</span>
+                    <span class="s0">table: table,</span>
+                    <span class="s0">commit_timestamp: commit_timestamp,</span>
+                    <span class="s0">eventType: type,</span>
+                    <span class="s2">new</span><span class="s0">: {},</span>
+                    <span class="s0">old: {},</span>
+                    <span class="s0">errors: errors,</span>
+                <span class="s0">};</span>
+                <span class="s2">return </span><span class="s0">Object.assign(Object.assign({}, enrichedPayload), </span><span class="s2">this</span><span class="s0">._getPayloadRecords(postgresChanges));</span>
+            <span class="s0">}</span>
+            <span class="s2">return </span><span class="s0">payload;</span>
+        <span class="s0">});</span>
+    <span class="s0">}</span>
+    <span class="s0">copyBindings(other) {</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.joinedOnce) {</span>
+            <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">'cannot copy bindings into joined channel'</span><span class="s0">);</span>
+        <span class="s0">}</span>
+        <span class="s2">for </span><span class="s0">(const kind </span><span class="s2">in </span><span class="s0">other.bindings) {</span>
+            <span class="s2">for </span><span class="s0">(const binding of other.bindings[kind]) {</span>
+                <span class="s2">this</span><span class="s0">._on(binding.type, binding.filter, binding.callback);</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * Compares two optional filter values for equality. 
+     * Treats undefined, null, and empty string as equivalent empty values. 
+     * @internal 
+     */</span>
+    <span class="s0">static isFilterValueEqual(serverValue, clientValue) {</span>
+        <span class="s0">const normalizedServer = serverValue !== </span><span class="s2">null </span><span class="s0">&amp;&amp; serverValue !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? serverValue : undefined;</span>
+        <span class="s0">const normalizedClient = clientValue !== </span><span class="s2">null </span><span class="s0">&amp;&amp; clientValue !== </span><span class="s2">void </span><span class="s4">0 </span><span class="s0">? clientValue : undefined;</span>
+        <span class="s2">return </span><span class="s0">normalizedServer === normalizedClient;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** @internal */</span>
+    <span class="s0">_getPayloadRecords(payload) {</span>
+        <span class="s0">const records = {</span>
+            <span class="s2">new</span><span class="s0">: {},</span>
+            <span class="s0">old: {},</span>
+        <span class="s0">};</span>
+        <span class="s2">if </span><span class="s0">(payload.type === </span><span class="s1">'INSERT' </span><span class="s0">|| payload.type === </span><span class="s1">'UPDATE'</span><span class="s0">) {</span>
+            <span class="s0">records.</span><span class="s2">new </span><span class="s0">= Transformers.convertChangeData(payload.columns, payload.record);</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(payload.type === </span><span class="s1">'UPDATE' </span><span class="s0">|| payload.type === </span><span class="s1">'DELETE'</span><span class="s0">) {</span>
+            <span class="s0">records.old = Transformers.convertChangeData(payload.columns, payload.old_record);</span>
+        <span class="s0">}</span>
+        <span class="s2">return </span><span class="s0">records;</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s3">//# sourceMappingURL=RealtimeChannel.js.map</span></pre>
+</body>
+</html>

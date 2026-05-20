@@ -1,0 +1,486 @@
+<html>
+<head>
+<title>writer.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+writer.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Writer;</span>
+
+<span class="s2">var </span><span class="s1">util      = require(</span><span class="s0">&quot;./util/minimal&quot;</span><span class="s1">);</span>
+
+<span class="s2">var </span><span class="s1">BufferWriter; </span><span class="s3">// cyclic</span>
+
+<span class="s2">var </span><span class="s1">LongBits  = util.LongBits,</span>
+    <span class="s1">base64    = util.base64,</span>
+    <span class="s1">utf8      = util.utf8;</span>
+
+<span class="s3">/** 
+ * Constructs a new writer operation instance. 
+ * @classdesc Scheduled writer operation. 
+ * @constructor 
+ * @param {function(*, Uint8Array, number)} fn Function to call 
+ * @param {number} len Value byte length 
+ * @param {*} val Value to write 
+ * @ignore 
+ */</span>
+<span class="s2">function </span><span class="s1">Op(fn, len, val) {</span>
+
+    <span class="s3">/** 
+     * Function to call. 
+     * @type {function(Uint8Array, number, *)} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.fn = fn;</span>
+
+    <span class="s3">/** 
+     * Value byte length. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.len = len;</span>
+
+    <span class="s3">/** 
+     * Next operation. 
+     * @type {Writer.Op|undefined} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.next = undefined;</span>
+
+    <span class="s3">/** 
+     * Value to write. 
+     * @type {*} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.val = val; </span><span class="s3">// type varies</span>
+<span class="s1">}</span>
+
+<span class="s3">/* istanbul ignore next */</span>
+<span class="s2">function </span><span class="s1">noop() {} </span><span class="s3">// eslint-disable-line no-empty-function</span>
+
+<span class="s3">/** 
+ * Constructs a new writer state instance. 
+ * @classdesc Copied writer state. 
+ * @memberof Writer 
+ * @constructor 
+ * @param {Writer} writer Writer to copy state from 
+ * @ignore 
+ */</span>
+<span class="s2">function </span><span class="s1">State(writer) {</span>
+
+    <span class="s3">/** 
+     * Current head. 
+     * @type {Writer.Op} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.head = writer.head;</span>
+
+    <span class="s3">/** 
+     * Current tail. 
+     * @type {Writer.Op} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.tail = writer.tail;</span>
+
+    <span class="s3">/** 
+     * Current buffer length. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.len = writer.len;</span>
+
+    <span class="s3">/** 
+     * Next state. 
+     * @type {State|null} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.next = writer.states;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Constructs a new writer instance. 
+ * @classdesc Wire format writer using `Uint8Array` if available, otherwise `Array`. 
+ * @constructor 
+ */</span>
+<span class="s2">function </span><span class="s1">Writer() {</span>
+
+    <span class="s3">/** 
+     * Current length. 
+     * @type {number} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.len = </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s3">/** 
+     * Operations head. 
+     * @type {Object} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.head = </span><span class="s2">new </span><span class="s1">Op(noop, </span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+
+    <span class="s3">/** 
+     * Operations tail 
+     * @type {Object} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.tail = </span><span class="s2">this</span><span class="s1">.head;</span>
+
+    <span class="s3">/** 
+     * Linked forked states. 
+     * @type {Object|null} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.states = </span><span class="s2">null</span><span class="s1">;</span>
+
+    <span class="s3">// When a value is written, the writer calculates its byte length and puts it into a linked</span>
+    <span class="s3">// list of operations to perform when finish() is called. This both allows us to allocate</span>
+    <span class="s3">// buffers of the exact required size and reduces the amount of work we have to do compared</span>
+    <span class="s3">// to first calculating over objects and then encoding over objects. In our case, the encoding</span>
+    <span class="s3">// part is just a linked list walk calling operations with already prepared values.</span>
+<span class="s1">}</span>
+
+<span class="s2">var </span><span class="s1">create = </span><span class="s2">function </span><span class="s1">create() {</span>
+    <span class="s2">return </span><span class="s1">util.Buffer</span>
+        <span class="s1">? </span><span class="s2">function </span><span class="s1">create_buffer_setup() {</span>
+            <span class="s2">return </span><span class="s1">(Writer.create = </span><span class="s2">function </span><span class="s1">create_buffer() {</span>
+                <span class="s2">return new </span><span class="s1">BufferWriter();</span>
+            <span class="s1">})();</span>
+        <span class="s1">}</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s1">: </span><span class="s2">function </span><span class="s1">create_array() {</span>
+            <span class="s2">return new </span><span class="s1">Writer();</span>
+        <span class="s1">};</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Creates a new writer. 
+ * @function 
+ * @returns {BufferWriter|Writer} A {@link BufferWriter} when Buffers are supported, otherwise a {@link Writer} 
+ */</span>
+<span class="s1">Writer.create = create();</span>
+
+<span class="s3">/** 
+ * Allocates a buffer of the specified size. 
+ * @param {number} size Buffer size 
+ * @returns {Uint8Array} Buffer 
+ */</span>
+<span class="s1">Writer.alloc = </span><span class="s2">function </span><span class="s1">alloc(size) {</span>
+    <span class="s2">return new </span><span class="s1">util.Array(size);</span>
+<span class="s1">};</span>
+
+<span class="s3">// Use Uint8Array buffer pool in the browser, just like node does with buffers</span>
+<span class="s3">/* istanbul ignore else */</span>
+<span class="s2">if </span><span class="s1">(util.Array !== Array)</span>
+    <span class="s1">Writer.alloc = util.pool(Writer.alloc, util.Array.prototype.subarray);</span>
+
+<span class="s3">/** 
+ * Pushes a new operation to the queue. 
+ * @param {function(Uint8Array, number, *)} fn Function to call 
+ * @param {number} len Value byte length 
+ * @param {number} val Value to write 
+ * @returns {Writer} `this` 
+ * @private 
+ */</span>
+<span class="s1">Writer.prototype._push = </span><span class="s2">function </span><span class="s1">push(fn, len, val) {</span>
+    <span class="s2">this</span><span class="s1">.tail = </span><span class="s2">this</span><span class="s1">.tail.next = </span><span class="s2">new </span><span class="s1">Op(fn, len, val);</span>
+    <span class="s2">this</span><span class="s1">.len += len;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">function </span><span class="s1">writeByte(val, buf, pos) {</span>
+    <span class="s1">buf[pos] = val &amp; </span><span class="s4">255</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">writeVarint32(val, buf, pos) {</span>
+    <span class="s2">while </span><span class="s1">(val &gt; </span><span class="s4">127</span><span class="s1">) {</span>
+        <span class="s1">buf[pos++] = val &amp; </span><span class="s4">127 </span><span class="s1">| </span><span class="s4">128</span><span class="s1">;</span>
+        <span class="s1">val &gt;&gt;&gt;= </span><span class="s4">7</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">buf[pos] = val;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Constructs a new varint writer operation instance. 
+ * @classdesc Scheduled varint writer operation. 
+ * @extends Op 
+ * @constructor 
+ * @param {number} len Value byte length 
+ * @param {number} val Value to write 
+ * @ignore 
+ */</span>
+<span class="s2">function </span><span class="s1">VarintOp(len, val) {</span>
+    <span class="s2">this</span><span class="s1">.len = len;</span>
+    <span class="s2">this</span><span class="s1">.next = undefined;</span>
+    <span class="s2">this</span><span class="s1">.val = val;</span>
+<span class="s1">}</span>
+
+<span class="s1">VarintOp.prototype = Object.create(Op.prototype);</span>
+<span class="s1">VarintOp.prototype.fn = writeVarint32;</span>
+
+<span class="s3">/** 
+ * Writes an unsigned 32 bit value as a varint. 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.uint32 = </span><span class="s2">function </span><span class="s1">write_uint32(value) {</span>
+    <span class="s3">// here, the call to this.push has been inlined and a varint specific Op subclass is used.</span>
+    <span class="s3">// uint32 is by far the most frequently used operation and benefits significantly from this.</span>
+    <span class="s2">this</span><span class="s1">.len += (</span><span class="s2">this</span><span class="s1">.tail = </span><span class="s2">this</span><span class="s1">.tail.next = </span><span class="s2">new </span><span class="s1">VarintOp(</span>
+        <span class="s1">(value = value &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">)</span>
+                <span class="s1">&lt; </span><span class="s4">128       </span><span class="s1">? </span><span class="s4">1</span>
+        <span class="s1">: value &lt; </span><span class="s4">16384     </span><span class="s1">? </span><span class="s4">2</span>
+        <span class="s1">: value &lt; </span><span class="s4">2097152   </span><span class="s1">? </span><span class="s4">3</span>
+        <span class="s1">: value &lt; </span><span class="s4">268435456 </span><span class="s1">? </span><span class="s4">4</span>
+        <span class="s1">:                     </span><span class="s4">5</span><span class="s1">,</span>
+    <span class="s1">value)).len;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a signed 32 bit value as a varint. 
+ * @function 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.int32 = </span><span class="s2">function </span><span class="s1">write_int32(value) {</span>
+    <span class="s2">return </span><span class="s1">value &lt; </span><span class="s4">0</span>
+        <span class="s1">? </span><span class="s2">this</span><span class="s1">._push(writeVarint64, </span><span class="s4">10</span><span class="s1">, LongBits.fromNumber(value)) </span><span class="s3">// 10 bytes per spec</span>
+        <span class="s1">: </span><span class="s2">this</span><span class="s1">.uint32(value);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a 32 bit value as a varint, zig-zag encoded. 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.sint32 = </span><span class="s2">function </span><span class="s1">write_sint32(value) {</span>
+    <span class="s2">return this</span><span class="s1">.uint32((value &lt;&lt; </span><span class="s4">1 </span><span class="s1">^ value &gt;&gt; </span><span class="s4">31</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">function </span><span class="s1">writeVarint64(val, buf, pos) {</span>
+    <span class="s2">while </span><span class="s1">(val.hi) {</span>
+        <span class="s1">buf[pos++] = val.lo &amp; </span><span class="s4">127 </span><span class="s1">| </span><span class="s4">128</span><span class="s1">;</span>
+        <span class="s1">val.lo = (val.lo &gt;&gt;&gt; </span><span class="s4">7 </span><span class="s1">| val.hi &lt;&lt; </span><span class="s4">25</span><span class="s1">) &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s1">val.hi &gt;&gt;&gt;= </span><span class="s4">7</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">while </span><span class="s1">(val.lo &gt; </span><span class="s4">127</span><span class="s1">) {</span>
+        <span class="s1">buf[pos++] = val.lo &amp; </span><span class="s4">127 </span><span class="s1">| </span><span class="s4">128</span><span class="s1">;</span>
+        <span class="s1">val.lo = val.lo &gt;&gt;&gt; </span><span class="s4">7</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s1">buf[pos++] = val.lo;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Writes an unsigned 64 bit value as a varint. 
+ * @param {Long|number|string} value Value to write 
+ * @returns {Writer} `this` 
+ * @throws {TypeError} If `value` is a string and no long library is present. 
+ */</span>
+<span class="s1">Writer.prototype.uint64 = </span><span class="s2">function </span><span class="s1">write_uint64(value) {</span>
+    <span class="s2">var </span><span class="s1">bits = LongBits.from(value);</span>
+    <span class="s2">return this</span><span class="s1">._push(writeVarint64, bits.length(), bits);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a signed 64 bit value as a varint. 
+ * @function 
+ * @param {Long|number|string} value Value to write 
+ * @returns {Writer} `this` 
+ * @throws {TypeError} If `value` is a string and no long library is present. 
+ */</span>
+<span class="s1">Writer.prototype.int64 = Writer.prototype.uint64;</span>
+
+<span class="s3">/** 
+ * Writes a signed 64 bit value as a varint, zig-zag encoded. 
+ * @param {Long|number|string} value Value to write 
+ * @returns {Writer} `this` 
+ * @throws {TypeError} If `value` is a string and no long library is present. 
+ */</span>
+<span class="s1">Writer.prototype.sint64 = </span><span class="s2">function </span><span class="s1">write_sint64(value) {</span>
+    <span class="s2">var </span><span class="s1">bits = LongBits.from(value).zzEncode();</span>
+    <span class="s2">return this</span><span class="s1">._push(writeVarint64, bits.length(), bits);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a boolish value as a varint. 
+ * @param {boolean} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.bool = </span><span class="s2">function </span><span class="s1">write_bool(value) {</span>
+    <span class="s2">return this</span><span class="s1">._push(writeByte, </span><span class="s4">1</span><span class="s1">, value ? </span><span class="s4">1 </span><span class="s1">: </span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">function </span><span class="s1">writeFixed32(val, buf, pos) {</span>
+    <span class="s1">buf[pos    ] =  val         &amp; </span><span class="s4">255</span><span class="s1">;</span>
+    <span class="s1">buf[pos + </span><span class="s4">1</span><span class="s1">] =  val &gt;&gt;&gt; </span><span class="s4">8   </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">;</span>
+    <span class="s1">buf[pos + </span><span class="s4">2</span><span class="s1">] =  val &gt;&gt;&gt; </span><span class="s4">16  </span><span class="s1">&amp; </span><span class="s4">255</span><span class="s1">;</span>
+    <span class="s1">buf[pos + </span><span class="s4">3</span><span class="s1">] =  val &gt;&gt;&gt; </span><span class="s4">24</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Writes an unsigned 32 bit value as fixed 32 bits. 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.fixed32 = </span><span class="s2">function </span><span class="s1">write_fixed32(value) {</span>
+    <span class="s2">return this</span><span class="s1">._push(writeFixed32, </span><span class="s4">4</span><span class="s1">, value &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a signed 32 bit value as fixed 32 bits. 
+ * @function 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.sfixed32 = Writer.prototype.fixed32;</span>
+
+<span class="s3">/** 
+ * Writes an unsigned 64 bit value as fixed 64 bits. 
+ * @param {Long|number|string} value Value to write 
+ * @returns {Writer} `this` 
+ * @throws {TypeError} If `value` is a string and no long library is present. 
+ */</span>
+<span class="s1">Writer.prototype.fixed64 = </span><span class="s2">function </span><span class="s1">write_fixed64(value) {</span>
+    <span class="s2">var </span><span class="s1">bits = LongBits.from(value);</span>
+    <span class="s2">return this</span><span class="s1">._push(writeFixed32, </span><span class="s4">4</span><span class="s1">, bits.lo)._push(writeFixed32, </span><span class="s4">4</span><span class="s1">, bits.hi);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a signed 64 bit value as fixed 64 bits. 
+ * @function 
+ * @param {Long|number|string} value Value to write 
+ * @returns {Writer} `this` 
+ * @throws {TypeError} If `value` is a string and no long library is present. 
+ */</span>
+<span class="s1">Writer.prototype.sfixed64 = Writer.prototype.fixed64;</span>
+
+<span class="s3">/** 
+ * Writes a float (32 bit). 
+ * @function 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.float = </span><span class="s2">function </span><span class="s1">write_float(value) {</span>
+    <span class="s2">return this</span><span class="s1">._push(util.float.writeFloatLE, </span><span class="s4">4</span><span class="s1">, value);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a double (64 bit float). 
+ * @function 
+ * @param {number} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.double = </span><span class="s2">function </span><span class="s1">write_double(value) {</span>
+    <span class="s2">return this</span><span class="s1">._push(util.float.writeDoubleLE, </span><span class="s4">8</span><span class="s1">, value);</span>
+<span class="s1">};</span>
+
+<span class="s2">var </span><span class="s1">writeBytes = util.Array.prototype.set</span>
+    <span class="s1">? </span><span class="s2">function </span><span class="s1">writeBytes_set(val, buf, pos) {</span>
+        <span class="s1">buf.set(val, pos); </span><span class="s3">// also works for plain array values</span>
+    <span class="s1">}</span>
+    <span class="s3">/* istanbul ignore next */</span>
+    <span class="s1">: </span><span class="s2">function </span><span class="s1">writeBytes_for(val, buf, pos) {</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; val.length; ++i)</span>
+            <span class="s1">buf[pos + i] = val[i];</span>
+    <span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a sequence of bytes. 
+ * @param {Uint8Array|string} value Buffer or base64 encoded string to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.bytes = </span><span class="s2">function </span><span class="s1">write_bytes(value) {</span>
+    <span class="s2">var </span><span class="s1">len = value.length &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!len)</span>
+        <span class="s2">return this</span><span class="s1">._push(writeByte, </span><span class="s4">1</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(util.isString(value)) {</span>
+        <span class="s2">var </span><span class="s1">buf = Writer.alloc(len = base64.length(value));</span>
+        <span class="s1">base64.decode(value, buf, </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s1">value = buf;</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.uint32(len)._push(writeBytes, len, value);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Writes a string. 
+ * @param {string} value Value to write 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.string = </span><span class="s2">function </span><span class="s1">write_string(value) {</span>
+    <span class="s2">var </span><span class="s1">len = utf8.length(value);</span>
+    <span class="s2">return </span><span class="s1">len</span>
+        <span class="s1">? </span><span class="s2">this</span><span class="s1">.uint32(len)._push(utf8.write, len, value)</span>
+        <span class="s1">: </span><span class="s2">this</span><span class="s1">._push(writeByte, </span><span class="s4">1</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Forks this writer's state by pushing it to a stack. 
+ * Calling {@link Writer#reset|reset} or {@link Writer#ldelim|ldelim} resets the writer to the previous state. 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.fork = </span><span class="s2">function </span><span class="s1">fork() {</span>
+    <span class="s2">this</span><span class="s1">.states = </span><span class="s2">new </span><span class="s1">State(</span><span class="s2">this</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.head = </span><span class="s2">this</span><span class="s1">.tail = </span><span class="s2">new </span><span class="s1">Op(noop, </span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.len = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Resets this instance to the last state. 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.reset = </span><span class="s2">function </span><span class="s1">reset() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.states) {</span>
+        <span class="s2">this</span><span class="s1">.head   = </span><span class="s2">this</span><span class="s1">.states.head;</span>
+        <span class="s2">this</span><span class="s1">.tail   = </span><span class="s2">this</span><span class="s1">.states.tail;</span>
+        <span class="s2">this</span><span class="s1">.len    = </span><span class="s2">this</span><span class="s1">.states.len;</span>
+        <span class="s2">this</span><span class="s1">.states = </span><span class="s2">this</span><span class="s1">.states.next;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">this</span><span class="s1">.head = </span><span class="s2">this</span><span class="s1">.tail = </span><span class="s2">new </span><span class="s1">Op(noop, </span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s2">this</span><span class="s1">.len  = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Resets to the last state and appends the fork state's current write length as a varint followed by its operations. 
+ * @returns {Writer} `this` 
+ */</span>
+<span class="s1">Writer.prototype.ldelim = </span><span class="s2">function </span><span class="s1">ldelim() {</span>
+    <span class="s2">var </span><span class="s1">head = </span><span class="s2">this</span><span class="s1">.head,</span>
+        <span class="s1">tail = </span><span class="s2">this</span><span class="s1">.tail,</span>
+        <span class="s1">len  = </span><span class="s2">this</span><span class="s1">.len;</span>
+    <span class="s2">this</span><span class="s1">.reset().uint32(len);</span>
+    <span class="s2">if </span><span class="s1">(len) {</span>
+        <span class="s2">this</span><span class="s1">.tail.next = head.next; </span><span class="s3">// skip noop</span>
+        <span class="s2">this</span><span class="s1">.tail = tail;</span>
+        <span class="s2">this</span><span class="s1">.len += len;</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Finishes the write operation. 
+ * @returns {Uint8Array} Finished buffer 
+ */</span>
+<span class="s1">Writer.prototype.finish = </span><span class="s2">function </span><span class="s1">finish() {</span>
+    <span class="s2">var </span><span class="s1">head = </span><span class="s2">this</span><span class="s1">.head.next, </span><span class="s3">// skip noop</span>
+        <span class="s1">buf  = </span><span class="s2">this</span><span class="s1">.constructor.alloc(</span><span class="s2">this</span><span class="s1">.len),</span>
+        <span class="s1">pos  = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">while </span><span class="s1">(head) {</span>
+        <span class="s1">head.fn(head.val, buf, pos);</span>
+        <span class="s1">pos += head.len;</span>
+        <span class="s1">head = head.next;</span>
+    <span class="s1">}</span>
+    <span class="s3">// this.head = this.tail = null;</span>
+    <span class="s2">return </span><span class="s1">buf;</span>
+<span class="s1">};</span>
+
+<span class="s1">Writer._configure = </span><span class="s2">function</span><span class="s1">(BufferWriter_) {</span>
+    <span class="s1">BufferWriter = BufferWriter_;</span>
+    <span class="s1">Writer.create = create();</span>
+    <span class="s1">BufferWriter._configure();</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

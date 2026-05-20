@@ -1,0 +1,482 @@
+<html>
+<head>
+<title>minimal.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+minimal.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">util = exports;</span>
+
+<span class="s3">// used to return a Promise where callback is omitted</span>
+<span class="s1">util.asPromise = require(</span><span class="s0">&quot;@protobufjs/aspromise&quot;</span><span class="s1">);</span>
+
+<span class="s3">// converts to / from base64 encoded strings</span>
+<span class="s1">util.base64 = require(</span><span class="s0">&quot;@protobufjs/base64&quot;</span><span class="s1">);</span>
+
+<span class="s3">// base class of rpc.Service</span>
+<span class="s1">util.EventEmitter = require(</span><span class="s0">&quot;@protobufjs/eventemitter&quot;</span><span class="s1">);</span>
+
+<span class="s3">// float handling accross browsers</span>
+<span class="s1">util.float = require(</span><span class="s0">&quot;@protobufjs/float&quot;</span><span class="s1">);</span>
+
+<span class="s3">// requires modules optionally and hides the call from bundlers</span>
+<span class="s1">util.inquire = require(</span><span class="s0">&quot;@protobufjs/inquire&quot;</span><span class="s1">);</span>
+
+<span class="s3">// converts to / from utf8 encoded strings</span>
+<span class="s1">util.utf8 = require(</span><span class="s0">&quot;@protobufjs/utf8&quot;</span><span class="s1">);</span>
+
+<span class="s3">// provides a node-like buffer pool in the browser</span>
+<span class="s1">util.pool = require(</span><span class="s0">&quot;@protobufjs/pool&quot;</span><span class="s1">);</span>
+
+<span class="s3">// utility to work with the low and high bits of a 64 bit value</span>
+<span class="s1">util.LongBits = require(</span><span class="s0">&quot;./longbits&quot;</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * Whether running within node or not. 
+ * @memberof util 
+ * @type {boolean} 
+ */</span>
+<span class="s1">util.isNode = Boolean(</span><span class="s2">typeof </span><span class="s1">global !== </span><span class="s0">&quot;undefined&quot;</span>
+                   <span class="s1">&amp;&amp; global</span>
+                   <span class="s1">&amp;&amp; global.process</span>
+                   <span class="s1">&amp;&amp; global.process.versions</span>
+                   <span class="s1">&amp;&amp; global.process.versions.node);</span>
+
+<span class="s3">/** 
+ * Global object reference. 
+ * @memberof util 
+ * @type {Object} 
+ */</span>
+<span class="s1">util.global = util.isNode &amp;&amp; global</span>
+           <span class="s1">|| </span><span class="s2">typeof </span><span class="s1">window !== </span><span class="s0">&quot;undefined&quot; </span><span class="s1">&amp;&amp; window</span>
+           <span class="s1">|| </span><span class="s2">typeof </span><span class="s1">self   !== </span><span class="s0">&quot;undefined&quot; </span><span class="s1">&amp;&amp; self</span>
+           <span class="s1">|| </span><span class="s2">this</span><span class="s1">; </span><span class="s3">// eslint-disable-line no-invalid-this</span>
+
+<span class="s3">/** 
+ * An immuable empty array. 
+ * @memberof util 
+ * @type {Array.&lt;*&gt;} 
+ * @const 
+ */</span>
+<span class="s1">util.emptyArray = Object.freeze ? Object.freeze([]) : </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">[]; </span><span class="s3">// used on prototypes</span>
+
+<span class="s3">/** 
+ * An immutable empty object. 
+ * @type {Object} 
+ * @const 
+ */</span>
+<span class="s1">util.emptyObject = Object.freeze ? Object.freeze({}) : </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">{}; </span><span class="s3">// used on prototypes</span>
+
+<span class="s3">/** 
+ * Tests if the specified value is an integer. 
+ * @function 
+ * @param {*} value Value to test 
+ * @returns {boolean} `true` if the value is an integer 
+ */</span>
+<span class="s1">util.isInteger = Number.isInteger || </span><span class="s3">/* istanbul ignore next */ </span><span class="s2">function </span><span class="s1">isInteger(value) {</span>
+    <span class="s2">return typeof </span><span class="s1">value === </span><span class="s0">&quot;number&quot; </span><span class="s1">&amp;&amp; isFinite(value) &amp;&amp; Math.floor(value) === value;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Tests if the specified value is a string. 
+ * @param {*} value Value to test 
+ * @returns {boolean} `true` if the value is a string 
+ */</span>
+<span class="s1">util.isString = </span><span class="s2">function </span><span class="s1">isString(value) {</span>
+    <span class="s2">return typeof </span><span class="s1">value === </span><span class="s0">&quot;string&quot; </span><span class="s1">|| value </span><span class="s2">instanceof </span><span class="s1">String;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Tests if the specified value is a non-null object. 
+ * @param {*} value Value to test 
+ * @returns {boolean} `true` if the value is a non-null object 
+ */</span>
+<span class="s1">util.isObject = </span><span class="s2">function </span><span class="s1">isObject(value) {</span>
+    <span class="s2">return </span><span class="s1">value &amp;&amp; </span><span class="s2">typeof </span><span class="s1">value === </span><span class="s0">&quot;object&quot;</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Checks if a property on a message is considered to be present. 
+ * This is an alias of {@link util.isSet}. 
+ * @function 
+ * @param {Object} obj Plain object or message instance 
+ * @param {string} prop Property name 
+ * @returns {boolean} `true` if considered to be present, otherwise `false` 
+ */</span>
+<span class="s1">util.isset =</span>
+
+<span class="s3">/** 
+ * Checks if a property on a message is considered to be present. 
+ * @param {Object} obj Plain object or message instance 
+ * @param {string} prop Property name 
+ * @returns {boolean} `true` if considered to be present, otherwise `false` 
+ */</span>
+<span class="s1">util.isSet = </span><span class="s2">function </span><span class="s1">isSet(obj, prop) {</span>
+    <span class="s2">var </span><span class="s1">value = obj[prop];</span>
+    <span class="s2">if </span><span class="s1">(value != </span><span class="s2">null </span><span class="s1">&amp;&amp; obj.hasOwnProperty(prop)) </span><span class="s3">// eslint-disable-line eqeqeq, no-prototype-builtins</span>
+        <span class="s2">return typeof </span><span class="s1">value !== </span><span class="s0">&quot;object&quot; </span><span class="s1">|| (Array.isArray(value) ? value.length : Object.keys(value).length) &gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">return false</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Any compatible Buffer instance. 
+ * This is a minimal stand-alone definition of a Buffer instance. The actual type is that exported by node's typings. 
+ * @interface Buffer 
+ * @extends Uint8Array 
+ */</span>
+
+<span class="s3">/** 
+ * Node's Buffer class if available. 
+ * @type {Constructor&lt;Buffer&gt;} 
+ */</span>
+<span class="s1">util.Buffer = (</span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">try </span><span class="s1">{</span>
+        <span class="s2">var </span><span class="s1">Buffer = util.inquire(</span><span class="s0">&quot;buffer&quot;</span><span class="s1">).Buffer;</span>
+        <span class="s3">// refuse to use non-node buffers if not explicitly assigned (perf reasons):</span>
+        <span class="s2">return </span><span class="s1">Buffer.prototype.utf8Write ? Buffer : </span><span class="s3">/* istanbul ignore next */ </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s2">return null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">})();</span>
+
+<span class="s3">// Internal alias of or polyfull for Buffer.from.</span>
+<span class="s1">util._Buffer_from = </span><span class="s2">null</span><span class="s1">;</span>
+
+<span class="s3">// Internal alias of or polyfill for Buffer.allocUnsafe.</span>
+<span class="s1">util._Buffer_allocUnsafe = </span><span class="s2">null</span><span class="s1">;</span>
+
+<span class="s3">/** 
+ * Creates a new buffer of whatever type supported by the environment. 
+ * @param {number|number[]} [sizeOrArray=0] Buffer size or number array 
+ * @returns {Uint8Array|Buffer} Buffer 
+ */</span>
+<span class="s1">util.newBuffer = </span><span class="s2">function </span><span class="s1">newBuffer(sizeOrArray) {</span>
+    <span class="s3">/* istanbul ignore next */</span>
+    <span class="s2">return typeof </span><span class="s1">sizeOrArray === </span><span class="s0">&quot;number&quot;</span>
+        <span class="s1">? util.Buffer</span>
+            <span class="s1">? util._Buffer_allocUnsafe(sizeOrArray)</span>
+            <span class="s1">: </span><span class="s2">new </span><span class="s1">util.Array(sizeOrArray)</span>
+        <span class="s1">: util.Buffer</span>
+            <span class="s1">? util._Buffer_from(sizeOrArray)</span>
+            <span class="s1">: </span><span class="s2">typeof </span><span class="s1">Uint8Array === </span><span class="s0">&quot;undefined&quot;</span>
+                <span class="s1">? sizeOrArray</span>
+                <span class="s1">: </span><span class="s2">new </span><span class="s1">Uint8Array(sizeOrArray);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Array implementation used in the browser. `Uint8Array` if supported, otherwise `Array`. 
+ * @type {Constructor&lt;Uint8Array&gt;} 
+ */</span>
+<span class="s1">util.Array = </span><span class="s2">typeof </span><span class="s1">Uint8Array !== </span><span class="s0">&quot;undefined&quot; </span><span class="s1">? Uint8Array </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">: Array;</span>
+
+<span class="s3">/** 
+ * Any compatible Long instance. 
+ * This is a minimal stand-alone definition of a Long instance. The actual type is that exported by long.js. 
+ * @interface Long 
+ * @property {number} low Low bits 
+ * @property {number} high High bits 
+ * @property {boolean} unsigned Whether unsigned or not 
+ */</span>
+
+<span class="s3">/** 
+ * Long.js's Long class if available. 
+ * @type {Constructor&lt;Long&gt;} 
+ */</span>
+<span class="s1">util.Long = </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">util.global.dcodeIO &amp;&amp; </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">util.global.dcodeIO.Long</span>
+         <span class="s1">|| </span><span class="s3">/* istanbul ignore next */ </span><span class="s1">util.global.Long</span>
+         <span class="s1">|| util.inquire(</span><span class="s0">&quot;long&quot;</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * Regular expression used to verify 2 bit (`bool`) map keys. 
+ * @type {RegExp} 
+ * @const 
+ */</span>
+<span class="s1">util.key2Re = /^</span><span class="s2">true</span><span class="s1">|</span><span class="s2">false</span><span class="s1">|</span><span class="s4">0</span><span class="s1">|</span><span class="s4">1</span><span class="s1">$/;</span>
+
+<span class="s3">/** 
+ * Regular expression used to verify 32 bit (`int32` etc.) map keys. 
+ * @type {RegExp} 
+ * @const 
+ */</span>
+<span class="s1">util.key32Re = /^-?(?:</span><span class="s4">0</span><span class="s1">|[</span><span class="s4">1</span><span class="s1">-</span><span class="s4">9</span><span class="s1">][</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">]*)$/;</span>
+
+<span class="s3">/** 
+ * Regular expression used to verify 64 bit (`int64` etc.) map keys. 
+ * @type {RegExp} 
+ * @const 
+ */</span>
+<span class="s1">util.key64Re = /^(?:[\\x00-\\xff]{</span><span class="s4">8</span><span class="s1">}|-?(?:</span><span class="s4">0</span><span class="s1">|[</span><span class="s4">1</span><span class="s1">-</span><span class="s4">9</span><span class="s1">][</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">]*))$/;</span>
+
+<span class="s3">/** 
+ * Converts a number or long to an 8 characters long hash string. 
+ * @param {Long|number} value Value to convert 
+ * @returns {string} Hash 
+ */</span>
+<span class="s1">util.longToHash = </span><span class="s2">function </span><span class="s1">longToHash(value) {</span>
+    <span class="s2">return </span><span class="s1">value</span>
+        <span class="s1">? util.LongBits.from(value).toHash()</span>
+        <span class="s1">: util.LongBits.zeroHash;</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Converts an 8 characters long hash string to a long or number. 
+ * @param {string} hash Hash 
+ * @param {boolean} [unsigned=false] Whether unsigned or not 
+ * @returns {Long|number} Original value 
+ */</span>
+<span class="s1">util.longFromHash = </span><span class="s2">function </span><span class="s1">longFromHash(hash, unsigned) {</span>
+    <span class="s2">var </span><span class="s1">bits = util.LongBits.fromHash(hash);</span>
+    <span class="s2">if </span><span class="s1">(util.Long)</span>
+        <span class="s2">return </span><span class="s1">util.Long.fromBits(bits.lo, bits.hi, unsigned);</span>
+    <span class="s2">return </span><span class="s1">bits.toNumber(Boolean(unsigned));</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Merges the properties of the source object into the destination object. 
+ * @memberof util 
+ * @param {Object.&lt;string,*&gt;} dst Destination object 
+ * @param {Object.&lt;string,*&gt;} src Source object 
+ * @param {boolean} [ifNotSet=false] Merges only if the key is not already set 
+ * @returns {Object.&lt;string,*&gt;} Destination object 
+ */</span>
+<span class="s2">function </span><span class="s1">merge(dst, src, ifNotSet) { </span><span class="s3">// used by converters</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">keys = Object.keys(src), i = </span><span class="s4">0</span><span class="s1">; i &lt; keys.length; ++i)</span>
+        <span class="s2">if </span><span class="s1">(dst[keys[i]] === undefined || !ifNotSet)</span>
+            <span class="s2">if </span><span class="s1">(keys[i] !== </span><span class="s0">&quot;__proto__&quot;</span><span class="s1">)</span>
+                <span class="s1">dst[keys[i]] = src[keys[i]];</span>
+    <span class="s2">return </span><span class="s1">dst;</span>
+<span class="s1">}</span>
+
+<span class="s1">util.merge = merge;</span>
+
+<span class="s3">/** 
+ * Recursion limit. 
+ * @memberof util 
+ * @type {number} 
+ */</span>
+<span class="s1">util.recursionLimit = </span><span class="s4">100</span><span class="s1">;</span>
+
+<span class="s3">/** 
+ * Makes a property safe for assignment as an own property. 
+ * @memberof util 
+ * @param {Object.&lt;string,*&gt;} obj Object 
+ * @param {string} key Property key 
+ * @returns {undefined} 
+ */</span>
+<span class="s1">util.makeProp = </span><span class="s2">function </span><span class="s1">makeProp(obj, key) {</span>
+    <span class="s1">Object.defineProperty(obj, key, {</span>
+        <span class="s1">enumerable: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">writable: </span><span class="s2">true</span>
+    <span class="s1">});</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Converts the first character of a string to lower case. 
+ * @param {string} str String to convert 
+ * @returns {string} Converted string 
+ */</span>
+<span class="s1">util.lcFirst = </span><span class="s2">function </span><span class="s1">lcFirst(str) {</span>
+    <span class="s2">return </span><span class="s1">str.charAt(</span><span class="s4">0</span><span class="s1">).toLowerCase() + str.substring(</span><span class="s4">1</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Creates a custom error constructor. 
+ * @memberof util 
+ * @param {string} name Error name 
+ * @returns {Constructor&lt;Error&gt;} Custom error constructor 
+ */</span>
+<span class="s2">function </span><span class="s1">newError(name) {</span>
+
+    <span class="s2">function </span><span class="s1">CustomError(message, properties) {</span>
+
+        <span class="s2">if </span><span class="s1">(!(</span><span class="s2">this instanceof </span><span class="s1">CustomError))</span>
+            <span class="s2">return new </span><span class="s1">CustomError(message, properties);</span>
+
+        <span class="s3">// Error.call(this, message);</span>
+        <span class="s3">// ^ just returns a new error instance because the ctor can be called as a function</span>
+
+        <span class="s1">Object.defineProperty(</span><span class="s2">this</span><span class="s1">, </span><span class="s0">&quot;message&quot;</span><span class="s1">, { get: </span><span class="s2">function</span><span class="s1">() { </span><span class="s2">return </span><span class="s1">message; } });</span>
+
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s2">if </span><span class="s1">(Error.captureStackTrace) </span><span class="s3">// node</span>
+            <span class="s1">Error.captureStackTrace(</span><span class="s2">this</span><span class="s1">, CustomError);</span>
+        <span class="s2">else</span>
+            <span class="s1">Object.defineProperty(</span><span class="s2">this</span><span class="s1">, </span><span class="s0">&quot;stack&quot;</span><span class="s1">, { value: </span><span class="s2">new </span><span class="s1">Error().stack || </span><span class="s0">&quot;&quot; </span><span class="s1">});</span>
+
+        <span class="s2">if </span><span class="s1">(properties)</span>
+            <span class="s1">merge(</span><span class="s2">this</span><span class="s1">, properties);</span>
+    <span class="s1">}</span>
+
+    <span class="s1">CustomError.prototype = Object.create(Error.prototype, {</span>
+        <span class="s1">constructor: {</span>
+            <span class="s1">value: CustomError,</span>
+            <span class="s1">writable: </span><span class="s2">true</span><span class="s1">,</span>
+            <span class="s1">enumerable: </span><span class="s2">false</span><span class="s1">,</span>
+            <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">},</span>
+        <span class="s1">name: {</span>
+            <span class="s1">get: </span><span class="s2">function </span><span class="s1">get() { </span><span class="s2">return </span><span class="s1">name; },</span>
+            <span class="s1">set: undefined,</span>
+            <span class="s1">enumerable: </span><span class="s2">false</span><span class="s1">,</span>
+            <span class="s3">// configurable: false would accurately preserve the behavior of</span>
+            <span class="s3">// the original, but I'm guessing that was not intentional.</span>
+            <span class="s3">// For an actual error subclass, this property would</span>
+            <span class="s3">// be configurable.</span>
+            <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">},</span>
+        <span class="s1">toString: {</span>
+            <span class="s1">value: </span><span class="s2">function </span><span class="s1">value() { </span><span class="s2">return this</span><span class="s1">.name + </span><span class="s0">&quot;: &quot; </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.message; },</span>
+            <span class="s1">writable: </span><span class="s2">true</span><span class="s1">,</span>
+            <span class="s1">enumerable: </span><span class="s2">false</span><span class="s1">,</span>
+            <span class="s1">configurable: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">},</span>
+    <span class="s1">});</span>
+
+    <span class="s2">return </span><span class="s1">CustomError;</span>
+<span class="s1">}</span>
+
+<span class="s1">util.newError = newError;</span>
+
+<span class="s3">/** 
+ * Constructs a new protocol error. 
+ * @classdesc Error subclass indicating a protocol specifc error. 
+ * @memberof util 
+ * @extends Error 
+ * @template T extends Message&lt;T&gt; 
+ * @constructor 
+ * @param {string} message Error message 
+ * @param {Object.&lt;string,*&gt;} [properties] Additional properties 
+ * @example 
+ * try { 
+ *     MyMessage.decode(someBuffer); // throws if required fields are missing 
+ * } catch (e) { 
+ *     if (e instanceof ProtocolError &amp;&amp; e.instance) 
+ *         console.log(&quot;decoded so far: &quot; + JSON.stringify(e.instance)); 
+ * } 
+ */</span>
+<span class="s1">util.ProtocolError = newError(</span><span class="s0">&quot;ProtocolError&quot;</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * So far decoded message instance. 
+ * @name util.ProtocolError#instance 
+ * @type {Message&lt;T&gt;} 
+ */</span>
+
+<span class="s3">/** 
+ * A OneOf getter as returned by {@link util.oneOfGetter}. 
+ * @typedef OneOfGetter 
+ * @type {function} 
+ * @returns {string|undefined} Set field name, if any 
+ */</span>
+
+<span class="s3">/** 
+ * Builds a getter for a oneof's present field name. 
+ * @param {string[]} fieldNames Field names 
+ * @returns {OneOfGetter} Unbound getter 
+ */</span>
+<span class="s1">util.oneOfGetter = </span><span class="s2">function </span><span class="s1">getOneOf(fieldNames) {</span>
+    <span class="s2">var </span><span class="s1">fieldMap = {};</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; fieldNames.length; ++i)</span>
+        <span class="s1">fieldMap[fieldNames[i]] = </span><span class="s4">1</span><span class="s1">;</span>
+
+    <span class="s3">/** 
+     * @returns {string|undefined} Set field name, if any 
+     * @this Object 
+     * @ignore 
+     */</span>
+    <span class="s2">return function</span><span class="s1">() { </span><span class="s3">// eslint-disable-line consistent-return</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">keys = Object.keys(</span><span class="s2">this</span><span class="s1">), i = keys.length - </span><span class="s4">1</span><span class="s1">; i &gt; -</span><span class="s4">1</span><span class="s1">; --i)</span>
+            <span class="s2">if </span><span class="s1">(fieldMap[keys[i]] === </span><span class="s4">1 </span><span class="s1">&amp;&amp; </span><span class="s2">this</span><span class="s1">[keys[i]] !== undefined &amp;&amp; </span><span class="s2">this</span><span class="s1">[keys[i]] !== </span><span class="s2">null</span><span class="s1">)</span>
+                <span class="s2">return </span><span class="s1">keys[i];</span>
+    <span class="s1">};</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * A OneOf setter as returned by {@link util.oneOfSetter}. 
+ * @typedef OneOfSetter 
+ * @type {function} 
+ * @param {string|undefined} value Field name 
+ * @returns {undefined} 
+ */</span>
+
+<span class="s3">/** 
+ * Builds a setter for a oneof's present field name. 
+ * @param {string[]} fieldNames Field names 
+ * @returns {OneOfSetter} Unbound setter 
+ */</span>
+<span class="s1">util.oneOfSetter = </span><span class="s2">function </span><span class="s1">setOneOf(fieldNames) {</span>
+
+    <span class="s3">/** 
+     * @param {string} name Field name 
+     * @returns {undefined} 
+     * @this Object 
+     * @ignore 
+     */</span>
+    <span class="s2">return function</span><span class="s1">(name) {</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; fieldNames.length; ++i)</span>
+            <span class="s2">if </span><span class="s1">(fieldNames[i] !== name)</span>
+                <span class="s2">delete this</span><span class="s1">[fieldNames[i]];</span>
+    <span class="s1">};</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Default conversion options used for {@link Message#toJSON} implementations. 
+ * 
+ * These options are close to proto3's JSON mapping with the exception that internal types like Any are handled just like messages. More precisely: 
+ * 
+ * - Longs become strings 
+ * - Enums become string keys 
+ * - Bytes become base64 encoded strings 
+ * - (Sub-)Messages become plain objects 
+ * - Maps become plain objects with all string keys 
+ * - Repeated fields become arrays 
+ * - NaN and Infinity for float and double fields become strings 
+ * 
+ * @type {IConversionOptions} 
+ * @see https://developers.google.com/protocol-buffers/docs/proto3?hl=en#json 
+ */</span>
+<span class="s1">util.toJSONOptions = {</span>
+    <span class="s1">longs: String,</span>
+    <span class="s1">enums: String,</span>
+    <span class="s1">bytes: String,</span>
+    <span class="s1">json: </span><span class="s2">true</span>
+<span class="s1">};</span>
+
+<span class="s3">// Sets up buffer utility according to the environment (called in index-minimal)</span>
+<span class="s1">util._configure = </span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">var </span><span class="s1">Buffer = util.Buffer;</span>
+    <span class="s3">/* istanbul ignore if */</span>
+    <span class="s2">if </span><span class="s1">(!Buffer) {</span>
+        <span class="s1">util._Buffer_from = util._Buffer_allocUnsafe = </span><span class="s2">null</span><span class="s1">;</span>
+        <span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s3">// because node 4.x buffers are incompatible &amp; immutable</span>
+    <span class="s3">// see: https://github.com/dcodeIO/protobuf.js/pull/665</span>
+    <span class="s1">util._Buffer_from = Buffer.from !== Uint8Array.from &amp;&amp; Buffer.from ||</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s2">function </span><span class="s1">Buffer_from(value, encoding) {</span>
+            <span class="s2">return new </span><span class="s1">Buffer(value, encoding);</span>
+        <span class="s1">};</span>
+    <span class="s1">util._Buffer_allocUnsafe = Buffer.allocUnsafe ||</span>
+        <span class="s3">/* istanbul ignore next */</span>
+        <span class="s2">function </span><span class="s1">Buffer_allocUnsafe(size) {</span>
+            <span class="s2">return new </span><span class="s1">Buffer(size);</span>
+        <span class="s1">};</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

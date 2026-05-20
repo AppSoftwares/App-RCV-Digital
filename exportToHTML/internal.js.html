@@ -1,0 +1,209 @@
+<html>
+<head>
+<title>internal.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+internal.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s0">&quot;safer-buffer&quot;</span><span class="s1">).Buffer;</span>
+
+<span class="s3">// Export Node.js internal encodings.</span>
+
+<span class="s1">module.exports = {</span>
+    <span class="s3">// Encodings</span>
+    <span class="s1">utf8:   { type: </span><span class="s0">&quot;_internal&quot;</span><span class="s1">, bomAware: </span><span class="s2">true</span><span class="s1">},</span>
+    <span class="s1">cesu8:  { type: </span><span class="s0">&quot;_internal&quot;</span><span class="s1">, bomAware: </span><span class="s2">true</span><span class="s1">},</span>
+    <span class="s1">unicode11utf8: </span><span class="s0">&quot;utf8&quot;</span><span class="s1">,</span>
+
+    <span class="s1">ucs2:   { type: </span><span class="s0">&quot;_internal&quot;</span><span class="s1">, bomAware: </span><span class="s2">true</span><span class="s1">},</span>
+    <span class="s1">utf16le: </span><span class="s0">&quot;ucs2&quot;</span><span class="s1">,</span>
+
+    <span class="s1">binary: { type: </span><span class="s0">&quot;_internal&quot; </span><span class="s1">},</span>
+    <span class="s1">base64: { type: </span><span class="s0">&quot;_internal&quot; </span><span class="s1">},</span>
+    <span class="s1">hex:    { type: </span><span class="s0">&quot;_internal&quot; </span><span class="s1">},</span>
+
+    <span class="s3">// Codec.</span>
+    <span class="s1">_internal: InternalCodec,</span>
+<span class="s1">};</span>
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+
+<span class="s2">function </span><span class="s1">InternalCodec(codecOptions, iconv) {</span>
+    <span class="s2">this</span><span class="s1">.enc = codecOptions.encodingName;</span>
+    <span class="s2">this</span><span class="s1">.bomAware = codecOptions.bomAware;</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.enc === </span><span class="s0">&quot;base64&quot;</span><span class="s1">)</span>
+        <span class="s2">this</span><span class="s1">.encoder = InternalEncoderBase64;</span>
+    <span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.enc === </span><span class="s0">&quot;cesu8&quot;</span><span class="s1">) {</span>
+        <span class="s2">this</span><span class="s1">.enc = </span><span class="s0">&quot;utf8&quot;</span><span class="s1">; </span><span class="s3">// Use utf8 for decoding.</span>
+        <span class="s2">this</span><span class="s1">.encoder = InternalEncoderCesu8;</span>
+
+        <span class="s3">// Add decoder for versions of Node not supporting CESU-8</span>
+        <span class="s2">if </span><span class="s1">(Buffer.from(</span><span class="s0">'eda0bdedb2a9'</span><span class="s1">, </span><span class="s0">'hex'</span><span class="s1">).toString() !== </span><span class="s0">'💩'</span><span class="s1">) {</span>
+            <span class="s2">this</span><span class="s1">.decoder = InternalDecoderCesu8;</span>
+            <span class="s2">this</span><span class="s1">.defaultCharUnicode = iconv.defaultCharUnicode;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalCodec.prototype.encoder = InternalEncoder;</span>
+<span class="s1">InternalCodec.prototype.decoder = InternalDecoder;</span>
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+
+<span class="s3">// We use node.js internal decoder. Its signature is the same as ours.</span>
+<span class="s2">var </span><span class="s1">StringDecoder = require(</span><span class="s0">'string_decoder'</span><span class="s1">).StringDecoder;</span>
+
+<span class="s2">if </span><span class="s1">(!StringDecoder.prototype.end) </span><span class="s3">// Node v0.8 doesn't have this method.</span>
+    <span class="s1">StringDecoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {};</span>
+
+
+<span class="s2">function </span><span class="s1">InternalDecoder(options, codec) {</span>
+    <span class="s1">StringDecoder.call(</span><span class="s2">this</span><span class="s1">, codec.enc);</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalDecoder.prototype = StringDecoder.prototype;</span>
+
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+<span class="s3">// Encoder is mostly trivial</span>
+
+<span class="s2">function </span><span class="s1">InternalEncoder(options, codec) {</span>
+    <span class="s2">this</span><span class="s1">.enc = codec.enc;</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoder.prototype.write = </span><span class="s2">function</span><span class="s1">(str) {</span>
+    <span class="s2">return </span><span class="s1">Buffer.from(str, </span><span class="s2">this</span><span class="s1">.enc);</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+<span class="s1">}</span>
+
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+<span class="s3">// Except base64 encoder, which must keep its state.</span>
+
+<span class="s2">function </span><span class="s1">InternalEncoderBase64(options, codec) {</span>
+    <span class="s2">this</span><span class="s1">.prevStr = </span><span class="s0">''</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoderBase64.prototype.write = </span><span class="s2">function</span><span class="s1">(str) {</span>
+    <span class="s1">str = </span><span class="s2">this</span><span class="s1">.prevStr + str;</span>
+    <span class="s2">var </span><span class="s1">completeQuads = str.length - (str.length % </span><span class="s4">4</span><span class="s1">);</span>
+    <span class="s2">this</span><span class="s1">.prevStr = str.slice(completeQuads);</span>
+    <span class="s1">str = str.slice(</span><span class="s4">0</span><span class="s1">, completeQuads);</span>
+
+    <span class="s2">return </span><span class="s1">Buffer.from(str, </span><span class="s0">&quot;base64&quot;</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoderBase64.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">return </span><span class="s1">Buffer.from(</span><span class="s2">this</span><span class="s1">.prevStr, </span><span class="s0">&quot;base64&quot;</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+<span class="s3">// CESU-8 encoder is also special.</span>
+
+<span class="s2">function </span><span class="s1">InternalEncoderCesu8(options, codec) {</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoderCesu8.prototype.write = </span><span class="s2">function</span><span class="s1">(str) {</span>
+    <span class="s2">var </span><span class="s1">buf = Buffer.alloc(str.length * </span><span class="s4">3</span><span class="s1">), bufIdx = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; str.length; i++) {</span>
+        <span class="s2">var </span><span class="s1">charCode = str.charCodeAt(i);</span>
+        <span class="s3">// Naive implementation, but it works because CESU-8 is especially easy</span>
+        <span class="s3">// to convert from UTF-16 (which all JS strings are encoded in).</span>
+        <span class="s2">if </span><span class="s1">(charCode &lt; </span><span class="s4">0</span><span class="s1">x80)</span>
+            <span class="s1">buf[bufIdx++] = charCode;</span>
+        <span class="s2">else if </span><span class="s1">(charCode &lt; </span><span class="s4">0</span><span class="s1">x800) {</span>
+            <span class="s1">buf[bufIdx++] = </span><span class="s4">0</span><span class="s1">xC0 + (charCode &gt;&gt;&gt; </span><span class="s4">6</span><span class="s1">);</span>
+            <span class="s1">buf[bufIdx++] = </span><span class="s4">0</span><span class="s1">x80 + (charCode &amp; </span><span class="s4">0</span><span class="s1">x3f);</span>
+        <span class="s1">}</span>
+        <span class="s2">else </span><span class="s1">{ </span><span class="s3">// charCode will always be &lt; 0x10000 in javascript.</span>
+            <span class="s1">buf[bufIdx++] = </span><span class="s4">0</span><span class="s1">xE0 + (charCode &gt;&gt;&gt; </span><span class="s4">12</span><span class="s1">);</span>
+            <span class="s1">buf[bufIdx++] = </span><span class="s4">0</span><span class="s1">x80 + ((charCode &gt;&gt;&gt; </span><span class="s4">6</span><span class="s1">) &amp; </span><span class="s4">0</span><span class="s1">x3f);</span>
+            <span class="s1">buf[bufIdx++] = </span><span class="s4">0</span><span class="s1">x80 + (charCode &amp; </span><span class="s4">0</span><span class="s1">x3f);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">buf.slice(</span><span class="s4">0</span><span class="s1">, bufIdx);</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalEncoderCesu8.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+<span class="s1">}</span>
+
+<span class="s3">//------------------------------------------------------------------------------</span>
+<span class="s3">// CESU-8 decoder is not implemented in Node v4.0+</span>
+
+<span class="s2">function </span><span class="s1">InternalDecoderCesu8(options, codec) {</span>
+    <span class="s2">this</span><span class="s1">.acc = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.contBytes = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.accBytes = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.defaultCharUnicode = codec.defaultCharUnicode;</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalDecoderCesu8.prototype.write = </span><span class="s2">function</span><span class="s1">(buf) {</span>
+    <span class="s2">var </span><span class="s1">acc = </span><span class="s2">this</span><span class="s1">.acc, contBytes = </span><span class="s2">this</span><span class="s1">.contBytes, accBytes = </span><span class="s2">this</span><span class="s1">.accBytes, </span>
+        <span class="s1">res = </span><span class="s0">''</span><span class="s1">;</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; buf.length; i++) {</span>
+        <span class="s2">var </span><span class="s1">curByte = buf[i];</span>
+        <span class="s2">if </span><span class="s1">((curByte &amp; </span><span class="s4">0</span><span class="s1">xC0) !== </span><span class="s4">0</span><span class="s1">x80) { </span><span class="s3">// Leading byte</span>
+            <span class="s2">if </span><span class="s1">(contBytes &gt; </span><span class="s4">0</span><span class="s1">) { </span><span class="s3">// Previous code is invalid</span>
+                <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+                <span class="s1">contBytes = </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s1">}</span>
+
+            <span class="s2">if </span><span class="s1">(curByte &lt; </span><span class="s4">0</span><span class="s1">x80) { </span><span class="s3">// Single-byte code</span>
+                <span class="s1">res += String.fromCharCode(curByte);</span>
+            <span class="s1">} </span><span class="s2">else if </span><span class="s1">(curByte &lt; </span><span class="s4">0</span><span class="s1">xE0) { </span><span class="s3">// Two-byte code</span>
+                <span class="s1">acc = curByte &amp; </span><span class="s4">0</span><span class="s1">x1F;</span>
+                <span class="s1">contBytes = </span><span class="s4">1</span><span class="s1">; accBytes = </span><span class="s4">1</span><span class="s1">;</span>
+            <span class="s1">} </span><span class="s2">else if </span><span class="s1">(curByte &lt; </span><span class="s4">0</span><span class="s1">xF0) { </span><span class="s3">// Three-byte code</span>
+                <span class="s1">acc = curByte &amp; </span><span class="s4">0</span><span class="s1">x0F;</span>
+                <span class="s1">contBytes = </span><span class="s4">2</span><span class="s1">; accBytes = </span><span class="s4">1</span><span class="s1">;</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{ </span><span class="s3">// Four or more are not supported for CESU-8.</span>
+                <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{ </span><span class="s3">// Continuation byte</span>
+            <span class="s2">if </span><span class="s1">(contBytes &gt; </span><span class="s4">0</span><span class="s1">) { </span><span class="s3">// We're waiting for it.</span>
+                <span class="s1">acc = (acc &lt;&lt; </span><span class="s4">6</span><span class="s1">) | (curByte &amp; </span><span class="s4">0</span><span class="s1">x3f);</span>
+                <span class="s1">contBytes--; accBytes++;</span>
+                <span class="s2">if </span><span class="s1">(contBytes === </span><span class="s4">0</span><span class="s1">) {</span>
+                    <span class="s3">// Check for overlong encoding, but support Modified UTF-8 (encoding NULL as C0 80)</span>
+                    <span class="s2">if </span><span class="s1">(accBytes === </span><span class="s4">2 </span><span class="s1">&amp;&amp; acc &lt; </span><span class="s4">0</span><span class="s1">x80 &amp;&amp; acc &gt; </span><span class="s4">0</span><span class="s1">)</span>
+                        <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+                    <span class="s2">else if </span><span class="s1">(accBytes === </span><span class="s4">3 </span><span class="s1">&amp;&amp; acc &lt; </span><span class="s4">0</span><span class="s1">x800)</span>
+                        <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+                    <span class="s2">else</span>
+                        <span class="s3">// Actually add character.</span>
+                        <span class="s1">res += String.fromCharCode(acc);</span>
+                <span class="s1">}</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{ </span><span class="s3">// Unexpected continuation byte</span>
+                <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.acc = acc; </span><span class="s2">this</span><span class="s1">.contBytes = contBytes; </span><span class="s2">this</span><span class="s1">.accBytes = accBytes;</span>
+    <span class="s2">return </span><span class="s1">res;</span>
+<span class="s1">}</span>
+
+<span class="s1">InternalDecoderCesu8.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">var </span><span class="s1">res = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.contBytes &gt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">res += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+    <span class="s2">return </span><span class="s1">res;</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<html>
+<head>
+<title>motion-value.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+motion-value.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ secondsToMilliseconds, MotionGlobalConfig } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ AsyncMotionValueAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../AsyncMotionValueAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ JSAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../JSAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getValueTransition } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/get-value-transition.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ makeAnimationInstant } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/make-animation-instant.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getDefaultTransition } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/default-transitions.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getFinalKeyframe } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../keyframes/get-final.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isTransitionDefined } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/is-transition-defined.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../frameloop/frame.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s4">animateMotionValue </span><span class="s2">= (name, value, target, transition = {}, element, isHandoff) </span><span class="s0">=&gt; </span><span class="s2">(onComplete) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">valueTransition = </span><span class="s4">getValueTransition</span><span class="s1">(</span><span class="s2">transition, name</span><span class="s1">) </span><span class="s2">|| {};</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Most transition values are currently completely overwritten by value-specific 
+     * transitions. In the future it'd be nicer to blend these transitions. But for now 
+     * delay actually does inherit from the root transition if not value-specific. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">delay = valueTransition.delay || transition.delay || </span><span class="s6">0</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Elapsed isn't a public transition option but can be passed through from 
+     * optimized appear effects in milliseconds. 
+     </span><span class="s2">*/</span>
+    <span class="s0">let </span><span class="s2">{ elapsed = </span><span class="s6">0 </span><span class="s2">} = transition;</span>
+    <span class="s2">elapsed = elapsed - </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">delay</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">options = {</span>
+        <span class="s1">keyframes</span><span class="s2">: Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">target</span><span class="s1">) </span><span class="s2">? target : </span><span class="s1">[</span><span class="s7">null</span><span class="s2">, target</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s1">ease</span><span class="s2">: &quot;</span><span class="s3">easeOut</span><span class="s2">&quot;,</span>
+        <span class="s1">velocity</span><span class="s2">: value.</span><span class="s4">getVelocity</span><span class="s1">()</span><span class="s2">,</span>
+        <span class="s2">...valueTransition,</span>
+        <span class="s1">delay</span><span class="s2">: -elapsed,</span>
+        <span class="s4">onUpdate</span><span class="s2">: (v) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">value.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">v</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">valueTransition.onUpdate &amp;&amp; valueTransition.</span><span class="s4">onUpdate</span><span class="s1">(</span><span class="s2">v</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">},</span>
+        <span class="s4">onComplete</span><span class="s2">: () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s4">onComplete</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">valueTransition.onComplete &amp;&amp; valueTransition.</span><span class="s4">onComplete</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">},</span>
+        <span class="s2">name,</span>
+        <span class="s1">motionValue</span><span class="s2">: value,</span>
+        <span class="s1">element</span><span class="s2">: isHandoff ? </span><span class="s7">undefined </span><span class="s2">: element,</span>
+    <span class="s2">};</span>
+    <span class="s2">/**</span>
+     <span class="s5">* If there's no transition defined for this value, we can generate 
+     * unique transition settings for this value. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s4">isTransitionDefined</span><span class="s1">(</span><span class="s2">valueTransition</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">Object.</span><span class="s4">assign</span><span class="s1">(</span><span class="s2">options, </span><span class="s4">getDefaultTransition</span><span class="s1">(</span><span class="s2">name, options</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Both WAAPI and our internal animation functions use durations 
+     * as defined by milliseconds, while our external API defines them 
+     * as seconds. 
+     </span><span class="s2">*/</span>
+    <span class="s2">options.duration &amp;&amp; </span><span class="s1">(</span><span class="s2">options.duration = </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">options.duration</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">options.repeatDelay &amp;&amp; </span><span class="s1">(</span><span class="s2">options.repeatDelay = </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">options.repeatDelay</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Support deprecated way to set initial value. Prefer keyframe syntax. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options.from !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">options.keyframes</span><span class="s1">[</span><span class="s6">0</span><span class="s1">] </span><span class="s2">= options.from;</span>
+    <span class="s2">}</span>
+    <span class="s0">let </span><span class="s2">shouldSkip = </span><span class="s7">false</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options.type === </span><span class="s7">false </span><span class="s2">||</span>
+        <span class="s1">(</span><span class="s2">options.duration === </span><span class="s6">0 </span><span class="s2">&amp;&amp; !options.repeatDelay</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s4">makeAnimationInstant</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">options.delay === </span><span class="s6">0</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">shouldSkip = </span><span class="s7">true</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">MotionGlobalConfig.instantAnimations ||</span>
+        <span class="s2">MotionGlobalConfig.skipAnimations ||</span>
+        <span class="s2">element?.shouldSkipAnimations</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">shouldSkip = </span><span class="s7">true</span><span class="s2">;</span>
+        <span class="s4">makeAnimationInstant</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">options.delay = </span><span class="s6">0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s5">* If the transition type or easing has been explicitly set by the user 
+     * then we don't want to allow flattening the animation. 
+     </span><span class="s2">*/</span>
+    <span class="s2">options.allowFlatten = !valueTransition.type &amp;&amp; !valueTransition.ease;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* If we can or must skip creating the animation, and apply only 
+     * the final keyframe, do so. We also check once keyframes are resolved but 
+     * this early check prevents the need to create an animation at all. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">shouldSkip &amp;&amp; !isHandoff &amp;&amp; value.</span><span class="s4">get</span><span class="s1">() </span><span class="s2">!== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">finalKeyframe = </span><span class="s4">getFinalKeyframe</span><span class="s1">(</span><span class="s2">options.keyframes, valueTransition</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">finalKeyframe !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">frame.</span><span class="s4">update</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+                <span class="s2">options.</span><span class="s4">onUpdate</span><span class="s1">(</span><span class="s2">finalKeyframe</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">options.</span><span class="s4">onComplete</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">valueTransition.isSync</span>
+        <span class="s2">? new </span><span class="s4">JSAnimation</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span>
+        <span class="s2">: new </span><span class="s4">AsyncMotionValueAnimation</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">};</span>
+
+<span class="s0">export </span><span class="s2">{ animateMotionValue };</span>
+<span class="s2">//</span><span class="s5"># sourceMappingURL=motion-value.mjs.map</span>
+</pre>
+</body>
+</html>

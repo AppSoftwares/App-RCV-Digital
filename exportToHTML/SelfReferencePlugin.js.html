@@ -1,0 +1,127 @@
+<html>
+<head>
+<title>SelfReferencePlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+SelfReferencePlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const DescriptionFileUtils = require(</span><span class="s2">&quot;./DescriptionFileUtils&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonObject} JsonObject */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+
+<span class="s1">const slashCode = </span><span class="s2">&quot;/&quot;</span><span class="s1">.charCodeAt(</span><span class="s3">0</span><span class="s1">);</span>
+
+<span class="s0">// Sentinel stored in `_nameCache` when the description file either has no</span>
+<span class="s0">// exports field (so self-reference can't apply) or no string `name`.</span>
+<span class="s1">const NO_SELF_REF = Symbol(</span><span class="s2">&quot;NoSelfRef&quot;</span><span class="s1">);</span>
+
+<span class="s1">module.exports = class SelfReferencePlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {string | string[]} fieldNamePath name path 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, fieldNamePath, target) {</span>
+		<span class="s4">this</span><span class="s1">.source = source;</span>
+		<span class="s4">this</span><span class="s1">.target = target;</span>
+		<span class="s4">this</span><span class="s1">.fieldName = fieldNamePath;</span>
+		<span class="s0">// Self-reference needs both an exports field and a `&quot;name&quot;` string.</span>
+		<span class="s0">// Both are stable per description-file content, so cache the decision</span>
+		<span class="s0">// in one WeakMap: the resolved name when self-reference is possible,</span>
+		<span class="s0">// or `NO_SELF_REF` when it isn't. This skips the two per-resolve</span>
+		<span class="s0">// `DescriptionFileUtils.getField` walks for hot packages.</span>
+		<span class="s0">/** @type {WeakMap&lt;JsonObject, string | typeof NO_SELF_REF&gt;} */</span>
+		<span class="s4">this</span><span class="s1">._nameCache = </span><span class="s4">new </span><span class="s1">WeakMap();</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s4">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s4">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;SelfReferencePlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s4">if </span><span class="s1">(!request.descriptionFileData) </span><span class="s4">return </span><span class="s1">callback();</span>
+
+				<span class="s1">const req = request.request;</span>
+				<span class="s4">if </span><span class="s1">(!req) </span><span class="s4">return </span><span class="s1">callback();</span>
+
+				<span class="s1">const { descriptionFileData } = request;</span>
+				<span class="s1">let name = </span><span class="s4">this</span><span class="s1">._nameCache.get(descriptionFileData);</span>
+				<span class="s4">if </span><span class="s1">(name === undefined) {</span>
+					<span class="s0">// Feature is only enabled when an exports field is present</span>
+					<span class="s1">const exportsField = DescriptionFileUtils.getField(</span>
+						<span class="s1">descriptionFileData,</span>
+						<span class="s4">this</span><span class="s1">.fieldName,</span>
+					<span class="s1">);</span>
+					<span class="s4">if </span><span class="s1">(!exportsField) {</span>
+						<span class="s4">this</span><span class="s1">._nameCache.set(descriptionFileData, NO_SELF_REF);</span>
+						<span class="s4">return </span><span class="s1">callback();</span>
+					<span class="s1">}</span>
+					<span class="s1">const rawName = DescriptionFileUtils.getField(</span>
+						<span class="s1">descriptionFileData,</span>
+						<span class="s2">&quot;name&quot;</span><span class="s1">,</span>
+					<span class="s1">);</span>
+					<span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">rawName !== </span><span class="s2">&quot;string&quot;</span><span class="s1">) {</span>
+						<span class="s4">this</span><span class="s1">._nameCache.set(descriptionFileData, NO_SELF_REF);</span>
+						<span class="s4">return </span><span class="s1">callback();</span>
+					<span class="s1">}</span>
+					<span class="s1">name = rawName;</span>
+					<span class="s4">this</span><span class="s1">._nameCache.set(descriptionFileData, name);</span>
+				<span class="s1">} </span><span class="s4">else if </span><span class="s1">(name === NO_SELF_REF) {</span>
+					<span class="s4">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+
+				<span class="s4">if </span><span class="s1">(</span>
+					<span class="s1">req.startsWith(name) &amp;&amp;</span>
+					<span class="s1">(req.length === name.length ||</span>
+						<span class="s1">req.charCodeAt(name.length) === slashCode)</span>
+				<span class="s1">) {</span>
+					<span class="s1">const remainingRequest = `.${req.slice(name.length)}`;</span>
+					<span class="s0">/** @type {ResolveRequest} */</span>
+					<span class="s1">const obj = {</span>
+						<span class="s1">...request,</span>
+						<span class="s1">request: remainingRequest,</span>
+						<span class="s1">path: </span><span class="s0">/** @type {string} */ </span><span class="s1">(request.descriptionFileRoot),</span>
+						<span class="s1">relativePath: </span><span class="s2">&quot;.&quot;</span><span class="s1">,</span>
+					<span class="s1">};</span>
+
+					<span class="s1">resolver.doResolve(</span>
+						<span class="s1">target,</span>
+						<span class="s1">obj,</span>
+						<span class="s2">&quot;self reference&quot;</span><span class="s1">,</span>
+						<span class="s1">resolveContext,</span>
+						<span class="s1">callback,</span>
+					<span class="s1">);</span>
+				<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+					<span class="s4">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<html>
+<head>
+<title>from.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+from.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import { statSync, createReadStream, promises as fs } from </span><span class="s1">'node:fs'</span>
+<span class="s0">import { basename } from </span><span class="s1">'node:path'</span>
+<span class="s0">import DOMException from </span><span class="s1">'node-domexception'</span>
+
+<span class="s0">import File from </span><span class="s1">'./file.js'</span>
+<span class="s0">import Blob from </span><span class="s1">'./index.js'</span>
+
+<span class="s0">const { stat } = fs</span>
+
+<span class="s2">/** 
+ * @param {string} path filepath on the disk 
+ * @param {string} [type] mimetype to use 
+ */</span>
+<span class="s0">const blobFromSync = (path, type) =&gt; fromBlob(statSync(path), path, type)</span>
+
+<span class="s2">/** 
+ * @param {string} path filepath on the disk 
+ * @param {string} [type] mimetype to use 
+ * @returns {Promise&lt;Blob&gt;} 
+ */</span>
+<span class="s0">const blobFrom = (path, type) =&gt; stat(path).then(stat =&gt; fromBlob(stat, path, type))</span>
+
+<span class="s2">/** 
+ * @param {string} path filepath on the disk 
+ * @param {string} [type] mimetype to use 
+ * @returns {Promise&lt;File&gt;} 
+ */</span>
+<span class="s0">const fileFrom = (path, type) =&gt; stat(path).then(stat =&gt; fromFile(stat, path, type))</span>
+
+<span class="s2">/** 
+ * @param {string} path filepath on the disk 
+ * @param {string} [type] mimetype to use 
+ */</span>
+<span class="s0">const fileFromSync = (path, type) =&gt; fromFile(statSync(path), path, type)</span>
+
+<span class="s2">// @ts-ignore</span>
+<span class="s0">const fromBlob = (stat, path, type = </span><span class="s1">''</span><span class="s0">) =&gt; </span><span class="s3">new </span><span class="s0">Blob([</span><span class="s3">new </span><span class="s0">BlobDataItem({</span>
+  <span class="s0">path,</span>
+  <span class="s0">size: stat.size,</span>
+  <span class="s0">lastModified: stat.mtimeMs,</span>
+  <span class="s0">start: </span><span class="s4">0</span>
+<span class="s0">})], { type })</span>
+
+<span class="s2">// @ts-ignore</span>
+<span class="s0">const fromFile = (stat, path, type = </span><span class="s1">''</span><span class="s0">) =&gt; </span><span class="s3">new </span><span class="s0">File([</span><span class="s3">new </span><span class="s0">BlobDataItem({</span>
+  <span class="s0">path,</span>
+  <span class="s0">size: stat.size,</span>
+  <span class="s0">lastModified: stat.mtimeMs,</span>
+  <span class="s0">start: </span><span class="s4">0</span>
+<span class="s0">})], basename(path), { type, lastModified: stat.mtimeMs })</span>
+
+<span class="s2">/** 
+ * This is a blob backed up by a file on the disk 
+ * with minium requirement. Its wrapped around a Blob as a blobPart 
+ * so you have no direct access to this. 
+ * 
+ * @private 
+ */</span>
+<span class="s0">class BlobDataItem {</span>
+  <span class="s0">#path</span>
+  <span class="s0">#start</span>
+
+  <span class="s0">constructor (options) {</span>
+    <span class="s3">this</span><span class="s0">.#path = options.path</span>
+    <span class="s3">this</span><span class="s0">.#start = options.start</span>
+    <span class="s3">this</span><span class="s0">.size = options.size</span>
+    <span class="s3">this</span><span class="s0">.lastModified = options.lastModified</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Slicing arguments is first validated and formatted 
+   * to not be out of range by Blob.prototype.slice 
+   */</span>
+  <span class="s0">slice (start, end) {</span>
+    <span class="s3">return new </span><span class="s0">BlobDataItem({</span>
+      <span class="s0">path: </span><span class="s3">this</span><span class="s0">.#path,</span>
+      <span class="s0">lastModified: </span><span class="s3">this</span><span class="s0">.lastModified,</span>
+      <span class="s0">size: end - start,</span>
+      <span class="s0">start: </span><span class="s3">this</span><span class="s0">.#start + start</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s0">async * stream () {</span>
+    <span class="s0">const { mtimeMs } = await stat(</span><span class="s3">this</span><span class="s0">.#path)</span>
+    <span class="s3">if </span><span class="s0">(mtimeMs &gt; </span><span class="s3">this</span><span class="s0">.lastModified) {</span>
+      <span class="s3">throw new </span><span class="s0">DOMException(</span><span class="s1">'The requested file could not be read, typically due to permission problems that have occurred after a reference to a file was acquired.'</span><span class="s0">, </span><span class="s1">'NotReadableError'</span><span class="s0">)</span>
+    <span class="s0">}</span>
+    <span class="s0">yield * createReadStream(</span><span class="s3">this</span><span class="s0">.#path, {</span>
+      <span class="s0">start: </span><span class="s3">this</span><span class="s0">.#start,</span>
+      <span class="s0">end: </span><span class="s3">this</span><span class="s0">.#start + </span><span class="s3">this</span><span class="s0">.size - </span><span class="s4">1</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s0">get [Symbol.toStringTag] () {</span>
+    <span class="s3">return </span><span class="s1">'Blob'</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">export </span><span class="s3">default </span><span class="s0">blobFromSync</span>
+<span class="s0">export { File, Blob, blobFrom, blobFromSync, fileFrom, fileFromSync }</span>
+</pre>
+</body>
+</html>

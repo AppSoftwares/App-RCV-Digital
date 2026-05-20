@@ -1,0 +1,112 @@
+<html>
+<head>
+<title>NativeAnimationExtended.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+NativeAnimationExtended.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ clamp } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ time } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/sync-time.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ setStyle } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../render/dom/style-set.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ JSAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./JSAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ NativeAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./NativeAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ replaceTransitionType } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/replace-transition-type.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ replaceStringEasing } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./waapi/utils/unsupported-easing.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* 10ms is chosen here as it strikes a balance between smooth 
+ * results (more than one keyframe per frame at 60fps) and 
+ * keyframe quantity. 
+ </span><span class="s2">*/</span>
+<span class="s0">const </span><span class="s2">sampleDelta = </span><span class="s5">10</span><span class="s2">; //</span><span class="s4">ms</span>
+<span class="s0">class </span><span class="s2">NativeAnimationExtended </span><span class="s0">extends </span><span class="s2">NativeAnimation {</span>
+    <span class="s0">constructor</span><span class="s2">(options) {</span>
+        <span class="s2">/**</span>
+         <span class="s4">* The base NativeAnimation function only supports a subset 
+         * of Motion easings, and WAAPI also only supports some 
+         * easing functions via string/cubic-bezier definitions. 
+         * 
+         * This function replaces those unsupported easing functions 
+         * with a JS easing function. This will later get compiled 
+         * to a linear() easing function. 
+         </span><span class="s2">*/</span>
+        <span class="s6">replaceStringEasing</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Ensure we replace the transition type with a generator function 
+         * before passing to WAAPI. 
+         * 
+         * TODO: Does this have a better home? It could be shared with 
+         * JSAnimation. 
+         </span><span class="s2">*/</span>
+        <span class="s6">replaceTransitionType</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">super</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Only set startTime when the animation should autoplay. 
+         * Setting startTime on a paused WAAPI animation unpauses it 
+         * (per the WAAPI spec), which breaks autoplay: false. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">options.startTime !== </span><span class="s7">undefined </span><span class="s2">&amp;&amp; options.autoplay !== </span><span class="s7">false</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = options.startTime;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.options = options;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* WAAPI doesn't natively have any interruption capabilities. 
+     * 
+     * Rather than read committed styles back out of the DOM, we can 
+     * create a renderless JS animation and sample it twice to calculate 
+     * its current value, &quot;previous&quot; value, and therefore allow 
+     * Motion to calculate velocity for any subsequent animation. 
+     </span><span class="s2">*/</span>
+    <span class="s6">updateMotionValue</span><span class="s2">(value) {</span>
+        <span class="s0">const </span><span class="s2">{ motionValue, onUpdate, onComplete, element, ...options } = this.options;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!motionValue</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">value !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">motionValue.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">sampleAnimation = new </span><span class="s6">JSAnimation</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s2">...options,</span>
+            <span class="s1">autoplay</span><span class="s2">: </span><span class="s7">false</span><span class="s2">,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Use wall-clock elapsed time for sampling. 
+         * Under CPU load, WAAPI's currentTime may not reflect actual 
+         * elapsed time, causing incorrect sampling and visual jumps. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">sampleTime = Math.</span><span class="s6">max</span><span class="s1">(</span><span class="s2">sampleDelta, time.</span><span class="s6">now</span><span class="s1">() </span><span class="s2">- this.startTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">delta = </span><span class="s6">clamp</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, sampleDelta, sampleTime - sampleDelta</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">current = sampleAnimation.</span><span class="s6">sample</span><span class="s1">(</span><span class="s2">sampleTime</span><span class="s1">)</span><span class="s2">.value;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Write the estimated value to inline style so it persists 
+         * after cancel(), covering the async gap before the next 
+         * animation starts. 
+         </span><span class="s2">*/</span>
+        <span class="s0">const </span><span class="s2">{ name } = this.options;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">element &amp;&amp; name</span><span class="s1">)</span>
+            <span class="s6">setStyle</span><span class="s1">(</span><span class="s2">element, name, current</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">motionValue.</span><span class="s6">setWithVelocity</span><span class="s1">(</span><span class="s2">sampleAnimation.</span><span class="s6">sample</span><span class="s1">(</span><span class="s2">Math.</span><span class="s6">max</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, sampleTime - delta</span><span class="s1">))</span><span class="s2">.value, current, delta</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">sampleAnimation.</span><span class="s6">stop</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ NativeAnimationExtended };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=NativeAnimationExtended.mjs.map</span>
+</pre>
+</body>
+</html>

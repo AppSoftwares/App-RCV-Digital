@@ -1,0 +1,137 @@
+<html>
+<head>
+<title>ajax.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ajax.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import {</span>
+  <span class="s0">global,</span>
+  <span class="s0">XHR_STATES</span>
+<span class="s0">} from </span><span class="s1">&quot;./constants&quot;</span>
+
+<span class="s0">export </span><span class="s2">default </span><span class="s0">class Ajax {</span>
+
+  <span class="s0">static request(method, endPoint, headers, body, timeout, ontimeout, callback){</span>
+    <span class="s2">if</span><span class="s0">(global.XDomainRequest){</span>
+      <span class="s0">let req = </span><span class="s2">new </span><span class="s0">global.XDomainRequest() </span><span class="s3">// IE8, IE9</span>
+      <span class="s2">return this</span><span class="s0">.xdomainRequest(req, method, endPoint, body, timeout, ontimeout, callback)</span>
+    <span class="s0">} </span><span class="s2">else if</span><span class="s0">(global.XMLHttpRequest){</span>
+      <span class="s0">let req = </span><span class="s2">new </span><span class="s0">global.XMLHttpRequest() </span><span class="s3">// IE7+, Firefox, Chrome, Opera, Safari</span>
+      <span class="s2">return this</span><span class="s0">.xhrRequest(req, method, endPoint, headers, body, timeout, ontimeout, callback)</span>
+    <span class="s0">} </span><span class="s2">else if</span><span class="s0">(global.fetch &amp;&amp; global.AbortController){</span>
+      <span class="s3">// Fetch with AbortController for modern browsers</span>
+      <span class="s2">return this</span><span class="s0">.fetchRequest(method, endPoint, headers, body, timeout, ontimeout, callback)</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s2">throw new </span><span class="s0">Error(</span><span class="s1">&quot;No suitable XMLHttpRequest implementation found&quot;</span><span class="s0">)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static fetchRequest(method, endPoint, headers, body, timeout, ontimeout, callback){</span>
+    <span class="s0">let options = {</span>
+      <span class="s0">method,</span>
+      <span class="s0">headers,</span>
+      <span class="s0">body,</span>
+    <span class="s0">}</span>
+    <span class="s0">let controller = </span><span class="s2">null</span>
+    <span class="s2">if</span><span class="s0">(timeout){</span>
+      <span class="s0">controller = </span><span class="s2">new </span><span class="s0">AbortController()</span>
+      <span class="s0">const _timeoutId = setTimeout(() =&gt; controller.abort(), timeout)</span>
+      <span class="s0">options.signal = controller.signal</span>
+    <span class="s0">}</span>
+    <span class="s0">global.fetch(endPoint, options)</span>
+      <span class="s0">.then(response =&gt; response.text())</span>
+      <span class="s0">.then(data =&gt; </span><span class="s2">this</span><span class="s0">.parseJSON(data))</span>
+      <span class="s0">.then(data =&gt; callback &amp;&amp; callback(data))</span>
+      <span class="s0">.</span><span class="s2">catch</span><span class="s0">(err =&gt; {</span>
+        <span class="s2">if</span><span class="s0">(err.name === </span><span class="s1">&quot;AbortError&quot; </span><span class="s0">&amp;&amp; ontimeout){</span>
+          <span class="s0">ontimeout()</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s0">callback &amp;&amp; callback(</span><span class="s2">null</span><span class="s0">)</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+    <span class="s2">return </span><span class="s0">controller</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static xdomainRequest(req, method, endPoint, body, timeout, ontimeout, callback){</span>
+    <span class="s0">req.timeout = timeout</span>
+    <span class="s0">req.open(method, endPoint)</span>
+    <span class="s0">req.onload = () =&gt; {</span>
+      <span class="s0">let response = </span><span class="s2">this</span><span class="s0">.parseJSON(req.responseText)</span>
+      <span class="s0">callback &amp;&amp; callback(response)</span>
+    <span class="s0">}</span>
+    <span class="s2">if</span><span class="s0">(ontimeout){ req.ontimeout = ontimeout }</span>
+
+    <span class="s3">// Work around bug in IE9 that requires an attached onprogress handler</span>
+    <span class="s0">req.onprogress = () =&gt; { }</span>
+
+    <span class="s0">req.send(body)</span>
+    <span class="s2">return </span><span class="s0">req</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static xhrRequest(req, method, endPoint, headers, body, timeout, ontimeout, callback){</span>
+    <span class="s0">req.open(method, endPoint, </span><span class="s2">true</span><span class="s0">)</span>
+    <span class="s0">req.timeout = timeout</span>
+    <span class="s2">for</span><span class="s0">(let [key, value] of Object.entries(headers)){</span>
+      <span class="s0">req.setRequestHeader(key, value)</span>
+    <span class="s0">}</span>
+    <span class="s0">req.onerror = () =&gt; callback &amp;&amp; callback(</span><span class="s2">null</span><span class="s0">)</span>
+    <span class="s0">req.onreadystatechange = () =&gt; {</span>
+      <span class="s2">if</span><span class="s0">(req.readyState === XHR_STATES.complete &amp;&amp; callback){</span>
+        <span class="s0">let response = </span><span class="s2">this</span><span class="s0">.parseJSON(req.responseText)</span>
+        <span class="s0">callback(response)</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">if</span><span class="s0">(ontimeout){ req.ontimeout = ontimeout }</span>
+
+    <span class="s0">req.send(body)</span>
+    <span class="s2">return </span><span class="s0">req</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static parseJSON(resp){</span>
+    <span class="s2">if</span><span class="s0">(!resp || resp === </span><span class="s1">&quot;&quot;</span><span class="s0">){ </span><span class="s2">return null </span><span class="s0">}</span>
+
+    <span class="s2">try </span><span class="s0">{</span>
+      <span class="s2">return </span><span class="s0">JSON.parse(resp)</span>
+    <span class="s0">} </span><span class="s2">catch </span><span class="s0">{</span>
+      <span class="s0">console &amp;&amp; console.log(</span><span class="s1">&quot;failed to parse JSON response&quot;</span><span class="s0">, resp)</span>
+      <span class="s2">return null</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static serialize(obj, parentKey){</span>
+    <span class="s0">let queryStr = []</span>
+    <span class="s2">for</span><span class="s0">(</span><span class="s2">var </span><span class="s0">key </span><span class="s2">in </span><span class="s0">obj){</span>
+      <span class="s2">if</span><span class="s0">(!Object.prototype.hasOwnProperty.call(obj, key)){ </span><span class="s2">continue </span><span class="s0">}</span>
+      <span class="s0">let paramKey = parentKey ? `${parentKey}[${key}]` : key</span>
+      <span class="s0">let paramVal = obj[key]</span>
+      <span class="s2">if</span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">paramVal === </span><span class="s1">&quot;object&quot;</span><span class="s0">){</span>
+        <span class="s0">queryStr.push(</span><span class="s2">this</span><span class="s0">.serialize(paramVal, paramKey))</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">queryStr.push(encodeURIComponent(paramKey) + </span><span class="s1">&quot;=&quot; </span><span class="s0">+ encodeURIComponent(paramVal))</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">return </span><span class="s0">queryStr.join(</span><span class="s1">&quot;&amp;&quot;</span><span class="s0">)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">static appendParams(url, params){</span>
+    <span class="s2">if</span><span class="s0">(Object.keys(params).length === </span><span class="s4">0</span><span class="s0">){ </span><span class="s2">return </span><span class="s0">url }</span>
+
+    <span class="s0">let prefix = url.match(/\?/) ? </span><span class="s1">&quot;&amp;&quot; </span><span class="s0">: </span><span class="s1">&quot;?&quot;</span>
+    <span class="s2">return </span><span class="s0">`${url}${prefix}${</span><span class="s2">this</span><span class="s0">.serialize(params)}`</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

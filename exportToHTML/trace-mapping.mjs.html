@@ -1,0 +1,517 @@
+<html>
+<head>
+<title>trace-mapping.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #bcbec4;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #6aab73;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+trace-mapping.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">// </span><span class="s1">src/trace-mapping.ts</span>
+<span class="s3">import </span><span class="s0">{ encode, decode } </span><span class="s3">from </span><span class="s0">&quot;</span><span class="s4">@jridgewell/sourcemap-codec</span><span class="s0">&quot;;</span>
+
+<span class="s0">// </span><span class="s1">src/resolve.ts</span>
+<span class="s3">import </span><span class="s0">resolveUri </span><span class="s3">from </span><span class="s0">&quot;</span><span class="s4">@jridgewell/resolve-uri</span><span class="s0">&quot;;</span>
+
+<span class="s0">// </span><span class="s1">src/strip-filename.ts</span>
+<span class="s3">function </span><span class="s5">stripFilename</span><span class="s0">(path) {</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!path</span><span class="s2">) </span><span class="s3">return </span><span class="s0">&quot;&quot;;</span>
+  <span class="s3">const </span><span class="s0">index = path.</span><span class="s5">lastIndexOf</span><span class="s2">(</span><span class="s0">&quot;</span><span class="s4">/</span><span class="s0">&quot;</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">path.</span><span class="s5">slice</span><span class="s2">(</span><span class="s6">0</span><span class="s0">, index + </span><span class="s6">1</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/resolve.ts</span>
+<span class="s3">function </span><span class="s5">resolver</span><span class="s0">(mapUrl, sourceRoot) {</span>
+  <span class="s3">const </span><span class="s0">from = </span><span class="s5">stripFilename</span><span class="s2">(</span><span class="s0">mapUrl</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">prefix = sourceRoot ? sourceRoot + &quot;</span><span class="s4">/</span><span class="s0">&quot; : &quot;&quot;;</span>
+  <span class="s3">return </span><span class="s0">(source) </span><span class="s3">=&gt; </span><span class="s5">resolveUri</span><span class="s2">(</span><span class="s0">prefix + </span><span class="s2">(</span><span class="s0">source || &quot;&quot;</span><span class="s2">)</span><span class="s0">, from</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/sourcemap-segment.ts</span>
+<span class="s3">var </span><span class="s0">COLUMN = </span><span class="s6">0</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">SOURCES_INDEX = </span><span class="s6">1</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">SOURCE_LINE = </span><span class="s6">2</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">SOURCE_COLUMN = </span><span class="s6">3</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">NAMES_INDEX = </span><span class="s6">4</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">REV_GENERATED_LINE = </span><span class="s6">1</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">REV_GENERATED_COLUMN = </span><span class="s6">2</span><span class="s0">;</span>
+
+<span class="s0">// </span><span class="s1">src/sort.ts</span>
+<span class="s3">function </span><span class="s5">maybeSort</span><span class="s0">(mappings, owned) {</span>
+  <span class="s3">const </span><span class="s0">unsortedIndex = </span><span class="s5">nextUnsortedSegmentLine</span><span class="s2">(</span><span class="s0">mappings, </span><span class="s6">0</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">unsortedIndex === mappings.</span><span class="s2">length) </span><span class="s3">return </span><span class="s0">mappings;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!owned</span><span class="s2">) </span><span class="s0">mappings = mappings.</span><span class="s5">slice</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = unsortedIndex; i &lt; mappings.</span><span class="s2">length</span><span class="s0">; i = </span><span class="s5">nextUnsortedSegmentLine</span><span class="s2">(</span><span class="s0">mappings, i + </span><span class="s6">1</span><span class="s2">)) </span><span class="s0">{</span>
+    <span class="s0">mappings</span><span class="s2">[</span><span class="s0">i</span><span class="s2">] </span><span class="s0">= </span><span class="s5">sortSegments</span><span class="s2">(</span><span class="s0">mappings</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">, owned</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">mappings;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">nextUnsortedSegmentLine</span><span class="s0">(mappings, start) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = start; i &lt; mappings.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">!</span><span class="s5">isSorted</span><span class="s2">(</span><span class="s0">mappings</span><span class="s2">[</span><span class="s0">i</span><span class="s2">])) </span><span class="s3">return </span><span class="s0">i;</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">mappings.</span><span class="s2">length</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">isSorted</span><span class="s0">(line) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">j = </span><span class="s6">1</span><span class="s0">; j &lt; line.</span><span class="s2">length</span><span class="s0">; j++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">line</span><span class="s2">[</span><span class="s0">j</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">&lt; line</span><span class="s2">[</span><span class="s0">j - </span><span class="s6">1</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">]) </span><span class="s0">{</span>
+      <span class="s3">return </span><span class="s7">false</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s7">true</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">sortSegments</span><span class="s0">(line, owned) {</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!owned</span><span class="s2">) </span><span class="s0">line = line.</span><span class="s5">slice</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">line.</span><span class="s5">sort</span><span class="s2">(</span><span class="s0">sortComparator</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">sortComparator</span><span class="s0">(a, b) {</span>
+  <span class="s3">return </span><span class="s0">a</span><span class="s2">[</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">- b</span><span class="s2">[</span><span class="s0">COLUMN</span><span class="s2">]</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/by-source.ts</span>
+<span class="s3">function </span><span class="s5">buildBySources</span><span class="s0">(decoded, memos) {</span>
+  <span class="s3">const </span><span class="s0">sources = memos.</span><span class="s5">map</span><span class="s2">(</span><span class="s0">() </span><span class="s3">=&gt; </span><span class="s2">[])</span><span class="s0">;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; decoded.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">line = decoded</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">j = </span><span class="s6">0</span><span class="s0">; j &lt; line.</span><span class="s2">length</span><span class="s0">; j++</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">seg = line</span><span class="s2">[</span><span class="s0">j</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">seg.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">1</span><span class="s2">) </span><span class="s3">continue</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">sourceIndex2 = seg</span><span class="s2">[</span><span class="s0">SOURCES_INDEX</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">sourceLine = seg</span><span class="s2">[</span><span class="s0">SOURCE_LINE</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">sourceColumn = seg</span><span class="s2">[</span><span class="s0">SOURCE_COLUMN</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">source = sources</span><span class="s2">[</span><span class="s0">sourceIndex2</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">segs = source</span><span class="s2">[</span><span class="s0">sourceLine</span><span class="s2">] </span><span class="s0">|| </span><span class="s2">(</span><span class="s0">source</span><span class="s2">[</span><span class="s0">sourceLine</span><span class="s2">] </span><span class="s0">= </span><span class="s2">[])</span><span class="s0">;</span>
+      <span class="s0">segs.</span><span class="s5">push</span><span class="s2">([</span><span class="s0">sourceColumn, i, seg</span><span class="s2">[</span><span class="s0">COLUMN</span><span class="s2">]])</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; sources.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">source = sources</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">j = </span><span class="s6">0</span><span class="s0">; j &lt; source.</span><span class="s2">length</span><span class="s0">; j++</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">line = source</span><span class="s2">[</span><span class="s0">j</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">line</span><span class="s2">) </span><span class="s0">line.</span><span class="s5">sort</span><span class="s2">(</span><span class="s0">sortComparator</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">sources;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/binary-search.ts</span>
+<span class="s3">var </span><span class="s0">found = </span><span class="s7">false</span><span class="s0">;</span>
+<span class="s3">function </span><span class="s5">binarySearch</span><span class="s0">(haystack, needle, low, high) {</span>
+  <span class="s3">while </span><span class="s2">(</span><span class="s0">low &lt;= high</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">mid = low + </span><span class="s2">(</span><span class="s0">high - low &gt;&gt; </span><span class="s6">1</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">cmp = haystack</span><span class="s2">[</span><span class="s0">mid</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">- needle;</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">cmp === </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">found = </span><span class="s7">true</span><span class="s0">;</span>
+      <span class="s3">return </span><span class="s0">mid;</span>
+    <span class="s0">}</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">cmp &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">low = mid + </span><span class="s6">1</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s0">high = mid - </span><span class="s6">1</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s0">found = </span><span class="s7">false</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">low - </span><span class="s6">1</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">upperBound</span><span class="s0">(haystack, needle, index) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = index + </span><span class="s6">1</span><span class="s0">; i &lt; haystack.</span><span class="s2">length</span><span class="s0">; index = i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">haystack</span><span class="s2">[</span><span class="s0">i</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">!== needle</span><span class="s2">) </span><span class="s3">break</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">lowerBound</span><span class="s0">(haystack, needle, index) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = index - </span><span class="s6">1</span><span class="s0">; i &gt;= </span><span class="s6">0</span><span class="s0">; index = i--</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">haystack</span><span class="s2">[</span><span class="s0">i</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">!== needle</span><span class="s2">) </span><span class="s3">break</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">memoizedState</span><span class="s0">() {</span>
+  <span class="s3">return </span><span class="s0">{</span>
+    <span class="s2">lastKey</span><span class="s0">: -</span><span class="s6">1</span><span class="s0">,</span>
+    <span class="s2">lastNeedle</span><span class="s0">: -</span><span class="s6">1</span><span class="s0">,</span>
+    <span class="s2">lastIndex</span><span class="s0">: -</span><span class="s6">1</span>
+  <span class="s0">};</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">memoizedBinarySearch</span><span class="s0">(haystack, needle, state, key) {</span>
+  <span class="s3">const </span><span class="s0">{ lastKey, lastNeedle, lastIndex } = state;</span>
+  <span class="s3">let </span><span class="s0">low = </span><span class="s6">0</span><span class="s0">;</span>
+  <span class="s3">let </span><span class="s0">high = haystack.</span><span class="s2">length </span><span class="s0">- </span><span class="s6">1</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">key === lastKey</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">needle === lastNeedle</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">found = lastIndex !== -</span><span class="s6">1 </span><span class="s0">&amp;&amp; haystack</span><span class="s2">[</span><span class="s0">lastIndex</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">] </span><span class="s0">=== needle;</span>
+      <span class="s3">return </span><span class="s0">lastIndex;</span>
+    <span class="s0">}</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">needle &gt;= lastNeedle</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">low = lastIndex === -</span><span class="s6">1 </span><span class="s0">? </span><span class="s6">0 </span><span class="s0">: lastIndex;</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s0">high = lastIndex;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s0">state.lastKey = key;</span>
+  <span class="s0">state.lastNeedle = needle;</span>
+  <span class="s3">return </span><span class="s0">state.lastIndex = </span><span class="s5">binarySearch</span><span class="s2">(</span><span class="s0">haystack, needle, low, high</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/types.ts</span>
+<span class="s3">function </span><span class="s5">parse</span><span class="s0">(map) {</span>
+  <span class="s3">return </span><span class="s0">typeof map === &quot;</span><span class="s4">string</span><span class="s0">&quot; ? JSON.</span><span class="s5">parse</span><span class="s2">(</span><span class="s0">map</span><span class="s2">) </span><span class="s0">: map;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/flatten-map.ts</span>
+<span class="s3">var </span><span class="s5">FlattenMap </span><span class="s0">= </span><span class="s3">function</span><span class="s0">(map, mapUrl) {</span>
+  <span class="s3">const </span><span class="s0">parsed = </span><span class="s5">parse</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!</span><span class="s2">(</span><span class="s0">&quot;</span><span class="s4">sections</span><span class="s0">&quot; in parsed</span><span class="s2">)) </span><span class="s0">{</span>
+    <span class="s3">return </span><span class="s0">new </span><span class="s5">TraceMap</span><span class="s2">(</span><span class="s0">parsed, mapUrl</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s3">const </span><span class="s0">mappings = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">sources = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">sourcesContent = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">names = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">ignoreList = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s5">recurse</span><span class="s2">(</span>
+    <span class="s0">parsed,</span>
+    <span class="s0">mapUrl,</span>
+    <span class="s0">mappings,</span>
+    <span class="s0">sources,</span>
+    <span class="s0">sourcesContent,</span>
+    <span class="s0">names,</span>
+    <span class="s0">ignoreList,</span>
+    <span class="s6">0</span><span class="s0">,</span>
+    <span class="s6">0</span><span class="s0">,</span>
+    <span class="s7">Infinity</span><span class="s0">,</span>
+    <span class="s7">Infinity</span>
+  <span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">joined = {</span>
+    <span class="s2">version</span><span class="s0">: </span><span class="s6">3</span><span class="s0">,</span>
+    <span class="s2">file</span><span class="s0">: parsed.file,</span>
+    <span class="s0">names,</span>
+    <span class="s0">sources,</span>
+    <span class="s0">sourcesContent,</span>
+    <span class="s0">mappings,</span>
+    <span class="s0">ignoreList</span>
+  <span class="s0">};</span>
+  <span class="s3">return </span><span class="s5">presortedDecodedMap</span><span class="s2">(</span><span class="s0">joined</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">};</span>
+<span class="s3">function </span><span class="s5">recurse</span><span class="s0">(input, mapUrl, mappings, sources, sourcesContent, names, ignoreList, lineOffset, columnOffset, stopLine, stopColumn) {</span>
+  <span class="s3">const </span><span class="s0">{ sections } = input;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; sections.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">{ map, offset } = sections</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s3">let </span><span class="s0">sl = stopLine;</span>
+    <span class="s3">let </span><span class="s0">sc = stopColumn;</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">i + </span><span class="s6">1 </span><span class="s0">&lt; sections.</span><span class="s2">length) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">nextOffset = sections</span><span class="s2">[</span><span class="s0">i + </span><span class="s6">1</span><span class="s2">]</span><span class="s0">.offset;</span>
+      <span class="s0">sl = Math.</span><span class="s5">min</span><span class="s2">(</span><span class="s0">stopLine, lineOffset + nextOffset.line</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">sl === stopLine</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">sc = Math.</span><span class="s5">min</span><span class="s2">(</span><span class="s0">stopColumn, columnOffset + nextOffset.column</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">sl &lt; stopLine</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">sc = columnOffset + nextOffset.column;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s5">addSection</span><span class="s2">(</span>
+      <span class="s0">map,</span>
+      <span class="s0">mapUrl,</span>
+      <span class="s0">mappings,</span>
+      <span class="s0">sources,</span>
+      <span class="s0">sourcesContent,</span>
+      <span class="s0">names,</span>
+      <span class="s0">ignoreList,</span>
+      <span class="s0">lineOffset + offset.line,</span>
+      <span class="s0">columnOffset + offset.column,</span>
+      <span class="s0">sl,</span>
+      <span class="s0">sc</span>
+    <span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">addSection</span><span class="s0">(input, mapUrl, mappings, sources, sourcesContent, names, ignoreList, lineOffset, columnOffset, stopLine, stopColumn) {</span>
+  <span class="s3">const </span><span class="s0">parsed = </span><span class="s5">parse</span><span class="s2">(</span><span class="s0">input</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">&quot;</span><span class="s4">sections</span><span class="s0">&quot; in parsed</span><span class="s2">) </span><span class="s3">return </span><span class="s5">recurse</span><span class="s2">(</span><span class="s0">...arguments</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">map = new </span><span class="s5">TraceMap</span><span class="s2">(</span><span class="s0">parsed, mapUrl</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">sourcesOffset = sources.</span><span class="s2">length</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">namesOffset = names.</span><span class="s2">length</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">decoded = </span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">{ resolvedSources, sourcesContent: contents, ignoreList: ignores } = map;</span>
+  <span class="s5">append</span><span class="s2">(</span><span class="s0">sources, resolvedSources</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s5">append</span><span class="s2">(</span><span class="s0">names, map.names</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">contents</span><span class="s2">) </span><span class="s5">append</span><span class="s2">(</span><span class="s0">sourcesContent, contents</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">else for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; resolvedSources.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">sourcesContent.</span><span class="s5">push</span><span class="s2">(</span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">ignores</span><span class="s2">) </span><span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; ignores.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">ignoreList.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">ignores</span><span class="s2">[</span><span class="s0">i</span><span class="s2">] </span><span class="s0">+ sourcesOffset</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; decoded.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">lineI = lineOffset + i;</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">lineI &gt; stopLine</span><span class="s2">) </span><span class="s3">return</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">out = </span><span class="s5">getLine</span><span class="s2">(</span><span class="s0">mappings, lineI</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">cOffset = i === </span><span class="s6">0 </span><span class="s0">? columnOffset : </span><span class="s6">0</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">line = decoded</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">j = </span><span class="s6">0</span><span class="s0">; j &lt; line.</span><span class="s2">length</span><span class="s0">; j++</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">seg = line</span><span class="s2">[</span><span class="s0">j</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">column = cOffset + seg</span><span class="s2">[</span><span class="s0">COLUMN</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">lineI === stopLine &amp;&amp; column &gt;= stopColumn</span><span class="s2">) </span><span class="s3">return</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">seg.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">1</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">out.</span><span class="s5">push</span><span class="s2">([</span><span class="s0">column</span><span class="s2">])</span><span class="s0">;</span>
+        <span class="s3">continue</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s3">const </span><span class="s0">sourcesIndex = sourcesOffset + seg</span><span class="s2">[</span><span class="s0">SOURCES_INDEX</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">sourceLine = seg</span><span class="s2">[</span><span class="s0">SOURCE_LINE</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">sourceColumn = seg</span><span class="s2">[</span><span class="s0">SOURCE_COLUMN</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s0">out.</span><span class="s5">push</span><span class="s2">(</span>
+        <span class="s0">seg.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">4 </span><span class="s0">? </span><span class="s2">[</span><span class="s0">column, sourcesIndex, sourceLine, sourceColumn</span><span class="s2">] </span><span class="s0">: </span><span class="s2">[</span><span class="s0">column, sourcesIndex, sourceLine, sourceColumn, namesOffset + seg</span><span class="s2">[</span><span class="s0">NAMES_INDEX</span><span class="s2">]]</span>
+      <span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">append</span><span class="s0">(arr, other) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; other.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">arr.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">other</span><span class="s2">[</span><span class="s0">i</span><span class="s2">])</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">getLine</span><span class="s0">(arr, index) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = arr.</span><span class="s2">length</span><span class="s0">; i &lt;= index; i++</span><span class="s2">) </span><span class="s0">arr</span><span class="s2">[</span><span class="s0">i</span><span class="s2">] </span><span class="s0">= </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">arr</span><span class="s2">[</span><span class="s0">index</span><span class="s2">]</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s1">src/trace-mapping.ts</span>
+<span class="s3">var </span><span class="s0">LINE_GTR_ZERO = &quot;</span><span class="s4">`line` must be greater than 0 (lines start at line 1)</span><span class="s0">&quot;;</span>
+<span class="s3">var </span><span class="s0">COL_GTR_EQ_ZERO = &quot;</span><span class="s4">`column` must be greater than or equal to 0 (columns start at column 0)</span><span class="s0">&quot;;</span>
+<span class="s3">var </span><span class="s0">LEAST_UPPER_BOUND = -</span><span class="s6">1</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">GREATEST_LOWER_BOUND = </span><span class="s6">1</span><span class="s0">;</span>
+<span class="s3">var </span><span class="s0">TraceMap = </span><span class="s3">class </span><span class="s0">{</span>
+  <span class="s3">constructor</span><span class="s0">(map, mapUrl) {</span>
+    <span class="s3">const </span><span class="s0">isString = typeof map === &quot;</span><span class="s4">string</span><span class="s0">&quot;;</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">!isString &amp;&amp; map._decodedMemo</span><span class="s2">) </span><span class="s3">return </span><span class="s0">map;</span>
+    <span class="s3">const </span><span class="s0">parsed = </span><span class="s5">parse</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">{ version, file, names, sourceRoot, sources, sourcesContent } = parsed;</span>
+    <span class="s0">this.version = version;</span>
+    <span class="s0">this.file = file;</span>
+    <span class="s0">this.names = names || </span><span class="s2">[]</span><span class="s0">;</span>
+    <span class="s0">this.sourceRoot = sourceRoot;</span>
+    <span class="s0">this.sources = sources;</span>
+    <span class="s0">this.sourcesContent = sourcesContent;</span>
+    <span class="s0">this.ignoreList = parsed.ignoreList || parsed.x_google_ignoreList || void </span><span class="s6">0</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">resolve = </span><span class="s5">resolver</span><span class="s2">(</span><span class="s0">mapUrl, sourceRoot</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">this.resolvedSources = sources.</span><span class="s5">map</span><span class="s2">(</span><span class="s0">resolve</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s3">const </span><span class="s0">{ mappings } = parsed;</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">typeof mappings === &quot;</span><span class="s4">string</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">this._encoded = mappings;</span>
+      <span class="s0">this._decoded = void </span><span class="s6">0</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">Array.</span><span class="s5">isArray</span><span class="s2">(</span><span class="s0">mappings</span><span class="s2">)) </span><span class="s0">{</span>
+      <span class="s0">this._encoded = void </span><span class="s6">0</span><span class="s0">;</span>
+      <span class="s0">this._decoded = </span><span class="s5">maybeSort</span><span class="s2">(</span><span class="s0">mappings, isString</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">parsed.sections</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">`</span><span class="s4">TraceMap passed sectioned source map, please use FlattenMap export instead</span><span class="s0">`</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">`</span><span class="s4">invalid source map: </span><span class="s0">${JSON.</span><span class="s5">stringify</span><span class="s2">(</span><span class="s0">parsed</span><span class="s2">)</span><span class="s0">}`</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">this._decodedMemo = </span><span class="s5">memoizedState</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">this._bySources = void </span><span class="s6">0</span><span class="s0">;</span>
+    <span class="s0">this._bySourceMemos = void </span><span class="s6">0</span><span class="s0">;</span>
+  <span class="s0">}</span>
+<span class="s0">};</span>
+<span class="s3">function </span><span class="s5">cast</span><span class="s0">(map) {</span>
+  <span class="s3">return </span><span class="s0">map;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">encodedMappings</span><span class="s0">(map) {</span>
+  <span class="s3">var </span><span class="s0">_a, _b;</span>
+  <span class="s3">return </span><span class="s2">(</span><span class="s0">_b = </span><span class="s2">(</span><span class="s0">_a = </span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">._encoded</span><span class="s2">) </span><span class="s0">!= </span><span class="s7">null </span><span class="s0">? _b : _a._encoded = </span><span class="s5">encode</span><span class="s2">(</span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">._decoded</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">decodedMappings</span><span class="s0">(map) {</span>
+  <span class="s3">var </span><span class="s0">_a;</span>
+  <span class="s3">return </span><span class="s2">(</span><span class="s0">_a = </span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">._decoded || </span><span class="s2">(</span><span class="s0">_a._decoded = </span><span class="s5">decode</span><span class="s2">(</span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">._encoded</span><span class="s2">))</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">traceSegment</span><span class="s0">(map, line, column) {</span>
+  <span class="s3">const </span><span class="s0">decoded = </span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">line &gt;= decoded.</span><span class="s2">length) </span><span class="s3">return </span><span class="s7">null</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">segments = decoded</span><span class="s2">[</span><span class="s0">line</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">index = </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span>
+    <span class="s0">segments,</span>
+    <span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">._decodedMemo,</span>
+    <span class="s0">line,</span>
+    <span class="s0">column,</span>
+    <span class="s0">GREATEST_LOWER_BOUND</span>
+  <span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">index === -</span><span class="s6">1 </span><span class="s0">? </span><span class="s7">null </span><span class="s0">: segments</span><span class="s2">[</span><span class="s0">index</span><span class="s2">]</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">originalPositionFor</span><span class="s0">(map, needle) {</span>
+  <span class="s3">let </span><span class="s0">{ line, column, bias } = needle;</span>
+  <span class="s0">line--;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">line &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">LINE_GTR_ZERO</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">column &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">COL_GTR_EQ_ZERO</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">decoded = </span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">line &gt;= decoded.</span><span class="s2">length) </span><span class="s3">return </span><span class="s5">OMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">segments = decoded</span><span class="s2">[</span><span class="s0">line</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">index = </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span>
+    <span class="s0">segments,</span>
+    <span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">._decodedMemo,</span>
+    <span class="s0">line,</span>
+    <span class="s0">column,</span>
+    <span class="s0">bias || GREATEST_LOWER_BOUND</span>
+  <span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">index === -</span><span class="s6">1</span><span class="s2">) </span><span class="s3">return </span><span class="s5">OMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">segment = segments</span><span class="s2">[</span><span class="s0">index</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">segment.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">1</span><span class="s2">) </span><span class="s3">return </span><span class="s5">OMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">{ names, resolvedSources } = map;</span>
+  <span class="s3">return </span><span class="s5">OMapping</span><span class="s2">(</span>
+    <span class="s0">resolvedSources</span><span class="s2">[</span><span class="s0">segment</span><span class="s2">[</span><span class="s0">SOURCES_INDEX</span><span class="s2">]]</span><span class="s0">,</span>
+    <span class="s0">segment</span><span class="s2">[</span><span class="s0">SOURCE_LINE</span><span class="s2">] </span><span class="s0">+ </span><span class="s6">1</span><span class="s0">,</span>
+    <span class="s0">segment</span><span class="s2">[</span><span class="s0">SOURCE_COLUMN</span><span class="s2">]</span><span class="s0">,</span>
+    <span class="s0">segment.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">5 </span><span class="s0">? names</span><span class="s2">[</span><span class="s0">segment</span><span class="s2">[</span><span class="s0">NAMES_INDEX</span><span class="s2">]] </span><span class="s0">: </span><span class="s7">null</span>
+  <span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">generatedPositionFor</span><span class="s0">(map, needle) {</span>
+  <span class="s3">const </span><span class="s0">{ source, line, column, bias } = needle;</span>
+  <span class="s3">return </span><span class="s5">generatedPosition</span><span class="s2">(</span><span class="s0">map, source, line, column, bias || GREATEST_LOWER_BOUND, </span><span class="s7">false</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">allGeneratedPositionsFor</span><span class="s0">(map, needle) {</span>
+  <span class="s3">const </span><span class="s0">{ source, line, column, bias } = needle;</span>
+  <span class="s3">return </span><span class="s5">generatedPosition</span><span class="s2">(</span><span class="s0">map, source, line, column, bias || LEAST_UPPER_BOUND, </span><span class="s7">true</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">eachMapping</span><span class="s0">(map, cb) {</span>
+  <span class="s3">const </span><span class="s0">decoded = </span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">{ names, resolvedSources } = map;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s6">0</span><span class="s0">; i &lt; decoded.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">line = decoded</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">j = </span><span class="s6">0</span><span class="s0">; j &lt; line.</span><span class="s2">length</span><span class="s0">; j++</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">seg = line</span><span class="s2">[</span><span class="s0">j</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">generatedLine = i + </span><span class="s6">1</span><span class="s0">;</span>
+      <span class="s3">const </span><span class="s0">generatedColumn = seg</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s3">let </span><span class="s0">source = </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s3">let </span><span class="s0">originalLine = </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s3">let </span><span class="s0">originalColumn = </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s3">let </span><span class="s0">name = </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">seg.</span><span class="s2">length </span><span class="s0">!== </span><span class="s6">1</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">source = resolvedSources</span><span class="s2">[</span><span class="s0">seg</span><span class="s2">[</span><span class="s6">1</span><span class="s2">]]</span><span class="s0">;</span>
+        <span class="s0">originalLine = seg</span><span class="s2">[</span><span class="s6">2</span><span class="s2">] </span><span class="s0">+ </span><span class="s6">1</span><span class="s0">;</span>
+        <span class="s0">originalColumn = seg</span><span class="s2">[</span><span class="s6">3</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s3">if </span><span class="s2">(</span><span class="s0">seg.</span><span class="s2">length </span><span class="s0">=== </span><span class="s6">5</span><span class="s2">) </span><span class="s0">name = names</span><span class="s2">[</span><span class="s0">seg</span><span class="s2">[</span><span class="s6">4</span><span class="s2">]]</span><span class="s0">;</span>
+      <span class="s5">cb</span><span class="s2">(</span><span class="s0">{</span>
+        <span class="s0">generatedLine,</span>
+        <span class="s0">generatedColumn,</span>
+        <span class="s0">source,</span>
+        <span class="s0">originalLine,</span>
+        <span class="s0">originalColumn,</span>
+        <span class="s0">name</span>
+      <span class="s0">}</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">sourceIndex</span><span class="s0">(map, source) {</span>
+  <span class="s3">const </span><span class="s0">{ sources, resolvedSources } = map;</span>
+  <span class="s3">let </span><span class="s0">index = sources.</span><span class="s5">indexOf</span><span class="s2">(</span><span class="s0">source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">index === -</span><span class="s6">1</span><span class="s2">) </span><span class="s0">index = resolvedSources.</span><span class="s5">indexOf</span><span class="s2">(</span><span class="s0">source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">sourceContentFor</span><span class="s0">(map, source) {</span>
+  <span class="s3">const </span><span class="s0">{ sourcesContent } = map;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">sourcesContent == </span><span class="s7">null</span><span class="s2">) </span><span class="s3">return </span><span class="s7">null</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">index = </span><span class="s5">sourceIndex</span><span class="s2">(</span><span class="s0">map, source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">index === -</span><span class="s6">1 </span><span class="s0">? </span><span class="s7">null </span><span class="s0">: sourcesContent</span><span class="s2">[</span><span class="s0">index</span><span class="s2">]</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">isIgnored</span><span class="s0">(map, source) {</span>
+  <span class="s3">const </span><span class="s0">{ ignoreList } = map;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">ignoreList == </span><span class="s7">null</span><span class="s2">) </span><span class="s3">return </span><span class="s7">false</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">index = </span><span class="s5">sourceIndex</span><span class="s2">(</span><span class="s0">map, source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">index === -</span><span class="s6">1 </span><span class="s0">? </span><span class="s7">false </span><span class="s0">: ignoreList.</span><span class="s5">includes</span><span class="s2">(</span><span class="s0">index</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">presortedDecodedMap</span><span class="s0">(map, mapUrl) {</span>
+  <span class="s3">const </span><span class="s0">tracer = new </span><span class="s5">TraceMap</span><span class="s2">(</span><span class="s5">clone</span><span class="s2">(</span><span class="s0">map, </span><span class="s2">[])</span><span class="s0">, mapUrl</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s5">cast</span><span class="s2">(</span><span class="s0">tracer</span><span class="s2">)</span><span class="s0">._decoded = map.mappings;</span>
+  <span class="s3">return </span><span class="s0">tracer;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">decodedMap</span><span class="s0">(map) {</span>
+  <span class="s3">return </span><span class="s5">clone</span><span class="s2">(</span><span class="s0">map, </span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">encodedMap</span><span class="s0">(map) {</span>
+  <span class="s3">return </span><span class="s5">clone</span><span class="s2">(</span><span class="s0">map, </span><span class="s5">encodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">clone</span><span class="s0">(map, mappings) {</span>
+  <span class="s3">return </span><span class="s0">{</span>
+    <span class="s2">version</span><span class="s0">: map.version,</span>
+    <span class="s2">file</span><span class="s0">: map.file,</span>
+    <span class="s2">names</span><span class="s0">: map.names,</span>
+    <span class="s2">sourceRoot</span><span class="s0">: map.sourceRoot,</span>
+    <span class="s2">sources</span><span class="s0">: map.sources,</span>
+    <span class="s2">sourcesContent</span><span class="s0">: map.sourcesContent,</span>
+    <span class="s0">mappings,</span>
+    <span class="s2">ignoreList</span><span class="s0">: map.ignoreList || map.x_google_ignoreList</span>
+  <span class="s0">};</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">OMapping</span><span class="s0">(source, line, column, name) {</span>
+  <span class="s3">return </span><span class="s0">{ source, line, column, name };</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">GMapping</span><span class="s0">(line, column) {</span>
+  <span class="s3">return </span><span class="s0">{ line, column };</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">traceSegmentInternal</span><span class="s0">(segments, memo, line, column, bias) {</span>
+  <span class="s3">let </span><span class="s0">index = </span><span class="s5">memoizedBinarySearch</span><span class="s2">(</span><span class="s0">segments, column, memo, line</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">found</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">index = </span><span class="s2">(</span><span class="s0">bias === LEAST_UPPER_BOUND ? upperBound : lowerBound</span><span class="s2">)(</span><span class="s0">segments, column, index</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">bias === LEAST_UPPER_BOUND</span><span class="s2">) </span><span class="s0">index++;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">index === -</span><span class="s6">1 </span><span class="s0">|| index === segments.</span><span class="s2">length) </span><span class="s3">return </span><span class="s0">-</span><span class="s6">1</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s0">index;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">sliceGeneratedPositions</span><span class="s0">(segments, memo, line, column, bias) {</span>
+  <span class="s3">let </span><span class="s0">min = </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span><span class="s0">segments, memo, line, column, GREATEST_LOWER_BOUND</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!found &amp;&amp; bias === LEAST_UPPER_BOUND</span><span class="s2">) </span><span class="s0">min++;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">min === -</span><span class="s6">1 </span><span class="s0">|| min === segments.</span><span class="s2">length) </span><span class="s3">return </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">matchedColumn = found ? column : segments</span><span class="s2">[</span><span class="s0">min</span><span class="s2">][</span><span class="s0">COLUMN</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!found</span><span class="s2">) </span><span class="s0">min = </span><span class="s5">lowerBound</span><span class="s2">(</span><span class="s0">segments, matchedColumn, min</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">max = </span><span class="s5">upperBound</span><span class="s2">(</span><span class="s0">segments, matchedColumn, min</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">result = </span><span class="s2">[]</span><span class="s0">;</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s0">; min &lt;= max; min++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">segment = segments</span><span class="s2">[</span><span class="s0">min</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">result.</span><span class="s5">push</span><span class="s2">(</span><span class="s5">GMapping</span><span class="s2">(</span><span class="s0">segment</span><span class="s2">[</span><span class="s0">REV_GENERATED_LINE</span><span class="s2">] </span><span class="s0">+ </span><span class="s6">1</span><span class="s0">, segment</span><span class="s2">[</span><span class="s0">REV_GENERATED_COLUMN</span><span class="s2">]))</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">result;</span>
+<span class="s0">}</span>
+<span class="s3">function </span><span class="s5">generatedPosition</span><span class="s0">(map, source, line, column, bias, all) {</span>
+  <span class="s3">var </span><span class="s0">_a, _b;</span>
+  <span class="s0">line--;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">line &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">LINE_GTR_ZERO</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">column &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">COL_GTR_EQ_ZERO</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">{ sources, resolvedSources } = map;</span>
+  <span class="s3">let </span><span class="s0">sourceIndex2 = sources.</span><span class="s5">indexOf</span><span class="s2">(</span><span class="s0">source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">sourceIndex2 === -</span><span class="s6">1</span><span class="s2">) </span><span class="s0">sourceIndex2 = resolvedSources.</span><span class="s5">indexOf</span><span class="s2">(</span><span class="s0">source</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">sourceIndex2 === -</span><span class="s6">1</span><span class="s2">) </span><span class="s3">return </span><span class="s0">all ? </span><span class="s2">[] </span><span class="s0">: </span><span class="s5">GMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">bySourceMemos = </span><span class="s2">(</span><span class="s0">_a = </span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">._bySourceMemos || </span><span class="s2">(</span><span class="s0">_a._bySourceMemos = sources.</span><span class="s5">map</span><span class="s2">(</span><span class="s0">memoizedState</span><span class="s2">))</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">generated = </span><span class="s2">(</span><span class="s0">_b = </span><span class="s5">cast</span><span class="s2">(</span><span class="s0">map</span><span class="s2">))</span><span class="s0">._bySources || </span><span class="s2">(</span><span class="s0">_b._bySources = </span><span class="s5">buildBySources</span><span class="s2">(</span><span class="s5">decodedMappings</span><span class="s2">(</span><span class="s0">map</span><span class="s2">)</span><span class="s0">, bySourceMemos</span><span class="s2">))</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">segments = generated</span><span class="s2">[</span><span class="s0">sourceIndex2</span><span class="s2">][</span><span class="s0">line</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">segments == </span><span class="s7">null</span><span class="s2">) </span><span class="s3">return </span><span class="s0">all ? </span><span class="s2">[] </span><span class="s0">: </span><span class="s5">GMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">memo = bySourceMemos</span><span class="s2">[</span><span class="s0">sourceIndex2</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">all</span><span class="s2">) </span><span class="s3">return </span><span class="s5">sliceGeneratedPositions</span><span class="s2">(</span><span class="s0">segments, memo, line, column, bias</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">index = </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span><span class="s0">segments, memo, line, column, bias</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">index === -</span><span class="s6">1</span><span class="s2">) </span><span class="s3">return </span><span class="s5">GMapping</span><span class="s2">(</span><span class="s7">null</span><span class="s0">, </span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s3">const </span><span class="s0">segment = segments</span><span class="s2">[</span><span class="s0">index</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s3">return </span><span class="s5">GMapping</span><span class="s2">(</span><span class="s0">segment</span><span class="s2">[</span><span class="s0">REV_GENERATED_LINE</span><span class="s2">] </span><span class="s0">+ </span><span class="s6">1</span><span class="s0">, segment</span><span class="s2">[</span><span class="s0">REV_GENERATED_COLUMN</span><span class="s2">])</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s3">export </span><span class="s0">{</span>
+  <span class="s0">FlattenMap </span><span class="s3">as </span><span class="s0">AnyMap,</span>
+  <span class="s0">FlattenMap,</span>
+  <span class="s0">GREATEST_LOWER_BOUND,</span>
+  <span class="s0">LEAST_UPPER_BOUND,</span>
+  <span class="s0">TraceMap,</span>
+  <span class="s0">allGeneratedPositionsFor,</span>
+  <span class="s0">decodedMap,</span>
+  <span class="s0">decodedMappings,</span>
+  <span class="s0">eachMapping,</span>
+  <span class="s0">encodedMap,</span>
+  <span class="s0">encodedMappings,</span>
+  <span class="s0">generatedPositionFor,</span>
+  <span class="s0">isIgnored,</span>
+  <span class="s0">originalPositionFor,</span>
+  <span class="s0">presortedDecodedMap,</span>
+  <span class="s0">sourceContentFor,</span>
+  <span class="s0">traceSegment</span>
+<span class="s0">};</span>
+<span class="s0">//</span><span class="s1"># sourceMappingURL=trace-mapping.mjs.map</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<html>
+<head>
+<title>batcher.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8; font-style: italic;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+batcher.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ MotionGlobalConfig } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ stepsOrder } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./order.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ createRenderStep } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./render-step.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">maxElapsed = </span><span class="s4">40</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s5">createRenderBatcher</span><span class="s2">(scheduleNextBatch, allowKeepAlive) {</span>
+    <span class="s0">let </span><span class="s2">runNextFrame = </span><span class="s6">false</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">useDefaultElapsed = </span><span class="s6">true</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">state = {</span>
+        <span class="s1">delta</span><span class="s2">: </span><span class="s4">0.0</span><span class="s2">,</span>
+        <span class="s1">timestamp</span><span class="s2">: </span><span class="s4">0.0</span><span class="s2">,</span>
+        <span class="s1">isProcessing</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+    <span class="s2">};</span>
+    <span class="s0">const </span><span class="s5">flagRunNextFrame </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s1">(</span><span class="s2">runNextFrame = </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">steps = stepsOrder.</span><span class="s5">reduce</span><span class="s1">(</span><span class="s2">(acc, key) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">acc</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s5">createRenderStep</span><span class="s1">(</span><span class="s2">flagRunNextFrame, allowKeepAlive ? key : </span><span class="s6">undefined</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">acc;</span>
+    <span class="s2">}, {}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">{ setup, read, resolveKeyframes, preUpdate, update, preRender, render, postRender, } = steps;</span>
+    <span class="s0">const </span><span class="s5">processBatch </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">useManualTiming = MotionGlobalConfig.useManualTiming;</span>
+        <span class="s0">const </span><span class="s2">timestamp = useManualTiming</span>
+            <span class="s2">? state.timestamp</span>
+            <span class="s2">: performance.</span><span class="s5">now</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">runNextFrame = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!useManualTiming</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">state.delta = useDefaultElapsed</span>
+                <span class="s2">? </span><span class="s4">1000 </span><span class="s2">/ </span><span class="s4">60</span>
+                <span class="s2">: Math.</span><span class="s5">max</span><span class="s1">(</span><span class="s2">Math.</span><span class="s5">min</span><span class="s1">(</span><span class="s2">timestamp - state.timestamp, maxElapsed</span><span class="s1">)</span><span class="s2">, </span><span class="s4">1</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">state.timestamp = timestamp;</span>
+        <span class="s2">state.isProcessing = </span><span class="s6">true</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s7">Unrolled render loop for better per-frame performance</span>
+        <span class="s2">setup.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">read.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">resolveKeyframes.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">preUpdate.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">update.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">preRender.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">render.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">postRender.</span><span class="s5">process</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">state.isProcessing = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">runNextFrame &amp;&amp; allowKeepAlive</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">useDefaultElapsed = </span><span class="s6">false</span><span class="s2">;</span>
+            <span class="s5">scheduleNextBatch</span><span class="s1">(</span><span class="s2">processBatch</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">};</span>
+    <span class="s0">const </span><span class="s5">wake </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">runNextFrame = </span><span class="s6">true</span><span class="s2">;</span>
+        <span class="s2">useDefaultElapsed = </span><span class="s6">true</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!state.isProcessing</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s5">scheduleNextBatch</span><span class="s1">(</span><span class="s2">processBatch</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">};</span>
+    <span class="s0">const </span><span class="s2">schedule = stepsOrder.</span><span class="s5">reduce</span><span class="s1">(</span><span class="s2">(acc, key) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">step = steps</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">acc</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= (process, keepAlive = </span><span class="s6">false</span><span class="s2">, immediate = </span><span class="s6">false</span><span class="s2">) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!runNextFrame</span><span class="s1">)</span>
+                <span class="s5">wake</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">step.</span><span class="s5">schedule</span><span class="s1">(</span><span class="s2">process, keepAlive, immediate</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s0">return </span><span class="s2">acc;</span>
+    <span class="s2">}, {}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s5">cancel </span><span class="s2">= (process) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s4">0</span><span class="s2">; i &lt; stepsOrder.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">steps</span><span class="s1">[</span><span class="s2">stepsOrder</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]]</span><span class="s2">.</span><span class="s5">cancel</span><span class="s1">(</span><span class="s2">process</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">};</span>
+    <span class="s0">return </span><span class="s2">{ schedule, cancel, state, steps };</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ createRenderBatcher };</span>
+<span class="s2">//</span><span class="s7"># sourceMappingURL=batcher.mjs.map</span>
+</pre>
+</body>
+</html>

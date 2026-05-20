@@ -1,0 +1,134 @@
+<html>
+<head>
+<title>animate-elements.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+animate-elements.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ resolveElements, getValueTransition, getAnimationMap, animationMapKey, getComputedStyle, fillWildcards, applyPxDefaults, NativeAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-dom</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ invariant, secondsToMilliseconds } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+
+<span class="s0">function </span><span class="s4">animateElements</span><span class="s2">(elementOrSelector, keyframes, options, scope) {</span>
+    <span class="s2">// </span><span class="s5">Gracefully handle null/undefined elements (e.g., from querySelector returning null)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">elementOrSelector == </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">elements = </span><span class="s4">resolveElements</span><span class="s1">(</span><span class="s2">elementOrSelector, scope</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">numElements = elements.</span><span class="s1">length</span><span class="s2">;</span>
+    <span class="s4">invariant</span><span class="s1">(</span><span class="s4">Boolean</span><span class="s1">(</span><span class="s2">numElements</span><span class="s1">)</span><span class="s2">, &quot;</span><span class="s3">No valid elements provided.</span><span class="s2">&quot;, &quot;</span><span class="s3">no-valid-elements</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* WAAPI doesn't support interrupting animations. 
+     * 
+     * Therefore, starting animations requires a three-step process: 
+     * 1. Stop existing animations (write styles to DOM) 
+     * 2. Resolve keyframes (read styles from DOM) 
+     * 3. Create new animations (write styles to DOM) 
+     * 
+     * The hybrid `animate()` function uses AsyncAnimation to resolve 
+     * keyframes before creating new animations, which removes style 
+     * thrashing. Here, we have much stricter filesize constraints. 
+     * Therefore we do this in a synchronous way that ensures that 
+     * at least within `animate()` calls there is no style thrashing. 
+     * 
+     * In the motion-native-animate-mini-interrupt benchmark this 
+     * was 80% faster than a single loop. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">animationDefinitions = </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Step 1: Build options and stop existing animations (write) 
+     </span><span class="s2">*/</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; numElements; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">element = elements</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">elementTransition = { ...options };</span>
+        <span class="s2">/**</span>
+         <span class="s5">* Resolve stagger function if provided. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof elementTransition.delay === &quot;</span><span class="s3">function</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">elementTransition.delay = elementTransition.</span><span class="s4">delay</span><span class="s1">(</span><span class="s2">i, numElements</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">valueName in keyframes</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">let </span><span class="s2">valueKeyframes = keyframes</span><span class="s1">[</span><span class="s2">valueName</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!Array.</span><span class="s4">isArray</span><span class="s1">(</span><span class="s2">valueKeyframes</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">valueKeyframes = </span><span class="s1">[</span><span class="s2">valueKeyframes</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">valueOptions = {</span>
+                <span class="s2">...</span><span class="s4">getValueTransition</span><span class="s1">(</span><span class="s2">elementTransition, valueName</span><span class="s1">)</span><span class="s2">,</span>
+            <span class="s2">};</span>
+            <span class="s2">valueOptions.duration &amp;&amp; </span><span class="s1">(</span><span class="s2">valueOptions.duration = </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">valueOptions.duration</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s2">valueOptions.delay &amp;&amp; </span><span class="s1">(</span><span class="s2">valueOptions.delay = </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">valueOptions.delay</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s5">* If there's an existing animation playing on this element then stop it 
+             * before creating a new one. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">map = </span><span class="s4">getAnimationMap</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">key = </span><span class="s4">animationMapKey</span><span class="s1">(</span><span class="s2">valueName, valueOptions.pseudoElement || &quot;&quot;</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">currentAnimation = map.</span><span class="s4">get</span><span class="s1">(</span><span class="s2">key</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">currentAnimation &amp;&amp; currentAnimation.</span><span class="s4">stop</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">animationDefinitions.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">{</span>
+                <span class="s2">map,</span>
+                <span class="s2">key,</span>
+                <span class="s1">unresolvedKeyframes</span><span class="s2">: valueKeyframes,</span>
+                <span class="s1">options</span><span class="s2">: {</span>
+                    <span class="s2">...valueOptions,</span>
+                    <span class="s2">element,</span>
+                    <span class="s1">name</span><span class="s2">: valueName,</span>
+                    <span class="s1">allowFlatten</span><span class="s2">: !elementTransition.type &amp;&amp; !elementTransition.ease,</span>
+                <span class="s2">},</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Step 2: Resolve keyframes (read) 
+     </span><span class="s2">*/</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; animationDefinitions.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">{ unresolvedKeyframes, options: animationOptions } = animationDefinitions</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ element, name, pseudoElement } = animationOptions;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!pseudoElement &amp;&amp; unresolvedKeyframes</span><span class="s1">[</span><span class="s7">0</span><span class="s1">] </span><span class="s2">=== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">unresolvedKeyframes</span><span class="s1">[</span><span class="s7">0</span><span class="s1">] </span><span class="s2">= </span><span class="s4">getComputedStyle</span><span class="s1">(</span><span class="s2">element, name</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s4">fillWildcards</span><span class="s1">(</span><span class="s2">unresolvedKeyframes</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s4">applyPxDefaults</span><span class="s1">(</span><span class="s2">unresolvedKeyframes, name</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s5">* If we only have one keyframe, explicitly read the initial keyframe 
+         * from the computed style. This is to ensure consistency with WAAPI behaviour 
+         * for restarting animations, for instance .play() after finish, when it 
+         * has one vs two keyframes. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!pseudoElement &amp;&amp; unresolvedKeyframes.</span><span class="s1">length </span><span class="s2">&lt; </span><span class="s7">2</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">unresolvedKeyframes.</span><span class="s4">unshift</span><span class="s1">(</span><span class="s4">getComputedStyle</span><span class="s1">(</span><span class="s2">element, name</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">animationOptions.keyframes = unresolvedKeyframes;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Step 3: Create new animations (write) 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">animations = </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s7">0</span><span class="s2">; i &lt; animationDefinitions.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">{ map, key, options: animationOptions } = animationDefinitions</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">animation = new </span><span class="s4">NativeAnimation</span><span class="s1">(</span><span class="s2">animationOptions</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">map.</span><span class="s4">set</span><span class="s1">(</span><span class="s2">key, animation</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">animation.finished.</span><span class="s4">finally</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">map.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">key</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">animations.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">animation</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">animations;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ animateElements };</span>
+<span class="s2">//</span><span class="s5"># sourceMappingURL=animate-elements.mjs.map</span>
+</pre>
+</body>
+</html>

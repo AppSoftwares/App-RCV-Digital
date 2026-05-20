@@ -1,0 +1,1138 @@
+<html>
+<head>
+<title>grid-utils.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+grid-utils.js</font>
+</center></td></tr></table>
+<pre><span class="s0">let parser = require(</span><span class="s1">'postcss-value-parser'</span><span class="s0">)</span>
+<span class="s0">let list = require(</span><span class="s1">'postcss'</span><span class="s0">).list</span>
+
+<span class="s0">let uniq = require(</span><span class="s1">'../utils'</span><span class="s0">).uniq</span>
+<span class="s0">let escapeRegexp = require(</span><span class="s1">'../utils'</span><span class="s0">).escapeRegexp</span>
+<span class="s0">let splitSelector = require(</span><span class="s1">'../utils'</span><span class="s0">).splitSelector</span>
+
+<span class="s2">function </span><span class="s0">convert(value) {</span>
+  <span class="s2">if </span><span class="s0">(</span>
+    <span class="s0">value &amp;&amp;</span>
+    <span class="s0">value.length === </span><span class="s3">2 </span><span class="s0">&amp;&amp;</span>
+    <span class="s0">value[</span><span class="s3">0</span><span class="s0">] === </span><span class="s1">'span' </span><span class="s0">&amp;&amp;</span>
+    <span class="s0">parseInt(value[</span><span class="s3">1</span><span class="s0">], </span><span class="s3">10</span><span class="s0">) &gt; </span><span class="s3">0</span>
+  <span class="s0">) {</span>
+    <span class="s2">return </span><span class="s0">[</span><span class="s2">false</span><span class="s0">, parseInt(value[</span><span class="s3">1</span><span class="s0">], </span><span class="s3">10</span><span class="s0">)]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">if </span><span class="s0">(value &amp;&amp; value.length === </span><span class="s3">1 </span><span class="s0">&amp;&amp; parseInt(value[</span><span class="s3">0</span><span class="s0">], </span><span class="s3">10</span><span class="s0">) &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s2">return </span><span class="s0">[parseInt(value[</span><span class="s3">0</span><span class="s0">], </span><span class="s3">10</span><span class="s0">), </span><span class="s2">false</span><span class="s0">]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">[</span><span class="s2">false</span><span class="s0">, </span><span class="s2">false</span><span class="s0">]</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.translate = translate</span>
+
+<span class="s2">function </span><span class="s0">translate(values, startIndex, endIndex) {</span>
+  <span class="s0">let startValue = values[startIndex]</span>
+  <span class="s0">let endValue = values[endIndex]</span>
+
+  <span class="s2">if </span><span class="s0">(!startValue) {</span>
+    <span class="s2">return </span><span class="s0">[</span><span class="s2">false</span><span class="s0">, </span><span class="s2">false</span><span class="s0">]</span>
+  <span class="s0">}</span>
+
+  <span class="s0">let [start, spanStart] = convert(startValue)</span>
+  <span class="s0">let [end, spanEnd] = convert(endValue)</span>
+
+  <span class="s2">if </span><span class="s0">(start &amp;&amp; !endValue) {</span>
+    <span class="s2">return </span><span class="s0">[start, </span><span class="s2">false</span><span class="s0">]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">if </span><span class="s0">(spanStart &amp;&amp; end) {</span>
+    <span class="s2">return </span><span class="s0">[end - spanStart, spanStart]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">if </span><span class="s0">(start &amp;&amp; spanEnd) {</span>
+    <span class="s2">return </span><span class="s0">[start, spanEnd]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">if </span><span class="s0">(start &amp;&amp; end) {</span>
+    <span class="s2">return </span><span class="s0">[start, end - start]</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">[</span><span class="s2">false</span><span class="s0">, </span><span class="s2">false</span><span class="s0">]</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.parse = parse</span>
+
+<span class="s2">function </span><span class="s0">parse(decl) {</span>
+  <span class="s0">let node = parser(decl.value)</span>
+
+  <span class="s0">let values = []</span>
+  <span class="s0">let current = </span><span class="s3">0</span>
+  <span class="s0">values[current] = []</span>
+
+  <span class="s2">for </span><span class="s0">(let i of node.nodes) {</span>
+    <span class="s2">if </span><span class="s0">(i.type === </span><span class="s1">'div'</span><span class="s0">) {</span>
+      <span class="s0">current += </span><span class="s3">1</span>
+      <span class="s0">values[current] = []</span>
+    <span class="s0">} </span><span class="s2">else if </span><span class="s0">(i.type === </span><span class="s1">'word'</span><span class="s0">) {</span>
+      <span class="s0">values[current].push(i.value)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">values</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.insertDecl = insertDecl</span>
+
+<span class="s2">function </span><span class="s0">insertDecl(decl, prop, value) {</span>
+  <span class="s2">if </span><span class="s0">(value &amp;&amp; !decl.parent.some(i =&gt; i.prop === `-ms-${prop}`)) {</span>
+    <span class="s0">decl.cloneBefore({</span>
+      <span class="s0">prop: `-ms-${prop}`,</span>
+      <span class="s0">value: value.toString()</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">// Track transforms</span>
+
+<span class="s0">exports.prefixTrackProp = prefixTrackProp</span>
+
+<span class="s2">function </span><span class="s0">prefixTrackProp({ prefix, prop }) {</span>
+  <span class="s2">return </span><span class="s0">prefix + prop.replace(</span><span class="s1">'template-'</span><span class="s0">, </span><span class="s1">''</span><span class="s0">)</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">transformRepeat({ nodes }, { gap }) {</span>
+  <span class="s0">let { count, size } = nodes.reduce(</span>
+    <span class="s0">(result, node) =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'div' </span><span class="s0">&amp;&amp; node.value === </span><span class="s1">','</span><span class="s0">) {</span>
+        <span class="s0">result.key = </span><span class="s1">'size'</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">result[result.key].push(parser.stringify(node))</span>
+      <span class="s0">}</span>
+      <span class="s2">return </span><span class="s0">result</span>
+    <span class="s0">},</span>
+    <span class="s0">{</span>
+      <span class="s0">count: [],</span>
+      <span class="s0">key: </span><span class="s1">'count'</span><span class="s0">,</span>
+      <span class="s0">size: []</span>
+    <span class="s0">}</span>
+  <span class="s0">)</span>
+
+  <span class="s4">// insert gap values</span>
+  <span class="s2">if </span><span class="s0">(gap) {</span>
+    <span class="s0">size = size.filter(i =&gt; i.trim())</span>
+    <span class="s0">let val = []</span>
+    <span class="s2">for </span><span class="s0">(let i = </span><span class="s3">1</span><span class="s0">; i &lt;= count; i++) {</span>
+      <span class="s0">size.forEach((item, index) =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(index &gt; </span><span class="s3">0 </span><span class="s0">|| i &gt; </span><span class="s3">1</span><span class="s0">) {</span>
+          <span class="s0">val.push(gap)</span>
+        <span class="s0">}</span>
+        <span class="s0">val.push(item)</span>
+      <span class="s0">})</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return </span><span class="s0">val.join(</span><span class="s1">' '</span><span class="s0">)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">`(${size.join(</span><span class="s1">''</span><span class="s0">)})[${count.join(</span><span class="s1">''</span><span class="s0">)}]`</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.prefixTrackValue = prefixTrackValue</span>
+
+<span class="s2">function </span><span class="s0">prefixTrackValue({ gap, value }) {</span>
+  <span class="s0">let result = parser(value).nodes.reduce((nodes, node) =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'function' </span><span class="s0">&amp;&amp; node.value === </span><span class="s1">'repeat'</span><span class="s0">) {</span>
+      <span class="s0">nodes.push({</span>
+        <span class="s0">type: </span><span class="s1">'word'</span><span class="s0">,</span>
+        <span class="s0">value: transformRepeat(node, { gap })</span>
+      <span class="s0">})</span>
+      <span class="s2">return </span><span class="s0">nodes</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(gap &amp;&amp; node.type === </span><span class="s1">'space'</span><span class="s0">) {</span>
+      <span class="s0">nodes.push(</span>
+        <span class="s0">{</span>
+          <span class="s0">type: </span><span class="s1">'space'</span><span class="s0">,</span>
+          <span class="s0">value: </span><span class="s1">' '</span>
+        <span class="s0">},</span>
+        <span class="s0">{</span>
+          <span class="s0">type: </span><span class="s1">'word'</span><span class="s0">,</span>
+          <span class="s0">value: gap</span>
+        <span class="s0">},</span>
+        <span class="s0">node</span>
+      <span class="s0">)</span>
+      <span class="s2">return </span><span class="s0">nodes</span>
+    <span class="s0">}</span>
+    <span class="s0">nodes.push(node)</span>
+    <span class="s2">return </span><span class="s0">nodes</span>
+  <span class="s0">}, [])</span>
+
+  <span class="s2">return </span><span class="s0">parser.stringify(result)</span>
+<span class="s0">}</span>
+
+<span class="s4">// Parse grid-template-areas</span>
+
+<span class="s0">const DOTS = /^\.+$/</span>
+
+<span class="s2">function </span><span class="s0">track(start, end) {</span>
+  <span class="s2">return </span><span class="s0">{ end, span: end - start, start }</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">getColumns(line) {</span>
+  <span class="s2">return </span><span class="s0">line.trim().split(/\s+/g)</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.parseGridAreas = parseGridAreas</span>
+
+<span class="s2">function </span><span class="s0">parseGridAreas({ gap, rows }) {</span>
+  <span class="s2">return </span><span class="s0">rows.reduce((areas, line, rowIndex) =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(gap.row) rowIndex *= </span><span class="s3">2</span>
+
+    <span class="s2">if </span><span class="s0">(line.trim() === </span><span class="s1">''</span><span class="s0">) </span><span class="s2">return </span><span class="s0">areas</span>
+
+    <span class="s0">getColumns(line).forEach((area, columnIndex) =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(DOTS.test(area)) </span><span class="s2">return</span>
+
+      <span class="s2">if </span><span class="s0">(gap.column) columnIndex *= </span><span class="s3">2</span>
+
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">areas[area] === </span><span class="s1">'undefined'</span><span class="s0">) {</span>
+        <span class="s0">areas[area] = {</span>
+          <span class="s0">column: track(columnIndex + </span><span class="s3">1</span><span class="s0">, columnIndex + </span><span class="s3">2</span><span class="s0">),</span>
+          <span class="s0">row: track(rowIndex + </span><span class="s3">1</span><span class="s0">, rowIndex + </span><span class="s3">2</span><span class="s0">)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">let { column, row } = areas[area]</span>
+
+        <span class="s0">column.start = Math.min(column.start, columnIndex + </span><span class="s3">1</span><span class="s0">)</span>
+        <span class="s0">column.end = Math.max(column.end, columnIndex + </span><span class="s3">2</span><span class="s0">)</span>
+        <span class="s0">column.span = column.end - column.start</span>
+
+        <span class="s0">row.start = Math.min(row.start, rowIndex + </span><span class="s3">1</span><span class="s0">)</span>
+        <span class="s0">row.end = Math.max(row.end, rowIndex + </span><span class="s3">2</span><span class="s0">)</span>
+        <span class="s0">row.span = row.end - row.start</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+
+    <span class="s2">return </span><span class="s0">areas</span>
+  <span class="s0">}, {})</span>
+<span class="s0">}</span>
+
+<span class="s4">// Parse grid-template</span>
+
+<span class="s2">function </span><span class="s0">testTrack(node) {</span>
+  <span class="s2">return </span><span class="s0">node.type === </span><span class="s1">'word' </span><span class="s0">&amp;&amp; /^\[.+]$/.test(node.value)</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">verifyRowSize(result) {</span>
+  <span class="s2">if </span><span class="s0">(result.areas.length &gt; result.rows.length) {</span>
+    <span class="s0">result.rows.push(</span><span class="s1">'auto'</span><span class="s0">)</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">result</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.parseTemplate = parseTemplate</span>
+
+<span class="s2">function </span><span class="s0">parseTemplate({ decl, gap }) {</span>
+  <span class="s0">let gridTemplate = parser(decl.value).nodes.reduce(</span>
+    <span class="s0">(result, node) =&gt; {</span>
+      <span class="s0">let { type, value } = node</span>
+
+      <span class="s2">if </span><span class="s0">(testTrack(node) || type === </span><span class="s1">'space'</span><span class="s0">) </span><span class="s2">return </span><span class="s0">result</span>
+
+      <span class="s4">// area</span>
+      <span class="s2">if </span><span class="s0">(type === </span><span class="s1">'string'</span><span class="s0">) {</span>
+        <span class="s0">result = verifyRowSize(result)</span>
+        <span class="s0">result.areas.push(value)</span>
+      <span class="s0">}</span>
+
+      <span class="s4">// values and function</span>
+      <span class="s2">if </span><span class="s0">(type === </span><span class="s1">'word' </span><span class="s0">|| type === </span><span class="s1">'function'</span><span class="s0">) {</span>
+        <span class="s0">result[result.key].push(parser.stringify(node))</span>
+      <span class="s0">}</span>
+
+      <span class="s4">// divider(/)</span>
+      <span class="s2">if </span><span class="s0">(type === </span><span class="s1">'div' </span><span class="s0">&amp;&amp; value === </span><span class="s1">'/'</span><span class="s0">) {</span>
+        <span class="s0">result.key = </span><span class="s1">'columns'</span>
+        <span class="s0">result = verifyRowSize(result)</span>
+      <span class="s0">}</span>
+
+      <span class="s2">return </span><span class="s0">result</span>
+    <span class="s0">},</span>
+    <span class="s0">{</span>
+      <span class="s0">areas: [],</span>
+      <span class="s0">columns: [],</span>
+      <span class="s0">key: </span><span class="s1">'rows'</span><span class="s0">,</span>
+      <span class="s0">rows: []</span>
+    <span class="s0">}</span>
+  <span class="s0">)</span>
+
+  <span class="s2">return </span><span class="s0">{</span>
+    <span class="s0">areas: parseGridAreas({</span>
+      <span class="s0">gap,</span>
+      <span class="s0">rows: gridTemplate.areas</span>
+    <span class="s0">}),</span>
+    <span class="s0">columns: prefixTrackValue({</span>
+      <span class="s0">gap: gap.column,</span>
+      <span class="s0">value: gridTemplate.columns.join(</span><span class="s1">' '</span><span class="s0">)</span>
+    <span class="s0">}),</span>
+    <span class="s0">rows: prefixTrackValue({</span>
+      <span class="s0">gap: gap.row,</span>
+      <span class="s0">value: gridTemplate.rows.join(</span><span class="s1">' '</span><span class="s0">)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">// Insert parsed grid areas</span>
+
+<span class="s4">/** 
+ * Get an array of -ms- prefixed props and values 
+ * @param  {Object} [area] area object with column and row data 
+ * @param  {Boolean} [addRowSpan] should we add grid-column-row value? 
+ * @param  {Boolean} [addColumnSpan] should we add grid-column-span value? 
+ * @return {Array&lt;Object&gt;} 
+ */</span>
+<span class="s2">function </span><span class="s0">getMSDecls(area, addRowSpan = </span><span class="s2">false</span><span class="s0">, addColumnSpan = </span><span class="s2">false</span><span class="s0">) {</span>
+  <span class="s0">let result = [</span>
+    <span class="s0">{</span>
+      <span class="s0">prop: </span><span class="s1">'-ms-grid-row'</span><span class="s0">,</span>
+      <span class="s0">value: String(area.row.start)</span>
+    <span class="s0">}</span>
+  <span class="s0">]</span>
+  <span class="s2">if </span><span class="s0">(area.row.span &gt; </span><span class="s3">1 </span><span class="s0">|| addRowSpan) {</span>
+    <span class="s0">result.push({</span>
+      <span class="s0">prop: </span><span class="s1">'-ms-grid-row-span'</span><span class="s0">,</span>
+      <span class="s0">value: String(area.row.span)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+  <span class="s0">result.push({</span>
+    <span class="s0">prop: </span><span class="s1">'-ms-grid-column'</span><span class="s0">,</span>
+    <span class="s0">value: String(area.column.start)</span>
+  <span class="s0">})</span>
+  <span class="s2">if </span><span class="s0">(area.column.span &gt; </span><span class="s3">1 </span><span class="s0">|| addColumnSpan) {</span>
+    <span class="s0">result.push({</span>
+      <span class="s0">prop: </span><span class="s1">'-ms-grid-column-span'</span><span class="s0">,</span>
+      <span class="s0">value: String(area.column.span)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">result</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">getParentMedia(parent) {</span>
+  <span class="s2">if </span><span class="s0">(parent.type === </span><span class="s1">'atrule' </span><span class="s0">&amp;&amp; parent.name === </span><span class="s1">'media'</span><span class="s0">) {</span>
+    <span class="s2">return </span><span class="s0">parent</span>
+  <span class="s0">}</span>
+  <span class="s2">if </span><span class="s0">(!parent.parent) {</span>
+    <span class="s2">return false</span>
+  <span class="s0">}</span>
+  <span class="s2">return </span><span class="s0">getParentMedia(parent.parent)</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * change selectors for rules with duplicate grid-areas. 
+ * @param  {Array&lt;Rule&gt;} rules 
+ * @param  {Array&lt;String&gt;} templateSelectors 
+ * @return {Array&lt;Rule&gt;} rules with changed selectors 
+ */</span>
+<span class="s2">function </span><span class="s0">changeDuplicateAreaSelectors(ruleSelectors, templateSelectors) {</span>
+  <span class="s0">ruleSelectors = ruleSelectors.map(selector =&gt; {</span>
+    <span class="s0">let selectorBySpace = list.space(selector)</span>
+    <span class="s0">let selectorByComma = list.comma(selector)</span>
+
+    <span class="s2">if </span><span class="s0">(selectorBySpace.length &gt; selectorByComma.length) {</span>
+      <span class="s0">selector = selectorBySpace.slice(-</span><span class="s3">1</span><span class="s0">).join(</span><span class="s1">''</span><span class="s0">)</span>
+    <span class="s0">}</span>
+    <span class="s2">return </span><span class="s0">selector</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">ruleSelectors.map(ruleSelector =&gt; {</span>
+    <span class="s0">let newSelector = templateSelectors.map((tplSelector, index) =&gt; {</span>
+      <span class="s0">let space = index === </span><span class="s3">0 </span><span class="s0">? </span><span class="s1">'' </span><span class="s0">: </span><span class="s1">' '</span>
+      <span class="s2">return </span><span class="s0">`${space}${tplSelector} &gt; ${ruleSelector}`</span>
+    <span class="s0">})</span>
+
+    <span class="s2">return </span><span class="s0">newSelector</span>
+  <span class="s0">})</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * check if selector of rules are equal 
+ * @param  {Rule} ruleA 
+ * @param  {Rule} ruleB 
+ * @return {Boolean} 
+ */</span>
+<span class="s2">function </span><span class="s0">selectorsEqual(ruleA, ruleB) {</span>
+  <span class="s2">return </span><span class="s0">ruleA.selectors.some(sel =&gt; {</span>
+    <span class="s2">return </span><span class="s0">ruleB.selectors.includes(sel)</span>
+  <span class="s0">})</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * Parse data from all grid-template(-areas) declarations 
+ * @param  {Root} css css root 
+ * @return {Object} parsed data 
+ */</span>
+<span class="s2">function </span><span class="s0">parseGridTemplatesData(css) {</span>
+  <span class="s0">let parsed = []</span>
+
+  <span class="s4">// we walk through every grid-template(-areas) declaration and store</span>
+  <span class="s4">// data with the same area names inside the item</span>
+  <span class="s0">css.walkDecls(/grid-template(-areas)?$/, d =&gt; {</span>
+    <span class="s0">let rule = d.parent</span>
+    <span class="s0">let media = getParentMedia(rule)</span>
+    <span class="s0">let gap = getGridGap(d)</span>
+    <span class="s0">let inheritedGap = inheritGridGap(d, gap)</span>
+    <span class="s0">let { areas } = parseTemplate({ decl: d, gap: inheritedGap || gap })</span>
+    <span class="s0">let areaNames = Object.keys(areas)</span>
+
+    <span class="s4">// skip node if it doesn't have areas</span>
+    <span class="s2">if </span><span class="s0">(areaNames.length === </span><span class="s3">0</span><span class="s0">) {</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s4">// check parsed array for item that include the same area names</span>
+    <span class="s4">// return index of that item</span>
+    <span class="s0">let index = parsed.reduce((acc, { allAreas }, idx) =&gt; {</span>
+      <span class="s0">let hasAreas = allAreas &amp;&amp; areaNames.some(area =&gt; allAreas.includes(area))</span>
+      <span class="s2">return </span><span class="s0">hasAreas ? idx : acc</span>
+    <span class="s0">}, </span><span class="s2">null</span><span class="s0">)</span>
+
+    <span class="s2">if </span><span class="s0">(index !== </span><span class="s2">null</span><span class="s0">) {</span>
+      <span class="s4">// index is found, add the grid-template data to that item</span>
+      <span class="s0">let { allAreas, rules } = parsed[index]</span>
+
+      <span class="s4">// check if rule has no duplicate area names</span>
+      <span class="s0">let hasNoDuplicates = rules.some(r =&gt; {</span>
+        <span class="s2">return </span><span class="s0">r.hasDuplicates === </span><span class="s2">false </span><span class="s0">&amp;&amp; selectorsEqual(r, rule)</span>
+      <span class="s0">})</span>
+
+      <span class="s0">let duplicatesFound = </span><span class="s2">false</span>
+
+      <span class="s4">// check need to gather all duplicate area names</span>
+      <span class="s0">let duplicateAreaNames = rules.reduce((acc, r) =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(!r.params &amp;&amp; selectorsEqual(r, rule)) {</span>
+          <span class="s0">duplicatesFound = </span><span class="s2">true</span>
+          <span class="s2">return </span><span class="s0">r.duplicateAreaNames</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(!duplicatesFound) {</span>
+          <span class="s0">areaNames.forEach(name =&gt; {</span>
+            <span class="s2">if </span><span class="s0">(r.areas[name]) {</span>
+              <span class="s0">acc.push(name)</span>
+            <span class="s0">}</span>
+          <span class="s0">})</span>
+        <span class="s0">}</span>
+        <span class="s2">return </span><span class="s0">uniq(acc)</span>
+      <span class="s0">}, [])</span>
+
+      <span class="s4">// update grid-row/column-span values for areas with duplicate</span>
+      <span class="s4">// area names. @see #1084 and #1146</span>
+      <span class="s0">rules.forEach(r =&gt; {</span>
+        <span class="s0">areaNames.forEach(name =&gt; {</span>
+          <span class="s0">let area = r.areas[name]</span>
+          <span class="s2">if </span><span class="s0">(area &amp;&amp; area.row.span !== areas[name].row.span) {</span>
+            <span class="s0">areas[name].row.updateSpan = </span><span class="s2">true</span>
+          <span class="s0">}</span>
+
+          <span class="s2">if </span><span class="s0">(area &amp;&amp; area.column.span !== areas[name].column.span) {</span>
+            <span class="s0">areas[name].column.updateSpan = </span><span class="s2">true</span>
+          <span class="s0">}</span>
+        <span class="s0">})</span>
+      <span class="s0">})</span>
+
+      <span class="s0">parsed[index].allAreas = uniq([...allAreas, ...areaNames])</span>
+      <span class="s0">parsed[index].rules.push({</span>
+        <span class="s0">areas,</span>
+        <span class="s0">duplicateAreaNames,</span>
+        <span class="s0">hasDuplicates: !hasNoDuplicates,</span>
+        <span class="s0">node: rule,</span>
+        <span class="s0">params: media.params,</span>
+        <span class="s0">selectors: rule.selectors</span>
+      <span class="s0">})</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s4">// index is NOT found, push the new item to the parsed array</span>
+      <span class="s0">parsed.push({</span>
+        <span class="s0">allAreas: areaNames,</span>
+        <span class="s0">areasCount: </span><span class="s3">0</span><span class="s0">,</span>
+        <span class="s0">rules: [</span>
+          <span class="s0">{</span>
+            <span class="s0">areas,</span>
+            <span class="s0">duplicateAreaNames: [],</span>
+            <span class="s0">duplicateRules: [],</span>
+            <span class="s0">hasDuplicates: </span><span class="s2">false</span><span class="s0">,</span>
+            <span class="s0">node: rule,</span>
+            <span class="s0">params: media.params,</span>
+            <span class="s0">selectors: rule.selectors</span>
+          <span class="s0">}</span>
+        <span class="s0">]</span>
+      <span class="s0">})</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return </span><span class="s0">undefined</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">parsed</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * insert prefixed grid-area declarations 
+ * @param  {Root}  css css root 
+ * @param  {Function} isDisabled check if the rule is disabled 
+ * @return {void} 
+ */</span>
+<span class="s0">exports.insertAreas = insertAreas</span>
+
+<span class="s2">function </span><span class="s0">insertAreas(css, isDisabled) {</span>
+  <span class="s4">// parse grid-template declarations</span>
+  <span class="s0">let gridTemplatesData = parseGridTemplatesData(css)</span>
+
+  <span class="s4">// return undefined if no declarations found</span>
+  <span class="s2">if </span><span class="s0">(gridTemplatesData.length === </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s2">return </span><span class="s0">undefined</span>
+  <span class="s0">}</span>
+
+  <span class="s4">// we need to store the rules that we will insert later</span>
+  <span class="s0">let rulesToInsert = {}</span>
+
+  <span class="s0">css.walkDecls(</span><span class="s1">'grid-area'</span><span class="s0">, gridArea =&gt; {</span>
+    <span class="s0">let gridAreaRule = gridArea.parent</span>
+    <span class="s0">let hasPrefixedRow = gridAreaRule.first.prop === </span><span class="s1">'-ms-grid-row'</span>
+    <span class="s0">let gridAreaMedia = getParentMedia(gridAreaRule)</span>
+
+    <span class="s2">if </span><span class="s0">(isDisabled(gridArea)) {</span>
+      <span class="s2">return </span><span class="s0">undefined</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let gridAreaRuleIndex = css.index(gridAreaMedia || gridAreaRule)</span>
+
+    <span class="s0">let value = gridArea.value</span>
+    <span class="s4">// found the data that matches grid-area identifier</span>
+    <span class="s0">let data = gridTemplatesData.filter(d =&gt; d.allAreas.includes(value))[</span><span class="s3">0</span><span class="s0">]</span>
+
+    <span class="s2">if </span><span class="s0">(!data) {</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let lastArea = data.allAreas[data.allAreas.length - </span><span class="s3">1</span><span class="s0">]</span>
+    <span class="s0">let selectorBySpace = list.space(gridAreaRule.selector)</span>
+    <span class="s0">let selectorByComma = list.comma(gridAreaRule.selector)</span>
+    <span class="s0">let selectorIsComplex =</span>
+      <span class="s0">selectorBySpace.length &gt; </span><span class="s3">1 </span><span class="s0">&amp;&amp;</span>
+      <span class="s0">selectorBySpace.length &gt; selectorByComma.length</span>
+
+    <span class="s4">// prevent doubling of prefixes</span>
+    <span class="s2">if </span><span class="s0">(hasPrefixedRow) {</span>
+      <span class="s2">return false</span>
+    <span class="s0">}</span>
+
+    <span class="s4">// create the empty object with the key as the last area name</span>
+    <span class="s4">// e.g if we have templates with &quot;a b c&quot; values, &quot;c&quot; will be the last area</span>
+    <span class="s2">if </span><span class="s0">(!rulesToInsert[lastArea]) {</span>
+      <span class="s0">rulesToInsert[lastArea] = {}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let lastRuleIsSet = </span><span class="s2">false</span>
+
+    <span class="s4">// walk through every grid-template rule data</span>
+    <span class="s2">for </span><span class="s0">(let rule of data.rules) {</span>
+      <span class="s0">let area = rule.areas[value]</span>
+      <span class="s0">let hasDuplicateName = rule.duplicateAreaNames.includes(value)</span>
+
+      <span class="s4">// if we can't find the area name, update lastRule and continue</span>
+      <span class="s2">if </span><span class="s0">(!area) {</span>
+        <span class="s0">let lastRule = rulesToInsert[lastArea].lastRule</span>
+        <span class="s0">let lastRuleIndex</span>
+        <span class="s2">if </span><span class="s0">(lastRule) {</span>
+          <span class="s0">lastRuleIndex = css.index(lastRule)</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s4">/* c8 ignore next 2 */</span>
+          <span class="s0">lastRuleIndex = -</span><span class="s3">1</span>
+        <span class="s0">}</span>
+
+        <span class="s2">if </span><span class="s0">(gridAreaRuleIndex &gt; lastRuleIndex) {</span>
+          <span class="s0">rulesToInsert[lastArea].lastRule = gridAreaMedia || gridAreaRule</span>
+        <span class="s0">}</span>
+        <span class="s2">continue</span>
+      <span class="s0">}</span>
+
+      <span class="s4">// for grid-templates inside media rule we need to create empty</span>
+      <span class="s4">// array to push prefixed grid-area rules later</span>
+      <span class="s2">if </span><span class="s0">(rule.params &amp;&amp; !rulesToInsert[lastArea][rule.params]) {</span>
+        <span class="s0">rulesToInsert[lastArea][rule.params] = []</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">((!rule.hasDuplicates || !hasDuplicateName) &amp;&amp; !rule.params) {</span>
+        <span class="s4">// grid-template has no duplicates and not inside media rule</span>
+
+        <span class="s0">getMSDecls(area, </span><span class="s2">false</span><span class="s0">, </span><span class="s2">false</span><span class="s0">)</span>
+          <span class="s0">.reverse()</span>
+          <span class="s0">.forEach(i =&gt;</span>
+            <span class="s0">gridAreaRule.prepend(</span>
+              <span class="s0">Object.assign(i, {</span>
+                <span class="s0">raws: {</span>
+                  <span class="s0">between: gridArea.raws.between</span>
+                <span class="s0">}</span>
+              <span class="s0">})</span>
+            <span class="s0">)</span>
+          <span class="s0">)</span>
+
+        <span class="s0">rulesToInsert[lastArea].lastRule = gridAreaRule</span>
+        <span class="s0">lastRuleIsSet = </span><span class="s2">true</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(rule.hasDuplicates &amp;&amp; !rule.params &amp;&amp; !selectorIsComplex) {</span>
+        <span class="s4">// grid-template has duplicates and not inside media rule</span>
+        <span class="s0">let cloned = gridAreaRule.clone()</span>
+        <span class="s0">cloned.removeAll()</span>
+
+        <span class="s0">getMSDecls(area, area.row.updateSpan, area.column.updateSpan)</span>
+          <span class="s0">.reverse()</span>
+          <span class="s0">.forEach(i =&gt;</span>
+            <span class="s0">cloned.prepend(</span>
+              <span class="s0">Object.assign(i, {</span>
+                <span class="s0">raws: {</span>
+                  <span class="s0">between: gridArea.raws.between</span>
+                <span class="s0">}</span>
+              <span class="s0">})</span>
+            <span class="s0">)</span>
+          <span class="s0">)</span>
+
+        <span class="s0">cloned.selectors = changeDuplicateAreaSelectors(</span>
+          <span class="s0">cloned.selectors,</span>
+          <span class="s0">rule.selectors</span>
+        <span class="s0">)</span>
+
+        <span class="s2">if </span><span class="s0">(rulesToInsert[lastArea].lastRule) {</span>
+          <span class="s0">rulesToInsert[lastArea].lastRule.after(cloned)</span>
+        <span class="s0">}</span>
+        <span class="s0">rulesToInsert[lastArea].lastRule = cloned</span>
+        <span class="s0">lastRuleIsSet = </span><span class="s2">true</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span>
+        <span class="s0">rule.hasDuplicates &amp;&amp;</span>
+        <span class="s0">!rule.params &amp;&amp;</span>
+        <span class="s0">selectorIsComplex &amp;&amp;</span>
+        <span class="s0">gridAreaRule.selector.includes(rule.selectors[</span><span class="s3">0</span><span class="s0">])</span>
+      <span class="s0">) {</span>
+        <span class="s4">// grid-template has duplicates and not inside media rule</span>
+        <span class="s4">// and the selector is complex</span>
+        <span class="s0">gridAreaRule.walkDecls(/-ms-grid-(row|column)/, d =&gt; d.remove())</span>
+        <span class="s0">getMSDecls(area, area.row.updateSpan, area.column.updateSpan)</span>
+          <span class="s0">.reverse()</span>
+          <span class="s0">.forEach(i =&gt;</span>
+            <span class="s0">gridAreaRule.prepend(</span>
+              <span class="s0">Object.assign(i, {</span>
+                <span class="s0">raws: {</span>
+                  <span class="s0">between: gridArea.raws.between</span>
+                <span class="s0">}</span>
+              <span class="s0">})</span>
+            <span class="s0">)</span>
+          <span class="s0">)</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(rule.params) {</span>
+        <span class="s4">// grid-template is inside media rule</span>
+        <span class="s4">// if we're inside media rule, we need to store prefixed rules</span>
+        <span class="s4">// inside rulesToInsert object to be able to preserve the order of media</span>
+        <span class="s4">// rules and merge them easily</span>
+        <span class="s0">let cloned = gridAreaRule.clone()</span>
+        <span class="s0">cloned.removeAll()</span>
+
+        <span class="s0">getMSDecls(area, area.row.updateSpan, area.column.updateSpan)</span>
+          <span class="s0">.reverse()</span>
+          <span class="s0">.forEach(i =&gt;</span>
+            <span class="s0">cloned.prepend(</span>
+              <span class="s0">Object.assign(i, {</span>
+                <span class="s0">raws: {</span>
+                  <span class="s0">between: gridArea.raws.between</span>
+                <span class="s0">}</span>
+              <span class="s0">})</span>
+            <span class="s0">)</span>
+          <span class="s0">)</span>
+
+        <span class="s2">if </span><span class="s0">(rule.hasDuplicates &amp;&amp; hasDuplicateName) {</span>
+          <span class="s0">cloned.selectors = changeDuplicateAreaSelectors(</span>
+            <span class="s0">cloned.selectors,</span>
+            <span class="s0">rule.selectors</span>
+          <span class="s0">)</span>
+        <span class="s0">}</span>
+
+        <span class="s0">cloned.raws = rule.node.raws</span>
+
+        <span class="s2">if </span><span class="s0">(css.index(rule.node.parent) &gt; gridAreaRuleIndex) {</span>
+          <span class="s4">// append the prefixed rules right inside media rule</span>
+          <span class="s4">// with grid-template</span>
+          <span class="s0">rule.node.parent.append(cloned)</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s4">// store the rule to insert later</span>
+          <span class="s0">rulesToInsert[lastArea][rule.params].push(cloned)</span>
+        <span class="s0">}</span>
+
+        <span class="s4">// set new rule as last rule ONLY if we didn't set lastRule for</span>
+        <span class="s4">// this grid-area before</span>
+        <span class="s2">if </span><span class="s0">(!lastRuleIsSet) {</span>
+          <span class="s0">rulesToInsert[lastArea].lastRule = gridAreaMedia || gridAreaRule</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return </span><span class="s0">undefined</span>
+  <span class="s0">})</span>
+
+  <span class="s4">// append stored rules inside the media rules</span>
+  <span class="s0">Object.keys(rulesToInsert).forEach(area =&gt; {</span>
+    <span class="s0">let data = rulesToInsert[area]</span>
+    <span class="s0">let lastRule = data.lastRule</span>
+    <span class="s0">Object.keys(data)</span>
+      <span class="s0">.reverse()</span>
+      <span class="s0">.filter(p =&gt; p !== </span><span class="s1">'lastRule'</span><span class="s0">)</span>
+      <span class="s0">.forEach(params =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(data[params].length &gt; </span><span class="s3">0 </span><span class="s0">&amp;&amp; lastRule) {</span>
+          <span class="s0">lastRule.after({ name: </span><span class="s1">'media'</span><span class="s0">, params })</span>
+          <span class="s0">lastRule.next().append(data[params])</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">undefined</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * Warn user if grid area identifiers are not found 
+ * @param  {Object} areas 
+ * @param  {Declaration} decl 
+ * @param  {Result} result 
+ * @return {void} 
+ */</span>
+<span class="s0">exports.warnMissedAreas = warnMissedAreas</span>
+
+<span class="s2">function </span><span class="s0">warnMissedAreas(areas, decl, result) {</span>
+  <span class="s0">let missed = Object.keys(areas)</span>
+
+  <span class="s0">decl.root().walkDecls(</span><span class="s1">'grid-area'</span><span class="s0">, gridArea =&gt; {</span>
+    <span class="s0">missed = missed.filter(e =&gt; e !== gridArea.value)</span>
+  <span class="s0">})</span>
+
+  <span class="s2">if </span><span class="s0">(missed.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s0">decl.warn(result, </span><span class="s1">'Can not find grid areas: ' </span><span class="s0">+ missed.join(</span><span class="s1">', '</span><span class="s0">))</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">undefined</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * compare selectors with grid-area rule and grid-template rule 
+ * show warning if grid-template selector is not found 
+ * (this function used for grid-area rule) 
+ * @param  {Declaration} decl 
+ * @param  {Result} result 
+ * @return {void} 
+ */</span>
+<span class="s0">exports.warnTemplateSelectorNotFound = warnTemplateSelectorNotFound</span>
+
+<span class="s2">function </span><span class="s0">warnTemplateSelectorNotFound(decl, result) {</span>
+  <span class="s0">let rule = decl.parent</span>
+  <span class="s0">let root = decl.root()</span>
+  <span class="s0">let duplicatesFound = </span><span class="s2">false</span>
+
+  <span class="s4">// slice selector array. Remove the last part (for comparison)</span>
+  <span class="s0">let slicedSelectorArr = list</span>
+    <span class="s0">.space(rule.selector)</span>
+    <span class="s0">.filter(str =&gt; str !== </span><span class="s1">'&gt;'</span><span class="s0">)</span>
+    <span class="s0">.slice(</span><span class="s3">0</span><span class="s0">, -</span><span class="s3">1</span><span class="s0">)</span>
+
+  <span class="s4">// we need to compare only if selector is complex.</span>
+  <span class="s4">// e.g '.grid-cell' is simple, but '.parent &gt; .grid-cell' is complex</span>
+  <span class="s2">if </span><span class="s0">(slicedSelectorArr.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s0">let gridTemplateFound = </span><span class="s2">false</span>
+    <span class="s0">let foundAreaSelector = </span><span class="s2">null</span>
+
+    <span class="s0">root.walkDecls(/grid-template(-areas)?$/, d =&gt; {</span>
+      <span class="s0">let parent = d.parent</span>
+      <span class="s0">let templateSelectors = parent.selectors</span>
+
+      <span class="s0">let { areas } = parseTemplate({ decl: d, gap: getGridGap(d) })</span>
+      <span class="s0">let hasArea = areas[decl.value]</span>
+
+      <span class="s4">// find the the matching selectors</span>
+      <span class="s2">for </span><span class="s0">(let tplSelector of templateSelectors) {</span>
+        <span class="s2">if </span><span class="s0">(gridTemplateFound) {</span>
+          <span class="s2">break</span>
+        <span class="s0">}</span>
+        <span class="s0">let tplSelectorArr = list.space(tplSelector).filter(str =&gt; str !== </span><span class="s1">'&gt;'</span><span class="s0">)</span>
+
+        <span class="s0">gridTemplateFound = tplSelectorArr.every(</span>
+          <span class="s0">(item, idx) =&gt; item === slicedSelectorArr[idx]</span>
+        <span class="s0">)</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">(gridTemplateFound || !hasArea) {</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">(!foundAreaSelector) {</span>
+        <span class="s0">foundAreaSelector = parent.selector</span>
+      <span class="s0">}</span>
+
+      <span class="s4">// if we found the duplicate area with different selector</span>
+      <span class="s2">if </span><span class="s0">(foundAreaSelector &amp;&amp; foundAreaSelector !== parent.selector) {</span>
+        <span class="s0">duplicatesFound = </span><span class="s2">true</span>
+      <span class="s0">}</span>
+
+      <span class="s2">return </span><span class="s0">undefined</span>
+    <span class="s0">})</span>
+
+    <span class="s4">// warn user if we didn't find template</span>
+    <span class="s2">if </span><span class="s0">(!gridTemplateFound &amp;&amp; duplicatesFound) {</span>
+      <span class="s0">decl.warn(</span>
+        <span class="s0">result,</span>
+        <span class="s1">'Autoprefixer cannot find a grid-template ' </span><span class="s0">+</span>
+          <span class="s0">`containing the duplicate grid-area </span><span class="s1">&quot;${decl.value}&quot; </span><span class="s0">` +</span>
+          <span class="s0">`</span><span class="s2">with </span><span class="s0">full selector matching: ${slicedSelectorArr.join(</span><span class="s1">' '</span><span class="s0">)}`</span>
+      <span class="s0">)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * warn user if both grid-area and grid-(row|column) 
+ * declarations are present in the same rule 
+ * @param  {Declaration} decl 
+ * @param  {Result} result 
+ * @return {void} 
+ */</span>
+<span class="s0">exports.warnIfGridRowColumnExists = warnIfGridRowColumnExists</span>
+
+<span class="s2">function </span><span class="s0">warnIfGridRowColumnExists(decl, result) {</span>
+  <span class="s0">let rule = decl.parent</span>
+  <span class="s0">let decls = []</span>
+  <span class="s0">rule.walkDecls(/^grid-(row|column)/, d =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(</span>
+      <span class="s0">!d.prop.endsWith(</span><span class="s1">'-end'</span><span class="s0">) &amp;&amp;</span>
+      <span class="s0">!d.value.startsWith(</span><span class="s1">'span'</span><span class="s0">) &amp;&amp;</span>
+      <span class="s0">!d.prop.endsWith(</span><span class="s1">'-gap'</span><span class="s0">)</span>
+    <span class="s0">) {</span>
+      <span class="s0">decls.push(d)</span>
+    <span class="s0">}</span>
+  <span class="s0">})</span>
+  <span class="s2">if </span><span class="s0">(decls.length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s0">decls.forEach(d =&gt; {</span>
+      <span class="s0">d.warn(</span>
+        <span class="s0">result,</span>
+        <span class="s1">'You already have a grid-area declaration present in the rule. ' </span><span class="s0">+</span>
+          <span class="s0">`You should use either grid-area or ${d.prop}, not both`</span>
+      <span class="s0">)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">undefined</span>
+<span class="s0">}</span>
+
+<span class="s4">// Gap utils</span>
+
+<span class="s0">exports.getGridGap = getGridGap</span>
+
+<span class="s2">function </span><span class="s0">getGridGap(decl) {</span>
+  <span class="s0">let gap = {}</span>
+
+  <span class="s4">// try to find gap</span>
+  <span class="s0">let testGap = /^(grid-)?((row|column)-)?gap$/</span>
+  <span class="s0">decl.parent.walkDecls(testGap, ({ prop, value }) =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(/^(grid-)?gap$/.test(prop)) {</span>
+      <span class="s0">let [row, , column] = parser(value).nodes</span>
+
+      <span class="s0">gap.row = row &amp;&amp; parser.stringify(row)</span>
+      <span class="s0">gap.column = column ? parser.stringify(column) : gap.row</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(/^(grid-)?row-gap$/.test(prop)) gap.row = value</span>
+    <span class="s2">if </span><span class="s0">(/^(grid-)?column-gap$/.test(prop)) gap.column = value</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">gap</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * parse media parameters (for example 'min-width: 500px') 
+ * @param  {String} params parameter to parse 
+ * @return {} 
+ */</span>
+<span class="s2">function </span><span class="s0">parseMediaParams(params) {</span>
+  <span class="s2">if </span><span class="s0">(!params) {</span>
+    <span class="s2">return </span><span class="s0">[]</span>
+  <span class="s0">}</span>
+  <span class="s0">let parsed = parser(params)</span>
+  <span class="s0">let prop</span>
+  <span class="s0">let value</span>
+
+  <span class="s0">parsed.walk(node =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'word' </span><span class="s0">&amp;&amp; /min|max/g.test(node.value)) {</span>
+      <span class="s0">prop = node.value</span>
+    <span class="s0">} </span><span class="s2">else if </span><span class="s0">(node.value.includes(</span><span class="s1">'px'</span><span class="s0">)) {</span>
+      <span class="s0">value = parseInt(node.value.replace(/\D/g, </span><span class="s1">''</span><span class="s0">))</span>
+    <span class="s0">}</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">[prop, value]</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * Compare the selectors and decide if we 
+ * need to inherit gap from compared selector or not. 
+ * @type {String} selA 
+ * @type {String} selB 
+ * @return {Boolean} 
+ */</span>
+<span class="s2">function </span><span class="s0">shouldInheritGap(selA, selB) {</span>
+  <span class="s0">let result</span>
+
+  <span class="s4">// get arrays of selector split in 3-deep array</span>
+  <span class="s0">let splitSelectorArrA = splitSelector(selA)</span>
+  <span class="s0">let splitSelectorArrB = splitSelector(selB)</span>
+
+  <span class="s2">if </span><span class="s0">(splitSelectorArrA[</span><span class="s3">0</span><span class="s0">].length &lt; splitSelectorArrB[</span><span class="s3">0</span><span class="s0">].length) {</span>
+    <span class="s4">// abort if selectorA has lower descendant specificity then selectorB</span>
+    <span class="s4">// (e.g '.grid' and '.hello .world .grid')</span>
+    <span class="s2">return false</span>
+  <span class="s0">} </span><span class="s2">else if </span><span class="s0">(splitSelectorArrA[</span><span class="s3">0</span><span class="s0">].length &gt; splitSelectorArrB[</span><span class="s3">0</span><span class="s0">].length) {</span>
+    <span class="s4">// if selectorA has higher descendant specificity then selectorB</span>
+    <span class="s4">// (e.g '.foo .bar .grid' and '.grid')</span>
+
+    <span class="s0">let idx = splitSelectorArrA[</span><span class="s3">0</span><span class="s0">].reduce((res, [item], index) =&gt; {</span>
+      <span class="s0">let firstSelectorPart = splitSelectorArrB[</span><span class="s3">0</span><span class="s0">][</span><span class="s3">0</span><span class="s0">][</span><span class="s3">0</span><span class="s0">]</span>
+      <span class="s2">if </span><span class="s0">(item === firstSelectorPart) {</span>
+        <span class="s2">return </span><span class="s0">index</span>
+      <span class="s0">}</span>
+      <span class="s2">return false</span>
+    <span class="s0">}, </span><span class="s2">false</span><span class="s0">)</span>
+
+    <span class="s2">if </span><span class="s0">(idx) {</span>
+      <span class="s0">result = splitSelectorArrB[</span><span class="s3">0</span><span class="s0">].every((arr, index) =&gt; {</span>
+        <span class="s2">return </span><span class="s0">arr.every(</span>
+          <span class="s0">(part, innerIndex) =&gt;</span>
+            <span class="s4">// because selectorA has more space elements, we need to slice</span>
+            <span class="s4">// selectorA array by 'idx' number to compare them</span>
+            <span class="s0">splitSelectorArrA[</span><span class="s3">0</span><span class="s0">].slice(idx)[index][innerIndex] === part</span>
+        <span class="s0">)</span>
+      <span class="s0">})</span>
+    <span class="s0">}</span>
+  <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+    <span class="s4">// if selectorA has the same descendant specificity as selectorB</span>
+    <span class="s4">// this condition covers cases such as: '.grid.foo.bar' and '.grid'</span>
+    <span class="s0">result = splitSelectorArrB.some(byCommaArr =&gt; {</span>
+      <span class="s2">return </span><span class="s0">byCommaArr.every((bySpaceArr, index) =&gt; {</span>
+        <span class="s2">return </span><span class="s0">bySpaceArr.every(</span>
+          <span class="s0">(part, innerIndex) =&gt; splitSelectorArrA[</span><span class="s3">0</span><span class="s0">][index][innerIndex] === part</span>
+        <span class="s0">)</span>
+      <span class="s0">})</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">return </span><span class="s0">result</span>
+<span class="s0">}</span>
+<span class="s4">/** 
+ * inherit grid gap values from the closest rule above 
+ * with the same selector 
+ * @param  {Declaration} decl 
+ * @param  {Object} gap gap values 
+ * @return {Object | Boolean} return gap values or false (if not found) 
+ */</span>
+<span class="s0">exports.inheritGridGap = inheritGridGap</span>
+
+<span class="s2">function </span><span class="s0">inheritGridGap(decl, gap) {</span>
+  <span class="s0">let rule = decl.parent</span>
+  <span class="s0">let mediaRule = getParentMedia(rule)</span>
+  <span class="s0">let root = rule.root()</span>
+
+  <span class="s4">// get an array of selector split in 3-deep array</span>
+  <span class="s0">let splitSelectorArr = splitSelector(rule.selector)</span>
+
+  <span class="s4">// abort if the rule already has gaps</span>
+  <span class="s2">if </span><span class="s0">(Object.keys(gap).length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s2">return false</span>
+  <span class="s0">}</span>
+
+  <span class="s4">// e.g ['min-width']</span>
+  <span class="s0">let [prop] = parseMediaParams(mediaRule.params)</span>
+
+  <span class="s0">let lastBySpace = splitSelectorArr[</span><span class="s3">0</span><span class="s0">]</span>
+
+  <span class="s4">// get escaped value from the selector</span>
+  <span class="s4">// if we have '.grid-2.foo.bar' selector, will be '\.grid\-2'</span>
+  <span class="s0">let escaped = escapeRegexp(lastBySpace[lastBySpace.length - </span><span class="s3">1</span><span class="s0">][</span><span class="s3">0</span><span class="s0">])</span>
+
+  <span class="s0">let regexp = </span><span class="s2">new </span><span class="s0">RegExp(`(${escaped}$)|(${escaped}[,.])`)</span>
+
+  <span class="s4">// find the closest rule with the same selector</span>
+  <span class="s0">let closestRuleGap</span>
+  <span class="s0">root.walkRules(regexp, r =&gt; {</span>
+    <span class="s0">let gridGap</span>
+
+    <span class="s4">// abort if are checking the same rule</span>
+    <span class="s2">if </span><span class="s0">(rule.toString() === r.toString()) {</span>
+      <span class="s2">return false</span>
+    <span class="s0">}</span>
+
+    <span class="s4">// find grid-gap values</span>
+    <span class="s0">r.walkDecls(</span><span class="s1">'grid-gap'</span><span class="s0">, d =&gt; (gridGap = getGridGap(d)))</span>
+
+    <span class="s4">// skip rule without gaps</span>
+    <span class="s2">if </span><span class="s0">(!gridGap || Object.keys(gridGap).length === </span><span class="s3">0</span><span class="s0">) {</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s4">// skip rules that should not be inherited from</span>
+    <span class="s2">if </span><span class="s0">(!shouldInheritGap(rule.selector, r.selector)) {</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let media = getParentMedia(r)</span>
+    <span class="s2">if </span><span class="s0">(media) {</span>
+      <span class="s4">// if we are inside media, we need to check that media props match</span>
+      <span class="s4">// e.g ('min-width' === 'min-width')</span>
+      <span class="s0">let propToCompare = parseMediaParams(media.params)[</span><span class="s3">0</span><span class="s0">]</span>
+      <span class="s2">if </span><span class="s0">(propToCompare === prop) {</span>
+        <span class="s0">closestRuleGap = gridGap</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s0">closestRuleGap = gridGap</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return </span><span class="s0">undefined</span>
+  <span class="s0">})</span>
+
+  <span class="s4">// if we find the closest gap object</span>
+  <span class="s2">if </span><span class="s0">(closestRuleGap &amp;&amp; Object.keys(closestRuleGap).length &gt; </span><span class="s3">0</span><span class="s0">) {</span>
+    <span class="s2">return </span><span class="s0">closestRuleGap</span>
+  <span class="s0">}</span>
+  <span class="s2">return false</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.warnGridGap = warnGridGap</span>
+
+<span class="s2">function </span><span class="s0">warnGridGap({ decl, gap, hasColumns, result }) {</span>
+  <span class="s0">let hasBothGaps = gap.row &amp;&amp; gap.column</span>
+  <span class="s2">if </span><span class="s0">(!hasColumns &amp;&amp; (hasBothGaps || (gap.column &amp;&amp; !gap.row))) {</span>
+    <span class="s2">delete </span><span class="s0">gap.column</span>
+    <span class="s0">decl.warn(</span>
+      <span class="s0">result,</span>
+      <span class="s1">'Can not implement grid-gap without grid-template-columns'</span>
+    <span class="s0">)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">/** 
+ * normalize the grid-template-rows/columns values 
+ * @param  {String} str grid-template-rows/columns value 
+ * @return {Array} normalized array with values 
+ * @example 
+ * let normalized = normalizeRowColumn('1fr repeat(2, 20px 50px) 1fr') 
+ * normalized // &lt;= ['1fr', '20px', '50px', '20px', '50px', '1fr'] 
+ */</span>
+<span class="s2">function </span><span class="s0">normalizeRowColumn(str) {</span>
+  <span class="s0">let normalized = parser(str).nodes.reduce((result, node) =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'function' </span><span class="s0">&amp;&amp; node.value === </span><span class="s1">'repeat'</span><span class="s0">) {</span>
+      <span class="s0">let key = </span><span class="s1">'count'</span>
+
+      <span class="s0">let [count, value] = node.nodes.reduce(</span>
+        <span class="s0">(acc, n) =&gt; {</span>
+          <span class="s2">if </span><span class="s0">(n.type === </span><span class="s1">'word' </span><span class="s0">&amp;&amp; key === </span><span class="s1">'count'</span><span class="s0">) {</span>
+            <span class="s0">acc[</span><span class="s3">0</span><span class="s0">] = Math.abs(parseInt(n.value))</span>
+            <span class="s2">return </span><span class="s0">acc</span>
+          <span class="s0">}</span>
+          <span class="s2">if </span><span class="s0">(n.type === </span><span class="s1">'div' </span><span class="s0">&amp;&amp; n.value === </span><span class="s1">','</span><span class="s0">) {</span>
+            <span class="s0">key = </span><span class="s1">'value'</span>
+            <span class="s2">return </span><span class="s0">acc</span>
+          <span class="s0">}</span>
+          <span class="s2">if </span><span class="s0">(key === </span><span class="s1">'value'</span><span class="s0">) {</span>
+            <span class="s0">acc[</span><span class="s3">1</span><span class="s0">] += parser.stringify(n)</span>
+          <span class="s0">}</span>
+          <span class="s2">return </span><span class="s0">acc</span>
+        <span class="s0">},</span>
+        <span class="s0">[</span><span class="s3">0</span><span class="s0">, </span><span class="s1">''</span><span class="s0">]</span>
+      <span class="s0">)</span>
+
+      <span class="s2">if </span><span class="s0">(count) {</span>
+        <span class="s2">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt; count; i++) {</span>
+          <span class="s0">result.push(value)</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s2">return </span><span class="s0">result</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'space'</span><span class="s0">) {</span>
+      <span class="s2">return </span><span class="s0">result</span>
+    <span class="s0">}</span>
+    <span class="s0">result.push(parser.stringify(node))</span>
+    <span class="s2">return </span><span class="s0">result</span>
+  <span class="s0">}, [])</span>
+
+  <span class="s2">return </span><span class="s0">normalized</span>
+<span class="s0">}</span>
+
+<span class="s0">exports.autoplaceGridItems = autoplaceGridItems</span>
+
+<span class="s4">/** 
+ * Autoplace grid items 
+ * @param {Declaration} decl 
+ * @param {Result} result 
+ * @param {Object} gap gap values 
+ * @param {String} autoflowValue grid-auto-flow value 
+ * @return {void} 
+ * @see https://github.com/postcss/autoprefixer/issues/1148 
+ */</span>
+<span class="s2">function </span><span class="s0">autoplaceGridItems(decl, result, gap, autoflowValue = </span><span class="s1">'row'</span><span class="s0">) {</span>
+  <span class="s0">let { parent } = decl</span>
+
+  <span class="s0">let rowDecl = parent.nodes.find(i =&gt; i.prop === </span><span class="s1">'grid-template-rows'</span><span class="s0">)</span>
+  <span class="s0">let rows = normalizeRowColumn(rowDecl.value)</span>
+  <span class="s0">let columns = normalizeRowColumn(decl.value)</span>
+
+  <span class="s4">// Build array of area names with dummy values. If we have 3 columns and</span>
+  <span class="s4">// 2 rows, filledRows will be equal to ['1 2 3', '4 5 6']</span>
+  <span class="s0">let filledRows = rows.map((_, rowIndex) =&gt; {</span>
+    <span class="s2">return </span><span class="s0">Array.from(</span>
+      <span class="s0">{ length: columns.length },</span>
+      <span class="s0">(v, k) =&gt; k + rowIndex * columns.length + </span><span class="s3">1</span>
+    <span class="s0">).join(</span><span class="s1">' '</span><span class="s0">)</span>
+  <span class="s0">})</span>
+
+  <span class="s0">let areas = parseGridAreas({ gap, rows: filledRows })</span>
+  <span class="s0">let keys = Object.keys(areas)</span>
+  <span class="s0">let items = keys.map(i =&gt; areas[i])</span>
+
+  <span class="s4">// Change the order of cells if grid-auto-flow value is 'column'</span>
+  <span class="s2">if </span><span class="s0">(autoflowValue.includes(</span><span class="s1">'column'</span><span class="s0">)) {</span>
+    <span class="s0">items = items.sort((a, b) =&gt; a.column.start - b.column.start)</span>
+  <span class="s0">}</span>
+
+  <span class="s4">// Insert new rules</span>
+  <span class="s0">items.reverse().forEach((item, index) =&gt; {</span>
+    <span class="s0">let { column, row } = item</span>
+    <span class="s0">let nodeSelector = parent.selectors</span>
+      <span class="s0">.map(sel =&gt; sel + ` &gt; *:nth-child(${keys.length - index})`)</span>
+      <span class="s0">.join(</span><span class="s1">', '</span><span class="s0">)</span>
+
+    <span class="s4">// create new rule</span>
+    <span class="s0">let node = parent.clone().removeAll()</span>
+
+    <span class="s4">// change rule selector</span>
+    <span class="s0">node.selector = nodeSelector</span>
+
+    <span class="s4">// insert prefixed row/column values</span>
+    <span class="s0">node.append({ prop: </span><span class="s1">'-ms-grid-row'</span><span class="s0">, value: row.start })</span>
+    <span class="s0">node.append({ prop: </span><span class="s1">'-ms-grid-column'</span><span class="s0">, value: column.start })</span>
+
+    <span class="s4">// insert rule</span>
+    <span class="s0">parent.after(node)</span>
+  <span class="s0">})</span>
+
+  <span class="s2">return </span><span class="s0">undefined</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

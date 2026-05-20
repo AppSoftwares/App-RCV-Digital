@@ -1,0 +1,183 @@
+<html>
+<head>
+<title>retry_operation.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+retry_operation.js</font>
+</center></td></tr></table>
+<pre><span class="s0">function </span><span class="s1">RetryOperation(timeouts, options) {</span>
+  <span class="s2">// Compatibility for the old (timeouts, retryForever) signature</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s3">'boolean'</span><span class="s1">) {</span>
+    <span class="s1">options = { forever: options };</span>
+  <span class="s1">}</span>
+
+  <span class="s0">this</span><span class="s1">._originalTimeouts = JSON.parse(JSON.stringify(timeouts));</span>
+  <span class="s0">this</span><span class="s1">._timeouts = timeouts;</span>
+  <span class="s0">this</span><span class="s1">._options = options || {};</span>
+  <span class="s0">this</span><span class="s1">._maxRetryTime = options &amp;&amp; options.maxRetryTime || Infinity;</span>
+  <span class="s0">this</span><span class="s1">._fn = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._errors = [];</span>
+  <span class="s0">this</span><span class="s1">._attempts = </span><span class="s4">1</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._operationTimeout = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._operationTimeoutCb = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._timeout = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._operationStart = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._timer = </span><span class="s0">null</span><span class="s1">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._options.forever) {</span>
+    <span class="s0">this</span><span class="s1">._cachedTimeouts = </span><span class="s0">this</span><span class="s1">._timeouts.slice(</span><span class="s4">0</span><span class="s1">);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">module.exports = RetryOperation;</span>
+
+<span class="s1">RetryOperation.prototype.reset = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">this</span><span class="s1">._attempts = </span><span class="s4">1</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._timeouts = </span><span class="s0">this</span><span class="s1">._originalTimeouts.slice(</span><span class="s4">0</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">RetryOperation.prototype.stop = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._timeout) {</span>
+    <span class="s1">clearTimeout(</span><span class="s0">this</span><span class="s1">._timeout);</span>
+  <span class="s1">}</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._timer) {</span>
+    <span class="s1">clearTimeout(</span><span class="s0">this</span><span class="s1">._timer);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">this</span><span class="s1">._timeouts       = [];</span>
+  <span class="s0">this</span><span class="s1">._cachedTimeouts = </span><span class="s0">null</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.retry = </span><span class="s0">function</span><span class="s1">(err) {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._timeout) {</span>
+    <span class="s1">clearTimeout(</span><span class="s0">this</span><span class="s1">._timeout);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">if </span><span class="s1">(!err) {</span>
+    <span class="s0">return false</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s0">var </span><span class="s1">currentTime = </span><span class="s0">new </span><span class="s1">Date().getTime();</span>
+  <span class="s0">if </span><span class="s1">(err &amp;&amp; currentTime - </span><span class="s0">this</span><span class="s1">._operationStart &gt;= </span><span class="s0">this</span><span class="s1">._maxRetryTime) {</span>
+    <span class="s0">this</span><span class="s1">._errors.push(err);</span>
+    <span class="s0">this</span><span class="s1">._errors.unshift(</span><span class="s0">new </span><span class="s1">Error(</span><span class="s3">'RetryOperation timeout occurred'</span><span class="s1">));</span>
+    <span class="s0">return false</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">this</span><span class="s1">._errors.push(err);</span>
+
+  <span class="s0">var </span><span class="s1">timeout = </span><span class="s0">this</span><span class="s1">._timeouts.shift();</span>
+  <span class="s0">if </span><span class="s1">(timeout === undefined) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._cachedTimeouts) {</span>
+      <span class="s2">// retry forever, only keep last error</span>
+      <span class="s0">this</span><span class="s1">._errors.splice(</span><span class="s4">0</span><span class="s1">, </span><span class="s0">this</span><span class="s1">._errors.length - </span><span class="s4">1</span><span class="s1">);</span>
+      <span class="s1">timeout = </span><span class="s0">this</span><span class="s1">._cachedTimeouts.slice(-</span><span class="s4">1</span><span class="s1">);</span>
+    <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+      <span class="s0">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">self = </span><span class="s0">this</span><span class="s1">;</span>
+  <span class="s0">this</span><span class="s1">._timer = setTimeout(</span><span class="s0">function</span><span class="s1">() {</span>
+    <span class="s1">self._attempts++;</span>
+
+    <span class="s0">if </span><span class="s1">(self._operationTimeoutCb) {</span>
+      <span class="s1">self._timeout = setTimeout(</span><span class="s0">function</span><span class="s1">() {</span>
+        <span class="s1">self._operationTimeoutCb(self._attempts);</span>
+      <span class="s1">}, self._operationTimeout);</span>
+
+      <span class="s0">if </span><span class="s1">(self._options.unref) {</span>
+          <span class="s1">self._timeout.unref();</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s1">self._fn(self._attempts);</span>
+  <span class="s1">}, timeout);</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._options.unref) {</span>
+      <span class="s0">this</span><span class="s1">._timer.unref();</span>
+  <span class="s1">}</span>
+
+  <span class="s0">return true</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.attempt = </span><span class="s0">function</span><span class="s1">(fn, timeoutOps) {</span>
+  <span class="s0">this</span><span class="s1">._fn = fn;</span>
+
+  <span class="s0">if </span><span class="s1">(timeoutOps) {</span>
+    <span class="s0">if </span><span class="s1">(timeoutOps.timeout) {</span>
+      <span class="s0">this</span><span class="s1">._operationTimeout = timeoutOps.timeout;</span>
+    <span class="s1">}</span>
+    <span class="s0">if </span><span class="s1">(timeoutOps.cb) {</span>
+      <span class="s0">this</span><span class="s1">._operationTimeoutCb = timeoutOps.cb;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">self = </span><span class="s0">this</span><span class="s1">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._operationTimeoutCb) {</span>
+    <span class="s0">this</span><span class="s1">._timeout = setTimeout(</span><span class="s0">function</span><span class="s1">() {</span>
+      <span class="s1">self._operationTimeoutCb();</span>
+    <span class="s1">}, self._operationTimeout);</span>
+  <span class="s1">}</span>
+
+  <span class="s0">this</span><span class="s1">._operationStart = </span><span class="s0">new </span><span class="s1">Date().getTime();</span>
+
+  <span class="s0">this</span><span class="s1">._fn(</span><span class="s0">this</span><span class="s1">._attempts);</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.</span><span class="s0">try </span><span class="s1">= </span><span class="s0">function</span><span class="s1">(fn) {</span>
+  <span class="s1">console.log(</span><span class="s3">'Using RetryOperation.try() is deprecated'</span><span class="s1">);</span>
+  <span class="s0">this</span><span class="s1">.attempt(fn);</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.start = </span><span class="s0">function</span><span class="s1">(fn) {</span>
+  <span class="s1">console.log(</span><span class="s3">'Using RetryOperation.start() is deprecated'</span><span class="s1">);</span>
+  <span class="s0">this</span><span class="s1">.attempt(fn);</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.start = RetryOperation.prototype.</span><span class="s0">try</span><span class="s1">;</span>
+
+<span class="s1">RetryOperation.prototype.errors = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">return this</span><span class="s1">._errors;</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.attempts = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">return this</span><span class="s1">._attempts;</span>
+<span class="s1">};</span>
+
+<span class="s1">RetryOperation.prototype.mainError = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s0">this</span><span class="s1">._errors.length === </span><span class="s4">0</span><span class="s1">) {</span>
+    <span class="s0">return null</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s0">var </span><span class="s1">counts = {};</span>
+  <span class="s0">var </span><span class="s1">mainError = </span><span class="s0">null</span><span class="s1">;</span>
+  <span class="s0">var </span><span class="s1">mainErrorCount = </span><span class="s4">0</span><span class="s1">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s0">this</span><span class="s1">._errors.length; i++) {</span>
+    <span class="s0">var </span><span class="s1">error = </span><span class="s0">this</span><span class="s1">._errors[i];</span>
+    <span class="s0">var </span><span class="s1">message = error.message;</span>
+    <span class="s0">var </span><span class="s1">count = (counts[message] || </span><span class="s4">0</span><span class="s1">) + </span><span class="s4">1</span><span class="s1">;</span>
+
+    <span class="s1">counts[message] = count;</span>
+
+    <span class="s0">if </span><span class="s1">(count &gt;= mainErrorCount) {</span>
+      <span class="s1">mainError = error;</span>
+      <span class="s1">mainErrorCount = count;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">return </span><span class="s1">mainError;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

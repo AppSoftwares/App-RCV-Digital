@@ -1,0 +1,93 @@
+<html>
+<head>
+<title>sbcs-codec.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+sbcs-codec.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s0">&quot;safer-buffer&quot;</span><span class="s1">).Buffer;</span>
+
+<span class="s3">// Single-byte codec. Needs a 'chars' string parameter that contains 256 or 128 chars that</span>
+<span class="s3">// correspond to encoded bytes (if 128 - then lower half is ASCII). </span>
+
+<span class="s1">exports._sbcs = SBCSCodec;</span>
+<span class="s2">function </span><span class="s1">SBCSCodec(codecOptions, iconv) {</span>
+    <span class="s2">if </span><span class="s1">(!codecOptions)</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;SBCS codec is called without the data.&quot;</span><span class="s1">)</span>
+    
+    <span class="s3">// Prepare char buffer for decoding.</span>
+    <span class="s2">if </span><span class="s1">(!codecOptions.chars || (codecOptions.chars.length !== </span><span class="s4">128 </span><span class="s1">&amp;&amp; codecOptions.chars.length !== </span><span class="s4">256</span><span class="s1">))</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Encoding '&quot;</span><span class="s1">+codecOptions.type+</span><span class="s0">&quot;' has incorrect 'chars' (must be of len 128 or 256)&quot;</span><span class="s1">);</span>
+    
+    <span class="s2">if </span><span class="s1">(codecOptions.chars.length === </span><span class="s4">128</span><span class="s1">) {</span>
+        <span class="s2">var </span><span class="s1">asciiString = </span><span class="s0">&quot;&quot;</span><span class="s1">;</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s4">128</span><span class="s1">; i++)</span>
+            <span class="s1">asciiString += String.fromCharCode(i);</span>
+        <span class="s1">codecOptions.chars = asciiString + codecOptions.chars;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.decodeBuf = Buffer.from(codecOptions.chars, </span><span class="s0">'ucs2'</span><span class="s1">);</span>
+    
+    <span class="s3">// Encoding buffer.</span>
+    <span class="s2">var </span><span class="s1">encodeBuf = Buffer.alloc(</span><span class="s4">65536</span><span class="s1">, iconv.defaultCharSingleByte.charCodeAt(</span><span class="s4">0</span><span class="s1">));</span>
+
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; codecOptions.chars.length; i++)</span>
+        <span class="s1">encodeBuf[codecOptions.chars.charCodeAt(i)] = i;</span>
+
+    <span class="s2">this</span><span class="s1">.encodeBuf = encodeBuf;</span>
+<span class="s1">}</span>
+
+<span class="s1">SBCSCodec.prototype.encoder = SBCSEncoder;</span>
+<span class="s1">SBCSCodec.prototype.decoder = SBCSDecoder;</span>
+
+
+<span class="s2">function </span><span class="s1">SBCSEncoder(options, codec) {</span>
+    <span class="s2">this</span><span class="s1">.encodeBuf = codec.encodeBuf;</span>
+<span class="s1">}</span>
+
+<span class="s1">SBCSEncoder.prototype.write = </span><span class="s2">function</span><span class="s1">(str) {</span>
+    <span class="s2">var </span><span class="s1">buf = Buffer.alloc(str.length);</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; str.length; i++)</span>
+        <span class="s1">buf[i] = </span><span class="s2">this</span><span class="s1">.encodeBuf[str.charCodeAt(i)];</span>
+    
+    <span class="s2">return </span><span class="s1">buf;</span>
+<span class="s1">}</span>
+
+<span class="s1">SBCSEncoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+<span class="s1">}</span>
+
+
+<span class="s2">function </span><span class="s1">SBCSDecoder(options, codec) {</span>
+    <span class="s2">this</span><span class="s1">.decodeBuf = codec.decodeBuf;</span>
+<span class="s1">}</span>
+
+<span class="s1">SBCSDecoder.prototype.write = </span><span class="s2">function</span><span class="s1">(buf) {</span>
+    <span class="s3">// Strings are immutable in JS -&gt; we use ucs2 buffer to speed up computations.</span>
+    <span class="s2">var </span><span class="s1">decodeBuf = </span><span class="s2">this</span><span class="s1">.decodeBuf;</span>
+    <span class="s2">var </span><span class="s1">newBuf = Buffer.alloc(buf.length*</span><span class="s4">2</span><span class="s1">);</span>
+    <span class="s2">var </span><span class="s1">idx1 = </span><span class="s4">0</span><span class="s1">, idx2 = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; buf.length; i++) {</span>
+        <span class="s1">idx1 = buf[i]*</span><span class="s4">2</span><span class="s1">; idx2 = i*</span><span class="s4">2</span><span class="s1">;</span>
+        <span class="s1">newBuf[idx2] = decodeBuf[idx1];</span>
+        <span class="s1">newBuf[idx2+</span><span class="s4">1</span><span class="s1">] = decodeBuf[idx1+</span><span class="s4">1</span><span class="s1">];</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">newBuf.toString(</span><span class="s0">'ucs2'</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">SBCSDecoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

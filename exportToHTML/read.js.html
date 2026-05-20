@@ -1,0 +1,226 @@
+<html>
+<head>
+<title>read.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+read.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/*! 
+ * body-parser 
+ * Copyright(c) 2014-2015 Douglas Christopher Wilson 
+ * MIT Licensed 
+ */</span>
+
+<span class="s2">'use strict'</span>
+
+<span class="s0">/** 
+ * Module dependencies. 
+ * @private 
+ */</span>
+
+<span class="s3">var </span><span class="s1">createError = require(</span><span class="s2">'http-errors'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">destroy = require(</span><span class="s2">'destroy'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">getBody = require(</span><span class="s2">'raw-body'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">iconv = require(</span><span class="s2">'iconv-lite'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">onFinished = require(</span><span class="s2">'on-finished'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">unpipe = require(</span><span class="s2">'unpipe'</span><span class="s1">)</span>
+<span class="s3">var </span><span class="s1">zlib = require(</span><span class="s2">'zlib'</span><span class="s1">)</span>
+
+<span class="s0">/** 
+ * Module exports. 
+ */</span>
+
+<span class="s1">module.exports = read</span>
+
+<span class="s0">/** 
+ * Read a request into a buffer and parse. 
+ * 
+ * @param {object} req 
+ * @param {object} res 
+ * @param {function} next 
+ * @param {function} parse 
+ * @param {function} debug 
+ * @param {object} options 
+ * @private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">read (req, res, next, parse, debug, options) {</span>
+  <span class="s3">var </span><span class="s1">length</span>
+  <span class="s3">var </span><span class="s1">opts = options</span>
+  <span class="s3">var </span><span class="s1">stream</span>
+
+  <span class="s0">// flag as parsed</span>
+  <span class="s1">req._body = </span><span class="s3">true</span>
+
+  <span class="s0">// read options</span>
+  <span class="s3">var </span><span class="s1">encoding = opts.encoding !== </span><span class="s3">null</span>
+    <span class="s1">? opts.encoding</span>
+    <span class="s1">: </span><span class="s3">null</span>
+  <span class="s3">var </span><span class="s1">verify = opts.verify</span>
+
+  <span class="s3">try </span><span class="s1">{</span>
+    <span class="s0">// get the content stream</span>
+    <span class="s1">stream = contentstream(req, debug, opts.inflate)</span>
+    <span class="s1">length = stream.length</span>
+    <span class="s1">stream.length = undefined</span>
+  <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+    <span class="s3">return </span><span class="s1">next(err)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// set raw-body options</span>
+  <span class="s1">opts.length = length</span>
+  <span class="s1">opts.encoding = verify</span>
+    <span class="s1">? </span><span class="s3">null</span>
+    <span class="s1">: encoding</span>
+
+  <span class="s0">// assert charset is supported</span>
+  <span class="s3">if </span><span class="s1">(opts.encoding === </span><span class="s3">null </span><span class="s1">&amp;&amp; encoding !== </span><span class="s3">null </span><span class="s1">&amp;&amp; !iconv.encodingExists(encoding)) {</span>
+    <span class="s3">return </span><span class="s1">next(createError(</span><span class="s4">415</span><span class="s1">, </span><span class="s2">'unsupported charset &quot;' </span><span class="s1">+ encoding.toUpperCase() + </span><span class="s2">'&quot;'</span><span class="s1">, {</span>
+      <span class="s1">charset: encoding.toLowerCase(),</span>
+      <span class="s1">type: </span><span class="s2">'charset.unsupported'</span>
+    <span class="s1">}))</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// read body</span>
+  <span class="s1">debug(</span><span class="s2">'read body'</span><span class="s1">)</span>
+  <span class="s1">getBody(stream, opts, </span><span class="s3">function </span><span class="s1">(error, body) {</span>
+    <span class="s3">if </span><span class="s1">(error) {</span>
+      <span class="s3">var </span><span class="s1">_error</span>
+
+      <span class="s3">if </span><span class="s1">(error.type === </span><span class="s2">'encoding.unsupported'</span><span class="s1">) {</span>
+        <span class="s0">// echo back charset</span>
+        <span class="s1">_error = createError(</span><span class="s4">415</span><span class="s1">, </span><span class="s2">'unsupported charset &quot;' </span><span class="s1">+ encoding.toUpperCase() + </span><span class="s2">'&quot;'</span><span class="s1">, {</span>
+          <span class="s1">charset: encoding.toLowerCase(),</span>
+          <span class="s1">type: </span><span class="s2">'charset.unsupported'</span>
+        <span class="s1">})</span>
+      <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+        <span class="s0">// set status code on error</span>
+        <span class="s1">_error = createError(</span><span class="s4">400</span><span class="s1">, error)</span>
+      <span class="s1">}</span>
+
+      <span class="s0">// unpipe from stream and destroy</span>
+      <span class="s3">if </span><span class="s1">(stream !== req) {</span>
+        <span class="s1">unpipe(req)</span>
+        <span class="s1">destroy(stream, </span><span class="s3">true</span><span class="s1">)</span>
+      <span class="s1">}</span>
+
+      <span class="s0">// read off entire request</span>
+      <span class="s1">dump(req, </span><span class="s3">function </span><span class="s1">onfinished () {</span>
+        <span class="s1">next(createError(</span><span class="s4">400</span><span class="s1">, _error))</span>
+      <span class="s1">})</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// verify</span>
+    <span class="s3">if </span><span class="s1">(verify) {</span>
+      <span class="s3">try </span><span class="s1">{</span>
+        <span class="s1">debug(</span><span class="s2">'verify body'</span><span class="s1">)</span>
+        <span class="s1">verify(req, res, body, encoding)</span>
+      <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+        <span class="s1">next(createError(</span><span class="s4">403</span><span class="s1">, err, {</span>
+          <span class="s1">body: body,</span>
+          <span class="s1">type: err.type || </span><span class="s2">'entity.verify.failed'</span>
+        <span class="s1">}))</span>
+        <span class="s3">return</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">// parse</span>
+    <span class="s3">var </span><span class="s1">str = body</span>
+    <span class="s3">try </span><span class="s1">{</span>
+      <span class="s1">debug(</span><span class="s2">'parse body'</span><span class="s1">)</span>
+      <span class="s1">str = </span><span class="s3">typeof </span><span class="s1">body !== </span><span class="s2">'string' </span><span class="s1">&amp;&amp; encoding !== </span><span class="s3">null</span>
+        <span class="s1">? iconv.decode(body, encoding)</span>
+        <span class="s1">: body</span>
+      <span class="s1">req.body = parse(str)</span>
+    <span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+      <span class="s1">next(createError(</span><span class="s4">400</span><span class="s1">, err, {</span>
+        <span class="s1">body: str,</span>
+        <span class="s1">type: err.type || </span><span class="s2">'entity.parse.failed'</span>
+      <span class="s1">}))</span>
+      <span class="s3">return</span>
+    <span class="s1">}</span>
+
+    <span class="s1">next()</span>
+  <span class="s1">})</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the content stream of the request. 
+ * 
+ * @param {object} req 
+ * @param {function} debug 
+ * @param {boolean} [inflate=true] 
+ * @return {object} 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">contentstream (req, debug, inflate) {</span>
+  <span class="s3">var </span><span class="s1">encoding = (req.headers[</span><span class="s2">'content-encoding'</span><span class="s1">] || </span><span class="s2">'identity'</span><span class="s1">).toLowerCase()</span>
+  <span class="s3">var </span><span class="s1">length = req.headers[</span><span class="s2">'content-length'</span><span class="s1">]</span>
+  <span class="s3">var </span><span class="s1">stream</span>
+
+  <span class="s1">debug(</span><span class="s2">'content-encoding &quot;%s&quot;'</span><span class="s1">, encoding)</span>
+
+  <span class="s3">if </span><span class="s1">(inflate === </span><span class="s3">false </span><span class="s1">&amp;&amp; encoding !== </span><span class="s2">'identity'</span><span class="s1">) {</span>
+    <span class="s3">throw </span><span class="s1">createError(</span><span class="s4">415</span><span class="s1">, </span><span class="s2">'content encoding unsupported'</span><span class="s1">, {</span>
+      <span class="s1">encoding: encoding,</span>
+      <span class="s1">type: </span><span class="s2">'encoding.unsupported'</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s3">switch </span><span class="s1">(encoding) {</span>
+    <span class="s3">case </span><span class="s2">'deflate'</span><span class="s1">:</span>
+      <span class="s1">stream = zlib.createInflate()</span>
+      <span class="s1">debug(</span><span class="s2">'inflate body'</span><span class="s1">)</span>
+      <span class="s1">req.pipe(stream)</span>
+      <span class="s3">break</span>
+    <span class="s3">case </span><span class="s2">'gzip'</span><span class="s1">:</span>
+      <span class="s1">stream = zlib.createGunzip()</span>
+      <span class="s1">debug(</span><span class="s2">'gunzip body'</span><span class="s1">)</span>
+      <span class="s1">req.pipe(stream)</span>
+      <span class="s3">break</span>
+    <span class="s3">case </span><span class="s2">'identity'</span><span class="s1">:</span>
+      <span class="s1">stream = req</span>
+      <span class="s1">stream.length = length</span>
+      <span class="s3">break</span>
+    <span class="s3">default</span><span class="s1">:</span>
+      <span class="s3">throw </span><span class="s1">createError(</span><span class="s4">415</span><span class="s1">, </span><span class="s2">'unsupported content encoding &quot;' </span><span class="s1">+ encoding + </span><span class="s2">'&quot;'</span><span class="s1">, {</span>
+        <span class="s1">encoding: encoding,</span>
+        <span class="s1">type: </span><span class="s2">'encoding.unsupported'</span>
+      <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s3">return </span><span class="s1">stream</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Dump the contents of a request. 
+ * 
+ * @param {object} req 
+ * @param {function} callback 
+ * @api private 
+ */</span>
+
+<span class="s3">function </span><span class="s1">dump (req, callback) {</span>
+  <span class="s3">if </span><span class="s1">(onFinished.isFinished(req)) {</span>
+    <span class="s1">callback(</span><span class="s3">null</span><span class="s1">)</span>
+  <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+    <span class="s1">onFinished(req, callback)</span>
+    <span class="s1">req.resume()</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,731 @@
+<html>
+<head>
+<title>processor.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+processor.js</font>
+</center></td></tr></table>
+<pre><span class="s0">let parser = require(</span><span class="s1">'postcss-value-parser'</span><span class="s0">)</span>
+
+<span class="s0">let Value = require(</span><span class="s1">'./value'</span><span class="s0">)</span>
+<span class="s0">let insertAreas = require(</span><span class="s1">'./hacks/grid-utils'</span><span class="s0">).insertAreas</span>
+
+<span class="s0">const OLD_LINEAR = /(^|[^-])linear-gradient\(\s*(top|left|right|bottom)/i</span>
+<span class="s0">const OLD_RADIAL = /(^|[^-])radial-gradient\(\s*\d+(\w*|%)\s+\d+(\w*|%)\s*,/i</span>
+<span class="s0">const IGNORE_NEXT = /(!\s*)?autoprefixer:\s*ignore\s+next/i</span>
+<span class="s0">const GRID_REGEX = /(!\s*)?autoprefixer\s*grid:\s*(on|off|(no-)?autoplace)/i</span>
+
+<span class="s0">const SIZES = [</span>
+  <span class="s1">'width'</span><span class="s0">,</span>
+  <span class="s1">'height'</span><span class="s0">,</span>
+  <span class="s1">'min-width'</span><span class="s0">,</span>
+  <span class="s1">'max-width'</span><span class="s0">,</span>
+  <span class="s1">'min-height'</span><span class="s0">,</span>
+  <span class="s1">'max-height'</span><span class="s0">,</span>
+  <span class="s1">'inline-size'</span><span class="s0">,</span>
+  <span class="s1">'min-inline-size'</span><span class="s0">,</span>
+  <span class="s1">'max-inline-size'</span><span class="s0">,</span>
+  <span class="s1">'block-size'</span><span class="s0">,</span>
+  <span class="s1">'min-block-size'</span><span class="s0">,</span>
+  <span class="s1">'max-block-size'</span>
+<span class="s0">]</span>
+
+<span class="s2">function </span><span class="s0">hasGridTemplate(decl) {</span>
+  <span class="s2">return </span><span class="s0">decl.parent.some(</span>
+    <span class="s0">i =&gt; i.prop === </span><span class="s1">'grid-template' </span><span class="s0">|| i.prop === </span><span class="s1">'grid-template-areas'</span>
+  <span class="s0">)</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">hasRowsAndColumns(decl) {</span>
+  <span class="s0">let hasRows = decl.parent.some(i =&gt; i.prop === </span><span class="s1">'grid-template-rows'</span><span class="s0">)</span>
+  <span class="s0">let hasColumns = decl.parent.some(i =&gt; i.prop === </span><span class="s1">'grid-template-columns'</span><span class="s0">)</span>
+  <span class="s2">return </span><span class="s0">hasRows &amp;&amp; hasColumns</span>
+<span class="s0">}</span>
+
+<span class="s2">function </span><span class="s0">insideGrid(decl) {</span>
+  <span class="s2">return </span><span class="s0">decl.parent.nodes.some(node =&gt; {</span>
+    <span class="s2">if </span><span class="s0">(node.type !== </span><span class="s1">'decl'</span><span class="s0">) </span><span class="s2">return false</span>
+    <span class="s0">let displayGrid =</span>
+      <span class="s0">node.prop === </span><span class="s1">'display' </span><span class="s0">&amp;&amp; /(inline-)?grid/.test(node.value)</span>
+    <span class="s0">let gridTemplate = node.prop.startsWith(</span><span class="s1">'grid-template'</span><span class="s0">)</span>
+    <span class="s0">let gridGap = /^grid-([A-z]+-)?gap/.test(node.prop)</span>
+    <span class="s2">return </span><span class="s0">displayGrid || gridTemplate || gridGap</span>
+  <span class="s0">})</span>
+<span class="s0">}</span>
+
+<span class="s0">class Processor {</span>
+  <span class="s0">constructor(prefixes) {</span>
+    <span class="s2">this</span><span class="s0">.prefixes = prefixes</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Add necessary prefixes 
+   */</span>
+  <span class="s0">add(css, result) {</span>
+    <span class="s3">// At-rules</span>
+    <span class="s0">let resolution = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'@resolution'</span><span class="s0">]</span>
+    <span class="s0">let keyframes = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'@keyframes'</span><span class="s0">]</span>
+    <span class="s0">let viewport = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'@viewport'</span><span class="s0">]</span>
+    <span class="s0">let supports = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'@supports'</span><span class="s0">]</span>
+
+    <span class="s0">css.walkAtRules(rule =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(rule.name === </span><span class="s1">'keyframes'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) {</span>
+          <span class="s2">return </span><span class="s0">keyframes &amp;&amp; keyframes.process(rule)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(rule.name === </span><span class="s1">'viewport'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) {</span>
+          <span class="s2">return </span><span class="s0">viewport &amp;&amp; viewport.process(rule)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(rule.name === </span><span class="s1">'supports'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(</span>
+          <span class="s2">this</span><span class="s0">.prefixes.options.supports !== </span><span class="s2">false </span><span class="s0">&amp;&amp;</span>
+          <span class="s0">!</span><span class="s2">this</span><span class="s0">.disabled(rule, result)</span>
+        <span class="s0">) {</span>
+          <span class="s2">return </span><span class="s0">supports.process(rule)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(rule.name === </span><span class="s1">'media' </span><span class="s0">&amp;&amp; rule.params.includes(</span><span class="s1">'-resolution'</span><span class="s0">)) {</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) {</span>
+          <span class="s2">return </span><span class="s0">resolution &amp;&amp; resolution.process(rule)</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s2">return </span><span class="s0">undefined</span>
+    <span class="s0">})</span>
+
+    <span class="s3">// Selectors</span>
+    <span class="s0">css.walkRules(rule =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) </span><span class="s2">return </span><span class="s0">undefined</span>
+
+      <span class="s2">return this</span><span class="s0">.prefixes.add.selectors.map(selector =&gt; {</span>
+        <span class="s2">return </span><span class="s0">selector.process(rule, result)</span>
+      <span class="s0">})</span>
+    <span class="s0">})</span>
+
+    <span class="s0">let gridPrefixes =</span>
+      <span class="s2">this</span><span class="s0">.gridStatus(css, result) &amp;&amp;</span>
+      <span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'grid-area'</span><span class="s0">] &amp;&amp;</span>
+      <span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'grid-area'</span><span class="s0">].prefixes</span>
+
+    <span class="s0">css.walkDecls(decl =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.disabledDecl(decl, result)) </span><span class="s2">return </span><span class="s0">undefined</span>
+
+      <span class="s0">let parent = decl.parent</span>
+      <span class="s0">let prop = decl.prop</span>
+      <span class="s0">let value = decl.value</span>
+
+      <span class="s2">if </span><span class="s0">(prop === </span><span class="s1">'color-adjust'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(parent.every(i =&gt; i.prop !== </span><span class="s1">'print-color-adjust'</span><span class="s0">)) {</span>
+          <span class="s0">result.warn(</span>
+            <span class="s1">'Replace color-adjust to print-color-adjust. ' </span><span class="s0">+</span>
+              <span class="s1">'The color-adjust shorthand is currently deprecated.'</span><span class="s0">,</span>
+            <span class="s0">{ node: decl }</span>
+          <span class="s0">)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'grid-row-span'</span><span class="s0">) {</span>
+        <span class="s0">result.warn(</span>
+          <span class="s1">'grid-row-span is not part of final Grid Layout. Use grid-row.'</span><span class="s0">,</span>
+          <span class="s0">{ node: decl }</span>
+        <span class="s0">)</span>
+        <span class="s2">return </span><span class="s0">undefined</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'grid-column-span'</span><span class="s0">) {</span>
+        <span class="s0">result.warn(</span>
+          <span class="s1">'grid-column-span is not part of final Grid Layout. Use grid-column.'</span><span class="s0">,</span>
+          <span class="s0">{ node: decl }</span>
+        <span class="s0">)</span>
+        <span class="s2">return </span><span class="s0">undefined</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'display' </span><span class="s0">&amp;&amp; value === </span><span class="s1">'box'</span><span class="s0">) {</span>
+        <span class="s0">result.warn(</span>
+          <span class="s1">'You should write display: flex by final spec ' </span><span class="s0">+</span>
+            <span class="s1">'instead of display: box'</span><span class="s0">,</span>
+          <span class="s0">{ node: decl }</span>
+        <span class="s0">)</span>
+        <span class="s2">return </span><span class="s0">undefined</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'text-emphasis-position'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(value === </span><span class="s1">'under' </span><span class="s0">|| value === </span><span class="s1">'over'</span><span class="s0">) {</span>
+          <span class="s0">result.warn(</span>
+            <span class="s1">'You should use 2 values for text-emphasis-position ' </span><span class="s0">+</span>
+              <span class="s1">'For example, `under left` instead of just `under`.'</span><span class="s0">,</span>
+            <span class="s0">{ node: decl }</span>
+          <span class="s0">)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'text-decoration-skip' </span><span class="s0">&amp;&amp; value === </span><span class="s1">'ink'</span><span class="s0">) {</span>
+        <span class="s0">result.warn(</span>
+          <span class="s1">'Replace text-decoration-skip: ink to ' </span><span class="s0">+</span>
+            <span class="s1">'text-decoration-skip-ink: auto, because spec had been changed'</span><span class="s0">,</span>
+          <span class="s0">{ node: decl }</span>
+        <span class="s0">)</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s2">if </span><span class="s0">(gridPrefixes &amp;&amp; </span><span class="s2">this</span><span class="s0">.gridStatus(decl, result)) {</span>
+          <span class="s2">if </span><span class="s0">(decl.value === </span><span class="s1">'subgrid'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span><span class="s1">'IE does not support subgrid'</span><span class="s0">, { node: decl })</span>
+          <span class="s0">}</span>
+          <span class="s2">if </span><span class="s0">(/^(align|justify|place)-items$/.test(prop) &amp;&amp; insideGrid(decl)) {</span>
+            <span class="s0">let fixed = prop.replace(</span><span class="s1">'-items'</span><span class="s0">, </span><span class="s1">'-self'</span><span class="s0">)</span>
+            <span class="s0">result.warn(</span>
+              <span class="s0">`IE does not support ${prop} on grid containers. ` +</span>
+                <span class="s0">`Try using ${fixed} on child elements instead: ` +</span>
+                <span class="s0">`${decl.parent.selector} &gt; * { ${fixed}: ${decl.value} }`,</span>
+              <span class="s0">{ node: decl }</span>
+            <span class="s0">)</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span>
+            <span class="s0">/^(align|justify|place)-content$/.test(prop) &amp;&amp;</span>
+            <span class="s0">insideGrid(decl)</span>
+          <span class="s0">) {</span>
+            <span class="s0">result.warn(`IE does not support ${decl.prop} on grid containers`, {</span>
+              <span class="s0">node: decl</span>
+            <span class="s0">})</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'display' </span><span class="s0">&amp;&amp; decl.value === </span><span class="s1">'contents'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Please do not use display: contents; ' </span><span class="s0">+</span>
+                <span class="s1">'if you have grid setting enabled'</span><span class="s0">,</span>
+              <span class="s0">{ node: decl }</span>
+            <span class="s0">)</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(decl.prop === </span><span class="s1">'grid-gap'</span><span class="s0">) {</span>
+            <span class="s0">let status = </span><span class="s2">this</span><span class="s0">.gridStatus(decl, result)</span>
+            <span class="s2">if </span><span class="s0">(</span>
+              <span class="s0">status === </span><span class="s1">'autoplace' </span><span class="s0">&amp;&amp;</span>
+              <span class="s0">!hasRowsAndColumns(decl) &amp;&amp;</span>
+              <span class="s0">!hasGridTemplate(decl)</span>
+            <span class="s0">) {</span>
+              <span class="s0">result.warn(</span>
+                <span class="s1">'grid-gap only works if grid-template(-areas) is being ' </span><span class="s0">+</span>
+                  <span class="s1">'used or both rows and columns have been declared ' </span><span class="s0">+</span>
+                  <span class="s1">'and cells have not been manually ' </span><span class="s0">+</span>
+                  <span class="s1">'placed inside the explicit grid'</span><span class="s0">,</span>
+                <span class="s0">{ node: decl }</span>
+              <span class="s0">)</span>
+            <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span>
+              <span class="s0">(status === </span><span class="s2">true </span><span class="s0">|| status === </span><span class="s1">'no-autoplace'</span><span class="s0">) &amp;&amp;</span>
+              <span class="s0">!hasGridTemplate(decl)</span>
+            <span class="s0">) {</span>
+              <span class="s0">result.warn(</span>
+                <span class="s1">'grid-gap only works if grid-template(-areas) is being used'</span><span class="s0">,</span>
+                <span class="s0">{ node: decl }</span>
+              <span class="s0">)</span>
+            <span class="s0">}</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'grid-auto-columns'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span><span class="s1">'grid-auto-columns is not supported by IE'</span><span class="s0">, {</span>
+              <span class="s0">node: decl</span>
+            <span class="s0">})</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'grid-auto-rows'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span><span class="s1">'grid-auto-rows is not supported by IE'</span><span class="s0">, { node: decl })</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop === </span><span class="s1">'grid-auto-flow'</span><span class="s0">) {</span>
+            <span class="s0">let hasRows = parent.some(i =&gt; i.prop === </span><span class="s1">'grid-template-rows'</span><span class="s0">)</span>
+            <span class="s0">let hasCols = parent.some(i =&gt; i.prop === </span><span class="s1">'grid-template-columns'</span><span class="s0">)</span>
+
+            <span class="s2">if </span><span class="s0">(hasGridTemplate(decl)) {</span>
+              <span class="s0">result.warn(</span><span class="s1">'grid-auto-flow is not supported by IE'</span><span class="s0">, {</span>
+                <span class="s0">node: decl</span>
+              <span class="s0">})</span>
+            <span class="s0">} </span><span class="s2">else if </span><span class="s0">(value.includes(</span><span class="s1">'dense'</span><span class="s0">)) {</span>
+              <span class="s0">result.warn(</span><span class="s1">'grid-auto-flow: dense is not supported by IE'</span><span class="s0">, {</span>
+                <span class="s0">node: decl</span>
+              <span class="s0">})</span>
+            <span class="s0">} </span><span class="s2">else if </span><span class="s0">(!hasRows &amp;&amp; !hasCols) {</span>
+              <span class="s0">result.warn(</span>
+                <span class="s1">'grid-auto-flow works only if grid-template-rows and ' </span><span class="s0">+</span>
+                  <span class="s1">'grid-template-columns are present in the same rule'</span><span class="s0">,</span>
+                <span class="s0">{ node: decl }</span>
+              <span class="s0">)</span>
+            <span class="s0">}</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(value.includes(</span><span class="s1">'auto-fit'</span><span class="s0">)) {</span>
+            <span class="s0">result.warn(</span><span class="s1">'auto-fit value is not supported by IE'</span><span class="s0">, {</span>
+              <span class="s0">node: decl,</span>
+              <span class="s0">word: </span><span class="s1">'auto-fit'</span>
+            <span class="s0">})</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(value.includes(</span><span class="s1">'auto-fill'</span><span class="s0">)) {</span>
+            <span class="s0">result.warn(</span><span class="s1">'auto-fill value is not supported by IE'</span><span class="s0">, {</span>
+              <span class="s0">node: decl,</span>
+              <span class="s0">word: </span><span class="s1">'auto-fill'</span>
+            <span class="s0">})</span>
+            <span class="s2">return </span><span class="s0">undefined</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(prop.startsWith(</span><span class="s1">'grid-template'</span><span class="s0">) &amp;&amp; value.includes(</span><span class="s1">'['</span><span class="s0">)) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Autoprefixer currently does not support line names. ' </span><span class="s0">+</span>
+                <span class="s1">'Try using grid-template-areas instead.'</span><span class="s0">,</span>
+              <span class="s0">{ node: decl, word: </span><span class="s1">'[' </span><span class="s0">}</span>
+            <span class="s0">)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(value.includes(</span><span class="s1">'radial-gradient'</span><span class="s0">)) {</span>
+          <span class="s2">if </span><span class="s0">(OLD_RADIAL.test(decl.value)) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Gradient has outdated direction syntax. ' </span><span class="s0">+</span>
+                <span class="s1">'New syntax is like `closest-side at 0 0` ' </span><span class="s0">+</span>
+                <span class="s1">'instead of `0 0, closest-side`.'</span><span class="s0">,</span>
+              <span class="s0">{ node: decl }</span>
+            <span class="s0">)</span>
+          <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+            <span class="s0">let ast = parser(value)</span>
+
+            <span class="s2">for </span><span class="s0">(let i of ast.nodes) {</span>
+              <span class="s2">if </span><span class="s0">(i.type === </span><span class="s1">'function' </span><span class="s0">&amp;&amp; i.value === </span><span class="s1">'radial-gradient'</span><span class="s0">) {</span>
+                <span class="s2">for </span><span class="s0">(let word of i.nodes) {</span>
+                  <span class="s2">if </span><span class="s0">(word.type === </span><span class="s1">'word'</span><span class="s0">) {</span>
+                    <span class="s2">if </span><span class="s0">(word.value === </span><span class="s1">'cover'</span><span class="s0">) {</span>
+                      <span class="s0">result.warn(</span>
+                        <span class="s1">'Gradient has outdated direction syntax. ' </span><span class="s0">+</span>
+                          <span class="s1">'Replace `cover` to `farthest-corner`.'</span><span class="s0">,</span>
+                        <span class="s0">{ node: decl }</span>
+                      <span class="s0">)</span>
+                    <span class="s0">} </span><span class="s2">else if </span><span class="s0">(word.value === </span><span class="s1">'contain'</span><span class="s0">) {</span>
+                      <span class="s0">result.warn(</span>
+                        <span class="s1">'Gradient has outdated direction syntax. ' </span><span class="s0">+</span>
+                          <span class="s1">'Replace `contain` to `closest-side`.'</span><span class="s0">,</span>
+                        <span class="s0">{ node: decl }</span>
+                      <span class="s0">)</span>
+                    <span class="s0">}</span>
+                  <span class="s0">}</span>
+                <span class="s0">}</span>
+              <span class="s0">}</span>
+            <span class="s0">}</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(value.includes(</span><span class="s1">'linear-gradient'</span><span class="s0">)) {</span>
+          <span class="s2">if </span><span class="s0">(OLD_LINEAR.test(value)) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Gradient has outdated direction syntax. ' </span><span class="s0">+</span>
+                <span class="s1">'New syntax is like `to left` instead of `right`.'</span><span class="s0">,</span>
+              <span class="s0">{ node: decl }</span>
+            <span class="s0">)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">(SIZES.includes(decl.prop)) {</span>
+        <span class="s2">if </span><span class="s0">(!decl.value.includes(</span><span class="s1">'-fill-available'</span><span class="s0">)) {</span>
+          <span class="s2">if </span><span class="s0">(decl.value.includes(</span><span class="s1">'fill-available'</span><span class="s0">)) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Replace fill-available to stretch, ' </span><span class="s0">+</span>
+                <span class="s1">'because spec had been changed'</span><span class="s0">,</span>
+              <span class="s0">{ node: decl }</span>
+            <span class="s0">)</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(decl.value.includes(</span><span class="s1">'fill'</span><span class="s0">)) {</span>
+            <span class="s0">let ast = parser(value)</span>
+            <span class="s2">if </span><span class="s0">(ast.nodes.some(i =&gt; i.type === </span><span class="s1">'word' </span><span class="s0">&amp;&amp; i.value === </span><span class="s1">'fill'</span><span class="s0">)) {</span>
+              <span class="s0">result.warn(</span>
+                <span class="s1">'Replace fill to stretch, because spec had been changed'</span><span class="s0">,</span>
+                <span class="s0">{ node: decl }</span>
+              <span class="s0">)</span>
+            <span class="s0">}</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s0">let prefixer</span>
+
+      <span class="s2">if </span><span class="s0">(decl.prop === </span><span class="s1">'transition' </span><span class="s0">|| decl.prop === </span><span class="s1">'transition-property'</span><span class="s0">) {</span>
+        <span class="s3">// Transition</span>
+        <span class="s2">return this</span><span class="s0">.prefixes.transition.add(decl, result)</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(decl.prop === </span><span class="s1">'align-self'</span><span class="s0">) {</span>
+        <span class="s3">// align-self flexbox or grid</span>
+        <span class="s0">let display = </span><span class="s2">this</span><span class="s0">.displayType(decl)</span>
+        <span class="s2">if </span><span class="s0">(display !== </span><span class="s1">'grid' </span><span class="s0">&amp;&amp; </span><span class="s2">this</span><span class="s0">.prefixes.options.flexbox !== </span><span class="s2">false</span><span class="s0">) {</span>
+          <span class="s0">prefixer = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'align-self'</span><span class="s0">]</span>
+          <span class="s2">if </span><span class="s0">(prefixer &amp;&amp; prefixer.prefixes) {</span>
+            <span class="s0">prefixer.process(decl)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.gridStatus(decl, result) !== </span><span class="s2">false</span><span class="s0">) {</span>
+          <span class="s0">prefixer = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'grid-row-align'</span><span class="s0">]</span>
+          <span class="s2">if </span><span class="s0">(prefixer &amp;&amp; prefixer.prefixes) {</span>
+            <span class="s2">return </span><span class="s0">prefixer.process(decl, result)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(decl.prop === </span><span class="s1">'justify-self'</span><span class="s0">) {</span>
+        <span class="s3">// justify-self flexbox or grid</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.gridStatus(decl, result) !== </span><span class="s2">false</span><span class="s0">) {</span>
+          <span class="s0">prefixer = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'grid-column-align'</span><span class="s0">]</span>
+          <span class="s2">if </span><span class="s0">(prefixer &amp;&amp; prefixer.prefixes) {</span>
+            <span class="s2">return </span><span class="s0">prefixer.process(decl, result)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(decl.prop === </span><span class="s1">'place-self'</span><span class="s0">) {</span>
+        <span class="s0">prefixer = </span><span class="s2">this</span><span class="s0">.prefixes.add[</span><span class="s1">'place-self'</span><span class="s0">]</span>
+        <span class="s2">if </span><span class="s0">(</span>
+          <span class="s0">prefixer &amp;&amp;</span>
+          <span class="s0">prefixer.prefixes &amp;&amp;</span>
+          <span class="s2">this</span><span class="s0">.gridStatus(decl, result) !== </span><span class="s2">false</span>
+        <span class="s0">) {</span>
+          <span class="s2">return </span><span class="s0">prefixer.process(decl, result)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s3">// Properties</span>
+        <span class="s0">prefixer = </span><span class="s2">this</span><span class="s0">.prefixes.add[decl.prop]</span>
+        <span class="s2">if </span><span class="s0">(prefixer &amp;&amp; prefixer.prefixes) {</span>
+          <span class="s2">return </span><span class="s0">prefixer.process(decl, result)</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s2">return </span><span class="s0">undefined</span>
+    <span class="s0">})</span>
+
+    <span class="s3">// Insert grid-area prefixes. We need to be able to store the different</span>
+    <span class="s3">// rules as a data and hack API is not enough for this</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.gridStatus(css, result)) {</span>
+      <span class="s0">insertAreas(css, </span><span class="s2">this</span><span class="s0">.disabled)</span>
+    <span class="s0">}</span>
+
+    <span class="s3">// Values</span>
+    <span class="s2">return </span><span class="s0">css.walkDecls(decl =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.disabledValue(decl, result)) </span><span class="s2">return</span>
+
+      <span class="s0">let unprefixed = </span><span class="s2">this</span><span class="s0">.prefixes.unprefixed(decl.prop)</span>
+      <span class="s0">let list = </span><span class="s2">this</span><span class="s0">.prefixes.values(</span><span class="s1">'add'</span><span class="s0">, unprefixed)</span>
+      <span class="s2">if </span><span class="s0">(Array.isArray(list)) {</span>
+        <span class="s2">for </span><span class="s0">(let value of list) {</span>
+          <span class="s2">if </span><span class="s0">(value.process) value.process(decl, result)</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s0">Value.save(</span><span class="s2">this</span><span class="s0">.prefixes, decl)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Check for control comment and global options 
+   */</span>
+  <span class="s0">disabled(node, result) {</span>
+    <span class="s2">if </span><span class="s0">(!node) </span><span class="s2">return false</span>
+
+    <span class="s2">if </span><span class="s0">(node._autoprefixerDisabled !== undefined) {</span>
+      <span class="s2">return </span><span class="s0">node._autoprefixerDisabled</span>
+    <span class="s0">}</span>
+
+    <span class="s2">if </span><span class="s0">(node.parent) {</span>
+      <span class="s0">let p = node.prev()</span>
+      <span class="s2">if </span><span class="s0">(p &amp;&amp; p.type === </span><span class="s1">'comment' </span><span class="s0">&amp;&amp; IGNORE_NEXT.test(p.text)) {</span>
+        <span class="s0">node._autoprefixerDisabled = </span><span class="s2">true</span>
+        <span class="s0">node._autoprefixerSelfDisabled = </span><span class="s2">true</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let value = </span><span class="s2">null</span>
+    <span class="s2">if </span><span class="s0">(node.nodes) {</span>
+      <span class="s0">let status</span>
+      <span class="s0">node.each(i =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(i.type !== </span><span class="s1">'comment'</span><span class="s0">) </span><span class="s2">return</span>
+        <span class="s2">if </span><span class="s0">(/(!\s*)?autoprefixer:\s*(off|on)/i.test(i.text)) {</span>
+          <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">status !== </span><span class="s1">'undefined'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Second Autoprefixer control comment ' </span><span class="s0">+</span>
+                <span class="s1">'was ignored. Autoprefixer applies control ' </span><span class="s0">+</span>
+                <span class="s1">'comment to whole block, not to next rules.'</span><span class="s0">,</span>
+              <span class="s0">{ node: i }</span>
+            <span class="s0">)</span>
+          <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+            <span class="s0">status = /on/i.test(i.text)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+
+      <span class="s2">if </span><span class="s0">(status !== undefined) {</span>
+        <span class="s0">value = !status</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(!node.nodes || value === </span><span class="s2">null</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(node.parent) {</span>
+        <span class="s0">let isParentDisabled = </span><span class="s2">this</span><span class="s0">.disabled(node.parent, result)</span>
+        <span class="s2">if </span><span class="s0">(node.parent._autoprefixerSelfDisabled === </span><span class="s2">true</span><span class="s0">) {</span>
+          <span class="s0">value = </span><span class="s2">false</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s0">value = isParentDisabled</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">value = </span><span class="s2">false</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s0">node._autoprefixerDisabled = value</span>
+    <span class="s2">return </span><span class="s0">value</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Check for grid/flexbox options. 
+   */</span>
+  <span class="s0">disabledDecl(node, result) {</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'decl' </span><span class="s0">&amp;&amp; </span><span class="s2">this</span><span class="s0">.gridStatus(node, result) === </span><span class="s2">false</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(node.prop.includes(</span><span class="s1">'grid'</span><span class="s0">) || node.prop === </span><span class="s1">'justify-items'</span><span class="s0">) {</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'decl' </span><span class="s0">&amp;&amp; </span><span class="s2">this</span><span class="s0">.prefixes.options.flexbox === </span><span class="s2">false</span><span class="s0">) {</span>
+      <span class="s0">let other = [</span><span class="s1">'order'</span><span class="s0">, </span><span class="s1">'justify-content'</span><span class="s0">, </span><span class="s1">'align-items'</span><span class="s0">, </span><span class="s1">'align-content'</span><span class="s0">]</span>
+      <span class="s2">if </span><span class="s0">(node.prop.includes(</span><span class="s1">'flex'</span><span class="s0">) || other.includes(node.prop)) {</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return this</span><span class="s0">.disabled(node, result)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Check for grid/flexbox options. 
+   */</span>
+  <span class="s0">disabledValue(node, result) {</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.gridStatus(node, result) === </span><span class="s2">false </span><span class="s0">&amp;&amp; node.type === </span><span class="s1">'decl'</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(node.prop === </span><span class="s1">'display' </span><span class="s0">&amp;&amp; node.value.includes(</span><span class="s1">'grid'</span><span class="s0">)) {</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.prefixes.options.flexbox === </span><span class="s2">false </span><span class="s0">&amp;&amp; node.type === </span><span class="s1">'decl'</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(node.prop === </span><span class="s1">'display' </span><span class="s0">&amp;&amp; node.value.includes(</span><span class="s1">'flex'</span><span class="s0">)) {</span>
+        <span class="s2">return true</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'decl' </span><span class="s0">&amp;&amp; node.prop === </span><span class="s1">'content'</span><span class="s0">) {</span>
+      <span class="s2">return true</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return this</span><span class="s0">.disabled(node, result)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Is it flebox or grid rule 
+   */</span>
+  <span class="s0">displayType(decl) {</span>
+    <span class="s2">for </span><span class="s0">(let i of decl.parent.nodes) {</span>
+      <span class="s2">if </span><span class="s0">(i.prop !== </span><span class="s1">'display'</span><span class="s0">) {</span>
+        <span class="s2">continue</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">(i.value.includes(</span><span class="s1">'flex'</span><span class="s0">)) {</span>
+        <span class="s2">return </span><span class="s1">'flex'</span>
+      <span class="s0">}</span>
+
+      <span class="s2">if </span><span class="s0">(i.value.includes(</span><span class="s1">'grid'</span><span class="s0">)) {</span>
+        <span class="s2">return </span><span class="s1">'grid'</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return false</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Set grid option via control comment 
+   */</span>
+  <span class="s0">gridStatus(node, result) {</span>
+    <span class="s2">if </span><span class="s0">(!node) </span><span class="s2">return false</span>
+
+    <span class="s2">if </span><span class="s0">(node._autoprefixerGridStatus !== undefined) {</span>
+      <span class="s2">return </span><span class="s0">node._autoprefixerGridStatus</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let value = </span><span class="s2">null</span>
+    <span class="s2">if </span><span class="s0">(node.nodes) {</span>
+      <span class="s0">let status</span>
+      <span class="s0">node.each(i =&gt; {</span>
+        <span class="s2">if </span><span class="s0">(i.type !== </span><span class="s1">'comment'</span><span class="s0">) </span><span class="s2">return</span>
+        <span class="s2">if </span><span class="s0">(GRID_REGEX.test(i.text)) {</span>
+          <span class="s0">let hasAutoplace = /:\s*autoplace/i.test(i.text)</span>
+          <span class="s0">let noAutoplace = /no-autoplace/i.test(i.text)</span>
+          <span class="s2">if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">status !== </span><span class="s1">'undefined'</span><span class="s0">) {</span>
+            <span class="s0">result.warn(</span>
+              <span class="s1">'Second Autoprefixer grid control comment was ' </span><span class="s0">+</span>
+                <span class="s1">'ignored. Autoprefixer applies control comments to the whole ' </span><span class="s0">+</span>
+                <span class="s1">'block, not to the next rules.'</span><span class="s0">,</span>
+              <span class="s0">{ node: i }</span>
+            <span class="s0">)</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(hasAutoplace) {</span>
+            <span class="s0">status = </span><span class="s1">'autoplace'</span>
+          <span class="s0">} </span><span class="s2">else if </span><span class="s0">(noAutoplace) {</span>
+            <span class="s0">status = </span><span class="s2">true</span>
+          <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+            <span class="s0">status = /on/i.test(i.text)</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">})</span>
+
+      <span class="s2">if </span><span class="s0">(status !== undefined) {</span>
+        <span class="s0">value = status</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s2">if </span><span class="s0">(node.type === </span><span class="s1">'atrule' </span><span class="s0">&amp;&amp; node.name === </span><span class="s1">'supports'</span><span class="s0">) {</span>
+      <span class="s0">let params = node.params</span>
+      <span class="s2">if </span><span class="s0">(params.includes(</span><span class="s1">'grid'</span><span class="s0">) &amp;&amp; params.includes(</span><span class="s1">'auto'</span><span class="s0">)) {</span>
+        <span class="s0">value = </span><span class="s2">false</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s2">if </span><span class="s0">(!node.nodes || value === </span><span class="s2">null</span><span class="s0">) {</span>
+      <span class="s2">if </span><span class="s0">(node.parent) {</span>
+        <span class="s0">let isParentGrid = </span><span class="s2">this</span><span class="s0">.gridStatus(node.parent, result)</span>
+        <span class="s2">if </span><span class="s0">(node.parent._autoprefixerSelfDisabled === </span><span class="s2">true</span><span class="s0">) {</span>
+          <span class="s0">value = </span><span class="s2">false</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s0">value = isParentGrid</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span><span class="s2">typeof this</span><span class="s0">.prefixes.options.grid !== </span><span class="s1">'undefined'</span><span class="s0">) {</span>
+        <span class="s0">value = </span><span class="s2">this</span><span class="s0">.prefixes.options.grid</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span><span class="s2">typeof </span><span class="s0">process.env.AUTOPREFIXER_GRID !== </span><span class="s1">'undefined'</span><span class="s0">) {</span>
+        <span class="s2">if </span><span class="s0">(process.env.AUTOPREFIXER_GRID === </span><span class="s1">'autoplace'</span><span class="s0">) {</span>
+          <span class="s0">value = </span><span class="s1">'autoplace'</span>
+        <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+          <span class="s0">value = </span><span class="s2">true</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+        <span class="s0">value = </span><span class="s2">false</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">node._autoprefixerGridStatus = value</span>
+    <span class="s2">return </span><span class="s0">value</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Normalize spaces in cascade declaration group 
+   */</span>
+  <span class="s0">reduceSpaces(decl) {</span>
+    <span class="s0">let stop = </span><span class="s2">false</span>
+    <span class="s2">this</span><span class="s0">.prefixes.group(decl).up(() =&gt; {</span>
+      <span class="s0">stop = </span><span class="s2">true</span>
+      <span class="s2">return true</span>
+    <span class="s0">})</span>
+    <span class="s2">if </span><span class="s0">(stop) {</span>
+      <span class="s2">return</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let parts = decl.raw(</span><span class="s1">'before'</span><span class="s0">).split(</span><span class="s1">'</span><span class="s2">\n</span><span class="s1">'</span><span class="s0">)</span>
+    <span class="s0">let prevMin = parts[parts.length - </span><span class="s4">1</span><span class="s0">].length</span>
+    <span class="s3">/** @type {number|false} */</span>
+    <span class="s0">let diff = </span><span class="s2">false</span>
+
+    <span class="s2">this</span><span class="s0">.prefixes.group(decl).down(other =&gt; {</span>
+      <span class="s0">parts = other.raw(</span><span class="s1">'before'</span><span class="s0">).split(</span><span class="s1">'</span><span class="s2">\n</span><span class="s1">'</span><span class="s0">)</span>
+      <span class="s0">let last = parts.length - </span><span class="s4">1</span>
+
+      <span class="s2">if </span><span class="s0">(parts[last].length &gt; prevMin) {</span>
+        <span class="s2">if </span><span class="s0">(diff === </span><span class="s2">false</span><span class="s0">) {</span>
+          <span class="s0">diff = parts[last].length - prevMin</span>
+        <span class="s0">}</span>
+
+        <span class="s0">parts[last] = parts[last].slice(</span><span class="s4">0</span><span class="s0">, -diff)</span>
+        <span class="s0">other.raws.before = parts.join(</span><span class="s1">'</span><span class="s2">\n</span><span class="s1">'</span><span class="s0">)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Remove unnecessary pefixes 
+   */</span>
+  <span class="s0">remove(css, result) {</span>
+    <span class="s3">// At-rules</span>
+    <span class="s0">let resolution = </span><span class="s2">this</span><span class="s0">.prefixes.remove[</span><span class="s1">'@resolution'</span><span class="s0">]</span>
+
+    <span class="s0">css.walkAtRules((rule, i) =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.prefixes.remove[`@${rule.name}`]) {</span>
+        <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) {</span>
+          <span class="s0">rule.parent.removeChild(i)</span>
+        <span class="s0">}</span>
+      <span class="s0">} </span><span class="s2">else if </span><span class="s0">(</span>
+        <span class="s0">rule.name === </span><span class="s1">'media' </span><span class="s0">&amp;&amp;</span>
+        <span class="s0">rule.params.includes(</span><span class="s1">'-resolution'</span><span class="s0">) &amp;&amp;</span>
+        <span class="s0">resolution</span>
+      <span class="s0">) {</span>
+        <span class="s0">resolution.clean(rule)</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+
+    <span class="s3">// Selectors</span>
+    <span class="s0">css.walkRules((rule, i) =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.disabled(rule, result)) </span><span class="s2">return</span>
+
+      <span class="s2">for </span><span class="s0">(let checker of </span><span class="s2">this</span><span class="s0">.prefixes.remove.selectors) {</span>
+        <span class="s2">if </span><span class="s0">(checker.check(rule)) {</span>
+          <span class="s0">rule.parent.removeChild(i)</span>
+          <span class="s2">return</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+
+    <span class="s2">return </span><span class="s0">css.walkDecls((decl, i) =&gt; {</span>
+      <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.disabled(decl, result)) </span><span class="s2">return</span>
+
+      <span class="s0">let rule = decl.parent</span>
+      <span class="s0">let unprefixed = </span><span class="s2">this</span><span class="s0">.prefixes.unprefixed(decl.prop)</span>
+
+      <span class="s3">// Transition</span>
+      <span class="s2">if </span><span class="s0">(decl.prop === </span><span class="s1">'transition' </span><span class="s0">|| decl.prop === </span><span class="s1">'transition-property'</span><span class="s0">) {</span>
+        <span class="s2">this</span><span class="s0">.prefixes.transition.remove(decl)</span>
+      <span class="s0">}</span>
+
+      <span class="s3">// Properties</span>
+      <span class="s2">if </span><span class="s0">(</span>
+        <span class="s2">this</span><span class="s0">.prefixes.remove[decl.prop] &amp;&amp;</span>
+        <span class="s2">this</span><span class="s0">.prefixes.remove[decl.prop].remove</span>
+      <span class="s0">) {</span>
+        <span class="s0">let notHack = </span><span class="s2">this</span><span class="s0">.prefixes.group(decl).down(other =&gt; {</span>
+          <span class="s2">return this</span><span class="s0">.prefixes.normalize(other.prop) === unprefixed</span>
+        <span class="s0">})</span>
+
+        <span class="s2">if </span><span class="s0">(unprefixed === </span><span class="s1">'flex-flow'</span><span class="s0">) {</span>
+          <span class="s0">notHack = </span><span class="s2">true</span>
+        <span class="s0">}</span>
+
+        <span class="s2">if </span><span class="s0">(decl.prop === </span><span class="s1">'-webkit-box-orient'</span><span class="s0">) {</span>
+          <span class="s0">let hacks = { </span><span class="s1">'flex-direction'</span><span class="s0">: </span><span class="s2">true</span><span class="s0">, </span><span class="s1">'flex-flow'</span><span class="s0">: </span><span class="s2">true </span><span class="s0">}</span>
+          <span class="s2">if </span><span class="s0">(!decl.parent.some(j =&gt; hacks[j.prop])) </span><span class="s2">return</span>
+        <span class="s0">}</span>
+
+        <span class="s2">if </span><span class="s0">(notHack &amp;&amp; !</span><span class="s2">this</span><span class="s0">.withHackValue(decl)) {</span>
+          <span class="s2">if </span><span class="s0">(decl.raw(</span><span class="s1">'before'</span><span class="s0">).includes(</span><span class="s1">'</span><span class="s2">\n</span><span class="s1">'</span><span class="s0">)) {</span>
+            <span class="s2">this</span><span class="s0">.reduceSpaces(decl)</span>
+          <span class="s0">}</span>
+          <span class="s0">rule.removeChild(i)</span>
+          <span class="s2">return</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+
+      <span class="s3">// Values</span>
+      <span class="s2">for </span><span class="s0">(let checker of </span><span class="s2">this</span><span class="s0">.prefixes.values(</span><span class="s1">'remove'</span><span class="s0">, unprefixed)) {</span>
+        <span class="s2">if </span><span class="s0">(!checker.check) </span><span class="s2">continue</span>
+        <span class="s2">if </span><span class="s0">(!checker.check(decl.value)) </span><span class="s2">continue</span>
+
+        <span class="s0">unprefixed = checker.unprefixed</span>
+        <span class="s0">let notHack = </span><span class="s2">this</span><span class="s0">.prefixes.group(decl).down(other =&gt; {</span>
+          <span class="s2">return </span><span class="s0">other.value.includes(unprefixed)</span>
+        <span class="s0">})</span>
+
+        <span class="s2">if </span><span class="s0">(notHack) {</span>
+          <span class="s0">rule.removeChild(i)</span>
+          <span class="s2">return</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Some rare old values, which is not in standard 
+   */</span>
+  <span class="s0">withHackValue(decl) {</span>
+    <span class="s2">return </span><span class="s0">(</span>
+      <span class="s0">(decl.prop === </span><span class="s1">'-webkit-background-clip' </span><span class="s0">&amp;&amp; decl.value === </span><span class="s1">'text'</span><span class="s0">) ||</span>
+      <span class="s3">// Do not remove -webkit-box-orient when -webkit-line-clamp is present.</span>
+      <span class="s3">// https://github.com/postcss/autoprefixer/issues/1510</span>
+      <span class="s0">(decl.prop === </span><span class="s1">'-webkit-box-orient' </span><span class="s0">&amp;&amp;</span>
+        <span class="s0">decl.parent.some(d =&gt; d.prop === </span><span class="s1">'-webkit-line-clamp'</span><span class="s0">))</span>
+    <span class="s0">)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">module.exports = Processor</span>
+</pre>
+</body>
+</html>

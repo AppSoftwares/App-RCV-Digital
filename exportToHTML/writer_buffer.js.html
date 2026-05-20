@@ -1,0 +1,106 @@
+<html>
+<head>
+<title>writer_buffer.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+writer_buffer.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = BufferWriter;</span>
+
+<span class="s2">// extends Writer</span>
+<span class="s3">var </span><span class="s1">Writer = require(</span><span class="s0">&quot;./writer&quot;</span><span class="s1">);</span>
+<span class="s1">(BufferWriter.prototype = Object.create(Writer.prototype)).constructor = BufferWriter;</span>
+
+<span class="s3">var </span><span class="s1">util = require(</span><span class="s0">&quot;./util/minimal&quot;</span><span class="s1">);</span>
+
+<span class="s2">/** 
+ * Constructs a new buffer writer instance. 
+ * @classdesc Wire format writer using node buffers. 
+ * @extends Writer 
+ * @constructor 
+ */</span>
+<span class="s3">function </span><span class="s1">BufferWriter() {</span>
+    <span class="s1">Writer.call(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">BufferWriter._configure = </span><span class="s3">function </span><span class="s1">() {</span>
+    <span class="s2">/** 
+     * Allocates a buffer of the specified size. 
+     * @function 
+     * @param {number} size Buffer size 
+     * @returns {Buffer} Buffer 
+     */</span>
+    <span class="s1">BufferWriter.alloc = util._Buffer_allocUnsafe;</span>
+
+    <span class="s1">BufferWriter.writeBytesBuffer = util.Buffer &amp;&amp; util.Buffer.prototype </span><span class="s3">instanceof </span><span class="s1">Uint8Array &amp;&amp; util.Buffer.prototype.set.name === </span><span class="s0">&quot;set&quot;</span>
+        <span class="s1">? </span><span class="s3">function </span><span class="s1">writeBytesBuffer_set(val, buf, pos) {</span>
+          <span class="s1">buf.set(val, pos); </span><span class="s2">// faster than copy (requires node &gt;= 4 where Buffers extend Uint8Array and set is properly inherited)</span>
+          <span class="s2">// also works for plain array values</span>
+        <span class="s1">}</span>
+        <span class="s2">/* istanbul ignore next */</span>
+        <span class="s1">: </span><span class="s3">function </span><span class="s1">writeBytesBuffer_copy(val, buf, pos) {</span>
+          <span class="s3">if </span><span class="s1">(val.copy) </span><span class="s2">// Buffer values</span>
+            <span class="s1">val.copy(buf, pos, </span><span class="s4">0</span><span class="s1">, val.length);</span>
+          <span class="s3">else for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; val.length;) </span><span class="s2">// plain array values</span>
+            <span class="s1">buf[pos++] = val[i++];</span>
+        <span class="s1">};</span>
+<span class="s1">};</span>
+
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">BufferWriter.prototype.bytes = </span><span class="s3">function </span><span class="s1">write_bytes_buffer(value) {</span>
+    <span class="s3">if </span><span class="s1">(util.isString(value))</span>
+        <span class="s1">value = util._Buffer_from(value, </span><span class="s0">&quot;base64&quot;</span><span class="s1">);</span>
+    <span class="s3">var </span><span class="s1">len = value.length &gt;&gt;&gt; </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s3">this</span><span class="s1">.uint32(len);</span>
+    <span class="s3">if </span><span class="s1">(len)</span>
+        <span class="s3">this</span><span class="s1">._push(BufferWriter.writeBytesBuffer, len, value);</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s3">function </span><span class="s1">writeStringBuffer(val, buf, pos) {</span>
+    <span class="s3">if </span><span class="s1">(val.length &lt; </span><span class="s4">40</span><span class="s1">) </span><span class="s2">// plain js is faster for short strings (probably due to redundant assertions)</span>
+        <span class="s1">util.utf8.write(val, buf, pos);</span>
+    <span class="s3">else if </span><span class="s1">(buf.utf8Write)</span>
+        <span class="s1">buf.utf8Write(val, pos);</span>
+    <span class="s3">else</span>
+        <span class="s1">buf.write(val, pos);</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">BufferWriter.prototype.string = </span><span class="s3">function </span><span class="s1">write_string_buffer(value) {</span>
+    <span class="s3">var </span><span class="s1">len = util.Buffer.byteLength(value);</span>
+    <span class="s3">this</span><span class="s1">.uint32(len);</span>
+    <span class="s3">if </span><span class="s1">(len)</span>
+        <span class="s3">this</span><span class="s1">._push(writeStringBuffer, len, value);</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+
+<span class="s2">/** 
+ * Finishes the write operation. 
+ * @name BufferWriter#finish 
+ * @function 
+ * @returns {Buffer} Finished buffer 
+ */</span>
+
+<span class="s1">BufferWriter._configure();</span>
+</pre>
+</body>
+</html>

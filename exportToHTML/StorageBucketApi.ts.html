@@ -1,0 +1,440 @@
+<html>
+<head>
+<title>StorageBucketApi.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #42c3d4;}
+.s7 { color: #cf8e6d; font-style: italic;}
+.s8 { color: #c77dbb; font-style: italic;}
+.s9 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+StorageBucketApi.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ DEFAULT_HEADERS } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/constants</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ StorageError } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/errors</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ Fetch, get, post, put, remove } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/fetch</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">BaseApiClient </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/BaseApiClient</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ Bucket, BucketType, ListBucketOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/types</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ StorageClientOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../StorageClient</span><span class="s2">'</span>
+
+<span class="s0">export default class </span><span class="s2">StorageBucketApi </span><span class="s0">extends </span><span class="s2">BaseApiClient&lt;StorageError&gt; {</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: string,</span>
+    <span class="s2">headers: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string } = {},</span>
+    <span class="s2">fetch?: Fetch,</span>
+    <span class="s2">opts?: StorageClientOptions</span>
+  <span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">baseUrl = new </span><span class="s4">URL</span><span class="s1">(</span><span class="s2">url</span><span class="s1">)</span>
+
+    <span class="s2">// </span><span class="s5">if legacy uri is used, replace with new storage host (disables request buffering to allow &gt; 50GB uploads)</span>
+    <span class="s2">// </span><span class="s5">&quot;project-ref.supabase.co&quot; becomes &quot;project-ref.storage.supabase.co&quot;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">opts?.useNewHostname</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">isSupabaseHost = /</span><span class="s6">supabase</span><span class="s7">\.</span><span class="s2">(</span><span class="s6">co</span><span class="s2">|</span><span class="s6">in</span><span class="s2">|</span><span class="s6">red</span><span class="s2">)</span><span class="s0">$</span><span class="s2">/.</span><span class="s4">test</span><span class="s1">(</span><span class="s2">baseUrl.hostname</span><span class="s1">)</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">isSupabaseHost &amp;&amp; !baseUrl.hostname.</span><span class="s4">includes</span><span class="s1">(</span><span class="s2">'</span><span class="s3">storage.supabase.</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">baseUrl.hostname = baseUrl.hostname.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">'</span><span class="s3">supabase.</span><span class="s2">', '</span><span class="s3">storage.supabase.</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">finalUrl = baseUrl.href.</span><span class="s4">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s7">\/</span><span class="s0">$</span><span class="s2">/, ''</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s2">finalHeaders = { ...DEFAULT_HEADERS, ...headers }</span>
+
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">finalUrl, finalHeaders, fetch, '</span><span class="s3">storage</span><span class="s2">'</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Retrieves the details of all Storage buckets within an existing project. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s5">Query parameters for listing buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.limit </span><span class="s5">Maximum number of buckets to return 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.offset </span><span class="s5">Number of buckets to skip 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.sortColumn </span><span class="s5">Column to sort by ('id', 'name', 'created_at', 'updated_at') 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.sortOrder </span><span class="s5">Sort order ('asc' or 'desc') 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.search </span><span class="s5">Search term to filter bucket names 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with response containing array of buckets or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List buckets 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.listBuckets() 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List buckets with options 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.listBuckets({ 
+   </span><span class="s5">*     </span><span class="s1">limit: 10, 
+   </span><span class="s5">*     </span><span class="s1">offset: 0, 
+   </span><span class="s5">*     </span><span class="s1">sortColumn: 'created_at', 
+   </span><span class="s5">*     </span><span class="s1">sortOrder: 'desc', 
+   </span><span class="s5">*     </span><span class="s1">search: 'prod' 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `select` 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">listBuckets</span><span class="s2">(options?: ListBucketOptions): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: Bucket</span><span class="s1">[]</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">queryString = this.</span><span class="s4">listBucketOptionsToQueryString</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span>
+      <span class="s0">return await </span><span class="s4">get</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/bucket</span><span class="s2">${queryString}`, {</span>
+        <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Retrieves the details of an existing Storage bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s5">The unique identifier of the bucket you would like to retrieve. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with response containing bucket details or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get bucket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.getBucket('avatars') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s5">* </span><span class="s1">```json 
+   </span><span class="s5">* </span><span class="s1">{ 
+   </span><span class="s5">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s5">*     </span><span class="s1">&quot;id&quot;: &quot;avatars&quot;, 
+   </span><span class="s5">*     </span><span class="s1">&quot;name&quot;: &quot;avatars&quot;, 
+   </span><span class="s5">*     </span><span class="s1">&quot;owner&quot;: &quot;&quot;, 
+   </span><span class="s5">*     </span><span class="s1">&quot;public&quot;: false, 
+   </span><span class="s5">*     </span><span class="s1">&quot;file_size_limit&quot;: 1024, 
+   </span><span class="s5">*     </span><span class="s1">&quot;allowed_mime_types&quot;: [ 
+   </span><span class="s5">*       </span><span class="s1">&quot;image/png&quot; 
+   </span><span class="s5">*     </span><span class="s1">], 
+   </span><span class="s5">*     </span><span class="s1">&quot;created_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot;, 
+   </span><span class="s5">*     </span><span class="s1">&quot;updated_at&quot;: &quot;2024-05-22T22:26:05.100Z&quot; 
+   </span><span class="s5">*   </span><span class="s1">}, 
+   </span><span class="s5">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `select` 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">getBucket</span><span class="s2">(id: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: Bucket</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s4">get</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/bucket/</span><span class="s2">${id}`, { </span><span class="s1">headers</span><span class="s2">: this.headers }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Creates a new Storage bucket 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s5">A unique identifier for the bucket you are creating. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.public </span><span class="s5">The visibility of the bucket. Public buckets don't require an authorization token to download objects, but still require a valid token for all other operations. By default, buckets are private. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.fileSizeLimit </span><span class="s5">specifies the max file size in bytes that can be uploaded to this bucket. 
+   * The global file size limit takes precedence over this value. 
+   * The default value is null, which doesn't set a per bucket file size limit. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.allowedMimeTypes </span><span class="s5">specifies the allowed mime types that this bucket can accept during upload. 
+   * The default value is null, which allows files with all mime types to be uploaded. 
+   * Each mime type specified can be a wildcard, e.g. image/*, or a specific mime type, e.g. image/png. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.type </span><span class="s5">(private-beta) specifies the bucket type. see `BucketType` for more details. 
+   *   - default bucket type is `STANDARD` 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with response containing newly created bucket name or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create bucket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.createBucket('avatars', { 
+   </span><span class="s5">*     </span><span class="s1">public: false, 
+   </span><span class="s5">*     </span><span class="s1">allowedMimeTypes: ['image/png'], 
+   </span><span class="s5">*     </span><span class="s1">fileSizeLimit: 1024 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s5">* </span><span class="s1">```json 
+   </span><span class="s5">* </span><span class="s1">{ 
+   </span><span class="s5">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s5">*     </span><span class="s1">&quot;name&quot;: &quot;avatars&quot; 
+   </span><span class="s5">*   </span><span class="s1">}, 
+   </span><span class="s5">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `insert` 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">createBucket</span><span class="s2">(</span>
+    <span class="s2">id: string,</span>
+    <span class="s2">options: {</span>
+      <span class="s2">public: boolean</span>
+      <span class="s2">fileSizeLimit?: number | string | null</span>
+      <span class="s2">allowedMimeTypes?: string</span><span class="s1">[] </span><span class="s2">| null</span>
+      <span class="s2">type?: BucketType</span>
+    <span class="s2">} = {</span>
+      <span class="s1">public</span><span class="s2">: </span><span class="s8">false</span><span class="s2">,</span>
+    <span class="s2">}</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: Pick&lt;Bucket, '</span><span class="s3">name</span><span class="s2">'&gt;</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s4">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/bucket</span><span class="s2">`,</span>
+        <span class="s2">{</span>
+          <span class="s2">id,</span>
+          <span class="s1">name</span><span class="s2">: id,</span>
+          <span class="s1">type</span><span class="s2">: options.type,</span>
+          <span class="s1">public</span><span class="s2">: options.public,</span>
+          <span class="s1">file_size_limit</span><span class="s2">: options.fileSizeLimit,</span>
+          <span class="s1">allowed_mime_types</span><span class="s2">: options.allowedMimeTypes,</span>
+        <span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Updates a Storage bucket 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s5">A unique identifier for the bucket you are updating. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.public </span><span class="s5">The visibility of the bucket. Public buckets don't require an authorization token to download objects, but still require a valid token for all other operations. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.fileSizeLimit </span><span class="s5">specifies the max file size in bytes that can be uploaded to this bucket. 
+   * The global file size limit takes precedence over this value. 
+   * The default value is null, which doesn't set a per bucket file size limit. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.allowedMimeTypes </span><span class="s5">specifies the allowed mime types that this bucket can accept during upload. 
+   * The default value is null, which allows files with all mime types to be uploaded. 
+   * Each mime type specified can be a wildcard, e.g. image/*, or a specific mime type, e.g. image/png. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with response containing success message or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Update bucket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.updateBucket('avatars', { 
+   </span><span class="s5">*     </span><span class="s1">public: false, 
+   </span><span class="s5">*     </span><span class="s1">allowedMimeTypes: ['image/png'], 
+   </span><span class="s5">*     </span><span class="s1">fileSizeLimit: 1024 
+   </span><span class="s5">*   </span><span class="s1">}) 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s5">* </span><span class="s1">```json 
+   </span><span class="s5">* </span><span class="s1">{ 
+   </span><span class="s5">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s5">*     </span><span class="s1">&quot;message&quot;: &quot;Successfully updated&quot; 
+   </span><span class="s5">*   </span><span class="s1">}, 
+   </span><span class="s5">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `select` and `update` 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">updateBucket</span><span class="s2">(</span>
+    <span class="s2">id: string,</span>
+    <span class="s2">options: {</span>
+      <span class="s2">public: boolean</span>
+      <span class="s2">fileSizeLimit?: number | string | null</span>
+      <span class="s2">allowedMimeTypes?: string</span><span class="s1">[] </span><span class="s2">| null</span>
+    <span class="s2">}</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { message: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s4">put</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/bucket/</span><span class="s2">${id}`,</span>
+        <span class="s2">{</span>
+          <span class="s2">id,</span>
+          <span class="s1">name</span><span class="s2">: id,</span>
+          <span class="s1">public</span><span class="s2">: options.public,</span>
+          <span class="s1">file_size_limit</span><span class="s2">: options.fileSizeLimit,</span>
+          <span class="s1">allowed_mime_types</span><span class="s2">: options.allowedMimeTypes,</span>
+        <span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Removes all objects inside a single bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s5">The unique identifier of the bucket you would like to empty. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with success message or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Empty bucket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.emptyBucket('avatars') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s5">* </span><span class="s1">```json 
+   </span><span class="s5">* </span><span class="s1">{ 
+   </span><span class="s5">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s5">*     </span><span class="s1">&quot;message&quot;: &quot;Successfully emptied&quot; 
+   </span><span class="s5">*   </span><span class="s1">}, 
+   </span><span class="s5">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `select` 
+   *   - `objects` table permissions: `select` and `delete` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">emptyBucket</span><span class="s2">(id: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { message: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s4">post</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/bucket/</span><span class="s2">${id}</span><span class="s3">/empty</span><span class="s2">`, {}, { </span><span class="s1">headers</span><span class="s2">: this.headers }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Deletes an existing bucket. A bucket can't be deleted with existing objects inside it. 
+   * You must first `empty()` the bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s5">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s5">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s5">The unique identifier of the bucket you would like to delete. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s5">Promise with success message or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete bucket 
+   </span><span class="s5">* </span><span class="s1">```js 
+   </span><span class="s5">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s5">*   </span><span class="s1">.storage 
+   </span><span class="s5">*   </span><span class="s1">.deleteBucket('avatars') 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s5">* </span><span class="s1">```json 
+   </span><span class="s5">* </span><span class="s1">{ 
+   </span><span class="s5">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s5">*     </span><span class="s1">&quot;message&quot;: &quot;Successfully deleted&quot; 
+   </span><span class="s5">*   </span><span class="s1">}, 
+   </span><span class="s5">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">``` 
+   </span><span class="s5">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s5">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: `select` and `delete` 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s4">deleteBucket</span><span class="s2">(id: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { message: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s4">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s4">remove</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/bucket/</span><span class="s2">${id}`, {}, { </span><span class="s1">headers</span><span class="s2">: this.headers }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s4">listBucketOptionsToQueryString</span><span class="s2">(options?: ListBucketOptions): string {</span>
+    <span class="s0">const </span><span class="s2">params: Record&lt;string, string&gt; = {}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">limit</span><span class="s2">' in options</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">params.limit = </span><span class="s4">String</span><span class="s1">(</span><span class="s2">options.limit</span><span class="s1">)</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">offset</span><span class="s2">' in options</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">params.offset = </span><span class="s4">String</span><span class="s1">(</span><span class="s2">options.offset</span><span class="s1">)</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options.search</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">params.search = options.search</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options.sortColumn</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">params.sortColumn = options.sortColumn</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options.sortOrder</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">params.sortOrder = options.sortOrder</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">Object.</span><span class="s4">keys</span><span class="s1">(</span><span class="s2">params</span><span class="s1">)</span><span class="s2">.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s9">0 </span><span class="s2">? '</span><span class="s3">?</span><span class="s2">' + new </span><span class="s4">URLSearchParams</span><span class="s1">(</span><span class="s2">params</span><span class="s1">)</span><span class="s2">.</span><span class="s4">toString</span><span class="s1">() </span><span class="s2">: ''</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

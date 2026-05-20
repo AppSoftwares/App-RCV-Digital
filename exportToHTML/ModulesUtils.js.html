@@ -1,0 +1,153 @@
+<html>
+<head>
+<title>ModulesUtils.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+ModulesUtils.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const forEachBail = require(</span><span class="s2">&quot;./forEachBail&quot;</span><span class="s1">);</span>
+<span class="s1">const { getPathsCached } = require(</span><span class="s2">&quot;./getPaths&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveContext} ResolveContext */</span>
+<span class="s0">/** @typedef {(err?: null | Error, result?: null | ResolveRequest) =&gt; void} InnerCallback */</span>
+
+<span class="s0">/** 
+ * Per-(directories-array) cache of the flat `addrs` list produced for a given 
+ * `request.path`. For a fixed directories configuration the fan-out of 
+ * `ancestor × directory` is deterministic per request.path, and many resolves 
+ * share the same starting directory (sibling files in one project, loops over 
+ * a batch of imports, etc.) — caching avoids the `getPaths` regex split plus 
+ * `len(paths) × len(directories)` join calls per resolve. 
+ * 
+ * The outer map is keyed on the directories array reference (plugin-owned, 
+ * stable for the lifetime of the resolver), and the inner map on the 
+ * starting `request.path`. Kept private to this module (rather than hung off 
+ * `resolver.pathCache`) so the pathCache's hidden-class shape is unchanged — 
+ * that avoids perturbing the interpreter-mode IC state for the 
+ * `resolver.pathCache.{join,dirname,basename}.fn(...)` accesses that run on 
+ * every resolve, which the CodSpeed instruction-count harness is sensitive to. 
+ * @type {WeakMap&lt;string[], Map&lt;string, string[]&gt;&gt;} 
+ */</span>
+<span class="s1">const _addrsCacheByDirs = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+
+<span class="s0">/** 
+ * @param {Resolver} resolver resolver 
+ * @param {string[]} directories directories 
+ * @param {ResolveStepHook} target target 
+ * @param {ResolveRequest} request request 
+ * @param {ResolveContext} resolveContext resolve context 
+ * @param {InnerCallback} callback callback 
+ * @returns {void} 
+ */</span>
+<span class="s3">function </span><span class="s1">modulesResolveHandler(</span>
+	<span class="s1">resolver,</span>
+	<span class="s1">directories,</span>
+	<span class="s1">target,</span>
+	<span class="s1">request,</span>
+	<span class="s1">resolveContext,</span>
+	<span class="s1">callback,</span>
+<span class="s1">) {</span>
+	<span class="s1">const fs = resolver.fileSystem;</span>
+	<span class="s1">const requestPath = </span><span class="s0">/** @type {string} */ </span><span class="s1">(request.path);</span>
+	<span class="s0">// Compute-or-reuse the flat `addrs` list. Inlined (rather than a helper</span>
+	<span class="s0">// function) so the cache-hit path — which is the vast majority of</span>
+	<span class="s0">// invocations — stays a single WeakMap + Map lookup with no function-call</span>
+	<span class="s0">// overhead. See `_addrsCacheByDirs` above for caching rationale.</span>
+	<span class="s1">let addrs;</span>
+	<span class="s1">let perPath = _addrsCacheByDirs.get(directories);</span>
+	<span class="s3">if </span><span class="s1">(perPath === undefined) {</span>
+		<span class="s1">perPath = </span><span class="s3">new </span><span class="s1">Map();</span>
+		<span class="s1">_addrsCacheByDirs.set(directories, perPath);</span>
+	<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+		<span class="s1">addrs = perPath.get(requestPath);</span>
+	<span class="s1">}</span>
+	<span class="s3">if </span><span class="s1">(addrs === undefined) {</span>
+		<span class="s1">const { paths } = getPathsCached(fs, requestPath);</span>
+		<span class="s1">const pathsLen = paths.length;</span>
+		<span class="s1">const dirsLen = directories.length;</span>
+		<span class="s0">// Pre-size the flat array rather than going through `map().reduce()`</span>
+		<span class="s0">// with intermediate arrays + spreads.</span>
+		<span class="s0">// eslint-disable-next-line unicorn/no-new-array</span>
+		<span class="s1">addrs = </span><span class="s3">new </span><span class="s1">Array(pathsLen * dirsLen);</span>
+		<span class="s1">let idx = </span><span class="s4">0</span><span class="s1">;</span>
+		<span class="s1">const joinFn = resolver.pathCache.join.fn;</span>
+		<span class="s3">for </span><span class="s1">(let pi = </span><span class="s4">0</span><span class="s1">; pi &lt; pathsLen; pi++) {</span>
+			<span class="s1">const pathItem = paths[pi];</span>
+			<span class="s3">for </span><span class="s1">(let di = </span><span class="s4">0</span><span class="s1">; di &lt; dirsLen; di++) {</span>
+				<span class="s1">addrs[idx++] = joinFn(pathItem, directories[di]);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s1">perPath.set(requestPath, addrs);</span>
+	<span class="s1">}</span>
+	<span class="s0">// Hoist the dot-prefixed request out of the per-addr iterator. `addrs`</span>
+	<span class="s0">// can have up to `paths.length × directories.length` entries (e.g. 36</span>
+	<span class="s0">// for an 8-deep source dir × 4-module config), and concatenating the</span>
+	<span class="s0">// same `./${request.request}` string on every iteration is wasted</span>
+	<span class="s0">// work — it's constant for the whole fan-out.</span>
+	<span class="s1">const relRequest = `./${request.request}`;</span>
+	<span class="s1">forEachBail(</span>
+		<span class="s1">addrs,</span>
+		<span class="s0">/** 
+         * @param {string} addr addr 
+         * @param {(err?: null | Error, result?: null | ResolveRequest) =&gt; void} callback callback 
+         * @returns {void} 
+         */</span>
+		<span class="s1">(addr, callback) =&gt; {</span>
+			<span class="s1">fs.stat(addr, (err, stat) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(!err &amp;&amp; stat &amp;&amp; stat.isDirectory()) {</span>
+					<span class="s0">/** @type {ResolveRequest} */</span>
+					<span class="s1">const obj = {</span>
+						<span class="s1">...request,</span>
+						<span class="s1">path: addr,</span>
+						<span class="s1">request: relRequest,</span>
+						<span class="s1">module: </span><span class="s3">false</span><span class="s1">,</span>
+					<span class="s1">};</span>
+					<span class="s1">const message = `looking </span><span class="s3">for </span><span class="s1">modules </span><span class="s3">in </span><span class="s1">${addr}`;</span>
+					<span class="s3">return </span><span class="s1">resolver.doResolve(</span>
+						<span class="s1">target,</span>
+						<span class="s1">obj,</span>
+						<span class="s1">message,</span>
+						<span class="s1">resolveContext,</span>
+						<span class="s1">callback,</span>
+					<span class="s1">);</span>
+				<span class="s1">}</span>
+				<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+					<span class="s1">resolveContext.log(`${addr} doesn</span><span class="s2">'t exist or is not a directory`);</span>
+				<span class="s1">}</span>
+				<span class="s3">if </span><span class="s1">(resolveContext.missingDependencies) {</span>
+					<span class="s1">resolveContext.missingDependencies.add(addr);</span>
+				<span class="s1">}</span>
+				<span class="s3">return </span><span class="s1">callback();</span>
+			<span class="s1">});</span>
+		<span class="s1">},</span>
+		<span class="s1">callback,</span>
+	<span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = {</span>
+	<span class="s1">modulesResolveHandler,</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

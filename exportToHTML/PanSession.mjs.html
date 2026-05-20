@@ -1,0 +1,303 @@
+<html>
+<head>
+<title>PanSession.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PanSession.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ frameData, frame, isPrimaryPointer, cancelFrame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-dom</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ pipe, secondsToMilliseconds, millisecondsToSeconds } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ addPointerEvent } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../events/add-pointer-event.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ extractEventInfo } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../events/event-info.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ distance2D } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../utils/distance.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">overflowStyles = /*</span><span class="s4">#__PURE__</span><span class="s2">*/ new </span><span class="s5">Set</span><span class="s1">([</span><span class="s2">&quot;</span><span class="s3">auto</span><span class="s2">&quot;, &quot;</span><span class="s3">scroll</span><span class="s2">&quot;</span><span class="s1">])</span><span class="s2">;</span>
+<span class="s2">/**</span>
+ <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+ <span class="s2">*/</span>
+<span class="s0">class </span><span class="s2">PanSession {</span>
+    <span class="s0">constructor</span><span class="s2">(event, handlers, { transformPagePoint, contextWindow = window, dragSnapToOrigin = </span><span class="s6">false</span><span class="s2">, distanceThreshold = </span><span class="s7">3</span><span class="s2">, element, } = {}) {</span>
+        <span class="s2">/**</span>
+         <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.startEvent = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.lastMoveEvent = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.lastMoveEventInfo = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Raw (untransformed) event info, re-transformed each frame 
+         * so transformPagePoint sees the current parent matrix. 
+         * </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.lastRawMoveEventInfo = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.handlers = {};</span>
+        <span class="s2">/**</span>
+         <span class="s4">* </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.contextWindow = window;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Scroll positions of scrollable ancestors and window. 
+         * </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.scrollPositions = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Cleanup function for scroll listeners. 
+         * </span><span class="s2">@</span><span class="s0">internal</span>
+         <span class="s2">*/</span>
+        <span class="s2">this.removeScrollListeners = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">onElementScroll </span><span class="s2">= (event) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">handleScroll</span><span class="s1">(</span><span class="s2">event.target</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">this.</span><span class="s5">onWindowScroll </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">handleScroll</span><span class="s1">(</span><span class="s2">window</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">this.</span><span class="s5">updatePoint </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">this.lastMoveEvent &amp;&amp; this.lastMoveEventInfo</span><span class="s1">))</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s4">Re-transform raw point through current transformPagePoint so</span>
+            <span class="s2">// </span><span class="s4">animated parent transforms (e.g. rotation) are picked up each frame</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.lastRawMoveEventInfo</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.lastMoveEventInfo = </span><span class="s5">transformPoint</span><span class="s1">(</span><span class="s2">this.lastRawMoveEventInfo, this.transformPagePoint</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">info = </span><span class="s5">getPanInfo</span><span class="s1">(</span><span class="s2">this.lastMoveEventInfo, this.history</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">isPanStarted = this.startEvent !== </span><span class="s6">null</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s4">Only start panning if the offset is larger than 3 pixels. If we make it</span>
+            <span class="s2">// </span><span class="s4">any larger than this we'll want to reset the pointer history</span>
+            <span class="s2">// </span><span class="s4">on the first update to avoid visual snapping to the cursor.</span>
+            <span class="s0">const </span><span class="s2">isDistancePastThreshold = </span><span class="s5">distance2D</span><span class="s1">(</span><span class="s2">info.offset, { </span><span class="s1">x</span><span class="s2">: </span><span class="s7">0</span><span class="s2">, </span><span class="s1">y</span><span class="s2">: </span><span class="s7">0 </span><span class="s2">}</span><span class="s1">) </span><span class="s2">&gt;= this.distanceThreshold;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!isPanStarted &amp;&amp; !isDistancePastThreshold</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ point } = info;</span>
+            <span class="s0">const </span><span class="s2">{ timestamp } = frameData;</span>
+            <span class="s2">this.history.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">{ ...point, timestamp }</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ onStart, onMove } = this.handlers;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!isPanStarted</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">onStart &amp;&amp; </span><span class="s5">onStart</span><span class="s1">(</span><span class="s2">this.lastMoveEvent, info</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">this.startEvent = this.lastMoveEvent;</span>
+            <span class="s2">}</span>
+            <span class="s2">onMove &amp;&amp; </span><span class="s5">onMove</span><span class="s1">(</span><span class="s2">this.lastMoveEvent, info</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">this.</span><span class="s5">handlePointerMove </span><span class="s2">= (event, info) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.lastMoveEvent = event;</span>
+            <span class="s2">this.lastRawMoveEventInfo = info;</span>
+            <span class="s2">this.lastMoveEventInfo = </span><span class="s5">transformPoint</span><span class="s1">(</span><span class="s2">info, this.transformPagePoint</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s4">Throttle mouse move event to once per frame</span>
+            <span class="s2">frame.</span><span class="s5">update</span><span class="s1">(</span><span class="s2">this.updatePoint, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">this.</span><span class="s5">handlePointerUp </span><span class="s2">= (event, info) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">end</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ onEnd, onSessionEnd, resumeAnimation } = this.handlers;</span>
+            <span class="s2">// </span><span class="s4">Resume animation if dragSnapToOrigin is set OR if no drag started (user just clicked)</span>
+            <span class="s2">// </span><span class="s4">This ensures constraint animations continue when interrupted by a click</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.dragSnapToOrigin || !this.startEvent</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">resumeAnimation &amp;&amp; </span><span class="s5">resumeAnimation</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">this.lastMoveEvent &amp;&amp; this.lastMoveEventInfo</span><span class="s1">))</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">panInfo = </span><span class="s5">getPanInfo</span><span class="s1">(</span><span class="s2">event.type === &quot;</span><span class="s3">pointercancel</span><span class="s2">&quot;</span>
+                <span class="s2">? this.lastMoveEventInfo</span>
+                <span class="s2">: </span><span class="s5">transformPoint</span><span class="s1">(</span><span class="s2">info, this.transformPagePoint</span><span class="s1">)</span><span class="s2">, this.history</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.startEvent &amp;&amp; onEnd</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s5">onEnd</span><span class="s1">(</span><span class="s2">event, panInfo</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">onSessionEnd &amp;&amp; </span><span class="s5">onSessionEnd</span><span class="s1">(</span><span class="s2">event, panInfo</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">// </span><span class="s4">If we have more than one touch, don't start detecting this gesture</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s5">isPrimaryPointer</span><span class="s1">(</span><span class="s2">event</span><span class="s1">))</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">this.dragSnapToOrigin = dragSnapToOrigin;</span>
+        <span class="s2">this.handlers = handlers;</span>
+        <span class="s2">this.transformPagePoint = transformPagePoint;</span>
+        <span class="s2">this.distanceThreshold = distanceThreshold;</span>
+        <span class="s2">this.contextWindow = contextWindow || window;</span>
+        <span class="s0">const </span><span class="s2">info = </span><span class="s5">extractEventInfo</span><span class="s1">(</span><span class="s2">event</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">initialInfo = </span><span class="s5">transformPoint</span><span class="s1">(</span><span class="s2">info, this.transformPagePoint</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ point } = initialInfo;</span>
+        <span class="s0">const </span><span class="s2">{ timestamp } = frameData;</span>
+        <span class="s2">this.history = </span><span class="s1">[</span><span class="s2">{ ...point, timestamp }</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ onSessionStart } = handlers;</span>
+        <span class="s2">onSessionStart &amp;&amp;</span>
+            <span class="s5">onSessionStart</span><span class="s1">(</span><span class="s2">event, </span><span class="s5">getPanInfo</span><span class="s1">(</span><span class="s2">initialInfo, this.history</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">this.removeListeners = </span><span class="s5">pipe</span><span class="s1">(</span><span class="s5">addPointerEvent</span><span class="s1">(</span><span class="s2">this.contextWindow, &quot;</span><span class="s3">pointermove</span><span class="s2">&quot;, this.handlePointerMove</span><span class="s1">)</span><span class="s2">, </span><span class="s5">addPointerEvent</span><span class="s1">(</span><span class="s2">this.contextWindow, &quot;</span><span class="s3">pointerup</span><span class="s2">&quot;, this.handlePointerUp</span><span class="s1">)</span><span class="s2">, </span><span class="s5">addPointerEvent</span><span class="s1">(</span><span class="s2">this.contextWindow, &quot;</span><span class="s3">pointercancel</span><span class="s2">&quot;, this.handlePointerUp</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s4">Start scroll tracking if element provided</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">element</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s5">startScrollTracking</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Start tracking scroll on ancestors and window. 
+     </span><span class="s2">*/</span>
+    <span class="s5">startScrollTracking</span><span class="s2">(element) {</span>
+        <span class="s2">// </span><span class="s4">Store initial scroll positions for scrollable ancestors</span>
+        <span class="s0">let </span><span class="s2">current = element.parentElement;</span>
+        <span class="s0">while </span><span class="s1">(</span><span class="s2">current</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">style = </span><span class="s5">getComputedStyle</span><span class="s1">(</span><span class="s2">current</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">overflowStyles.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">style.overflowX</span><span class="s1">) </span><span class="s2">||</span>
+                <span class="s2">overflowStyles.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">style.overflowY</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">this.scrollPositions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">current, {</span>
+                    <span class="s1">x</span><span class="s2">: current.scrollLeft,</span>
+                    <span class="s1">y</span><span class="s2">: current.scrollTop,</span>
+                <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">current = current.parentElement;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s4">Track window scroll</span>
+        <span class="s2">this.scrollPositions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">window, {</span>
+            <span class="s1">x</span><span class="s2">: window.scrollX,</span>
+            <span class="s1">y</span><span class="s2">: window.scrollY,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s4">Capture listener catches element scroll events as they bubble</span>
+        <span class="s2">window.</span><span class="s5">addEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, this.onElementScroll, {</span>
+            <span class="s1">capture</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s4">Direct window scroll listener (window scroll doesn't bubble)</span>
+        <span class="s2">window.</span><span class="s5">addEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, this.onWindowScroll</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s5">removeScrollListeners </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">window.</span><span class="s5">removeEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, this.onElementScroll, {</span>
+                <span class="s1">capture</span><span class="s2">: </span><span class="s6">true</span><span class="s2">,</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">window.</span><span class="s5">removeEventListener</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">scroll</span><span class="s2">&quot;, this.onWindowScroll</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Handle scroll compensation during drag. 
+     * 
+     * For element scroll: adjusts history origin since pageX/pageY doesn't change. 
+     * For window scroll: adjusts lastMoveEventInfo since pageX/pageY would change. 
+     </span><span class="s2">*/</span>
+    <span class="s5">handleScroll</span><span class="s2">(target) {</span>
+        <span class="s0">const </span><span class="s2">initial = this.scrollPositions.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">target</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!initial</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">isWindow = target === window;</span>
+        <span class="s0">const </span><span class="s2">current = isWindow</span>
+            <span class="s2">? { </span><span class="s1">x</span><span class="s2">: window.scrollX, </span><span class="s1">y</span><span class="s2">: window.scrollY }</span>
+            <span class="s2">: {</span>
+                <span class="s1">x</span><span class="s2">: target.scrollLeft,</span>
+                <span class="s1">y</span><span class="s2">: target.scrollTop,</span>
+            <span class="s2">};</span>
+        <span class="s0">const </span><span class="s2">delta = { </span><span class="s1">x</span><span class="s2">: current.x - initial.x, </span><span class="s1">y</span><span class="s2">: current.y - initial.y };</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">delta.x === </span><span class="s7">0 </span><span class="s2">&amp;&amp; delta.y === </span><span class="s7">0</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isWindow</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">// </span><span class="s4">Window scroll: pageX/pageY changes, so update lastMoveEventInfo</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.lastMoveEventInfo</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.lastMoveEventInfo.point.x += delta.x;</span>
+                <span class="s2">this.lastMoveEventInfo.point.y += delta.y;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">// </span><span class="s4">Element scroll: pageX/pageY unchanged, so adjust history origin</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.history.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s7">0</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">this.history</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span><span class="s2">.x -= delta.x;</span>
+                <span class="s2">this.history</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span><span class="s2">.y -= delta.y;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">this.scrollPositions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">target, current</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">frame.</span><span class="s5">update</span><span class="s1">(</span><span class="s2">this.updatePoint, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s5">updateHandlers</span><span class="s2">(handlers) {</span>
+        <span class="s2">this.handlers = handlers;</span>
+    <span class="s2">}</span>
+    <span class="s5">end</span><span class="s2">() {</span>
+        <span class="s2">this.removeListeners &amp;&amp; this.</span><span class="s5">removeListeners</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.removeScrollListeners &amp;&amp; this.</span><span class="s5">removeScrollListeners</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.scrollPositions.</span><span class="s5">clear</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s5">cancelFrame</span><span class="s1">(</span><span class="s2">this.updatePoint</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">transformPoint</span><span class="s2">(info, transformPagePoint) {</span>
+    <span class="s0">return </span><span class="s2">transformPagePoint ? { </span><span class="s1">point</span><span class="s2">: </span><span class="s5">transformPagePoint</span><span class="s1">(</span><span class="s2">info.point</span><span class="s1">) </span><span class="s2">} : info;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">subtractPoint</span><span class="s2">(a, b) {</span>
+    <span class="s0">return </span><span class="s2">{ </span><span class="s1">x</span><span class="s2">: a.x - b.x, </span><span class="s1">y</span><span class="s2">: a.y - b.y };</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">getPanInfo</span><span class="s2">({ point }, history) {</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s2">point,</span>
+        <span class="s1">delta</span><span class="s2">: </span><span class="s5">subtractPoint</span><span class="s1">(</span><span class="s2">point, </span><span class="s5">lastDevicePoint</span><span class="s1">(</span><span class="s2">history</span><span class="s1">))</span><span class="s2">,</span>
+        <span class="s1">offset</span><span class="s2">: </span><span class="s5">subtractPoint</span><span class="s1">(</span><span class="s2">point, </span><span class="s5">startDevicePoint</span><span class="s1">(</span><span class="s2">history</span><span class="s1">))</span><span class="s2">,</span>
+        <span class="s1">velocity</span><span class="s2">: </span><span class="s5">getVelocity</span><span class="s1">(</span><span class="s2">history, </span><span class="s7">0.1</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">startDevicePoint</span><span class="s2">(history) {</span>
+    <span class="s0">return </span><span class="s2">history</span><span class="s1">[</span><span class="s7">0</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">lastDevicePoint</span><span class="s2">(history) {</span>
+    <span class="s0">return </span><span class="s2">history</span><span class="s1">[</span><span class="s2">history.</span><span class="s1">length </span><span class="s2">- </span><span class="s7">1</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">getVelocity</span><span class="s2">(history, timeDelta) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">history.</span><span class="s1">length </span><span class="s2">&lt; </span><span class="s7">2</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">x</span><span class="s2">: </span><span class="s7">0</span><span class="s2">, </span><span class="s1">y</span><span class="s2">: </span><span class="s7">0 </span><span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">let </span><span class="s2">i = history.</span><span class="s1">length </span><span class="s2">- </span><span class="s7">1</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">timestampedPoint = </span><span class="s6">null</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">lastPoint = </span><span class="s5">lastDevicePoint</span><span class="s1">(</span><span class="s2">history</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">while </span><span class="s1">(</span><span class="s2">i &gt;= </span><span class="s7">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">timestampedPoint = history</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">lastPoint.timestamp - timestampedPoint.timestamp &gt;</span>
+            <span class="s5">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">timeDelta</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s0">break</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">i--;</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!timestampedPoint</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">x</span><span class="s2">: </span><span class="s7">0</span><span class="s2">, </span><span class="s1">y</span><span class="s2">: </span><span class="s7">0 </span><span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* If the selected point is the pointer-down origin (history[0]), 
+     * there are better movement points available, and the time gap 
+     * is suspiciously large (&gt;2x timeDelta), use the next point instead. 
+     * This prevents stale pointer-down points from diluting velocity 
+     * in hold-then-flick gestures. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">timestampedPoint === history</span><span class="s1">[</span><span class="s7">0</span><span class="s1">] </span><span class="s2">&amp;&amp;</span>
+        <span class="s2">history.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s7">2 </span><span class="s2">&amp;&amp;</span>
+        <span class="s2">lastPoint.timestamp - timestampedPoint.timestamp &gt;</span>
+            <span class="s5">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">timeDelta</span><span class="s1">) </span><span class="s2">* </span><span class="s7">2</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">timestampedPoint = history</span><span class="s1">[</span><span class="s7">1</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">time = </span><span class="s5">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">lastPoint.timestamp - timestampedPoint.timestamp</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">time === </span><span class="s7">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">return </span><span class="s2">{ </span><span class="s1">x</span><span class="s2">: </span><span class="s7">0</span><span class="s2">, </span><span class="s1">y</span><span class="s2">: </span><span class="s7">0 </span><span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">currentVelocity = {</span>
+        <span class="s1">x</span><span class="s2">: </span><span class="s1">(</span><span class="s2">lastPoint.x - timestampedPoint.x</span><span class="s1">) </span><span class="s2">/ time,</span>
+        <span class="s1">y</span><span class="s2">: </span><span class="s1">(</span><span class="s2">lastPoint.y - timestampedPoint.y</span><span class="s1">) </span><span class="s2">/ time,</span>
+    <span class="s2">};</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">currentVelocity.x === </span><span class="s6">Infinity</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">currentVelocity.x = </span><span class="s7">0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">currentVelocity.y === </span><span class="s6">Infinity</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">currentVelocity.y = </span><span class="s7">0</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">currentVelocity;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ PanSession };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=PanSession.mjs.map</span>
+</pre>
+</body>
+</html>

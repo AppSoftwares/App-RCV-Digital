@@ -1,0 +1,1426 @@
+<html>
+<head>
+<title>test.getch.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test.getch.js</font>
+</center></td></tr></table>
+<pre><span class="s0">// Copyright 2018 Google LLC</span>
+<span class="s0">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s0">// you may not use this file except in compliance with the License.</span>
+<span class="s0">// You may obtain a copy of the License at</span>
+<span class="s0">//</span>
+<span class="s0">//    http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s0">//</span>
+<span class="s0">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s0">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s0">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s0">// See the License for the specific language governing permissions and</span>
+<span class="s0">// limitations under the License.</span>
+<span class="s1">import assert from </span><span class="s2">'assert'</span><span class="s1">;</span>
+<span class="s1">import nock from </span><span class="s2">'nock'</span><span class="s1">;</span>
+<span class="s1">import sinon from </span><span class="s2">'sinon'</span><span class="s1">;</span>
+<span class="s1">import stream, { Readable } from </span><span class="s2">'stream'</span><span class="s1">;</span>
+<span class="s1">import { describe, it, afterEach } from </span><span class="s2">'mocha'</span><span class="s1">;</span>
+<span class="s1">import { HttpsProxyAgent } from </span><span class="s2">'https-proxy-agent'</span><span class="s1">;</span>
+<span class="s1">import { Gaxios, GaxiosError, request, } from </span><span class="s2">'../src/index.js'</span><span class="s1">;</span>
+<span class="s1">import { GAXIOS_ERROR_SYMBOL, } from </span><span class="s2">'../src/common.js'</span><span class="s1">;</span>
+<span class="s1">import util from </span><span class="s2">'../src/util.cjs'</span><span class="s1">;</span>
+<span class="s1">import fs from </span><span class="s2">'fs'</span><span class="s1">;</span>
+<span class="s1">const pkg = util.pkg;</span>
+<span class="s1">nock.disableNetConnect();</span>
+<span class="s1">const sandbox = sinon.createSandbox();</span>
+<span class="s1">afterEach(() =&gt; {</span>
+    <span class="s1">sandbox.restore();</span>
+    <span class="s1">nock.cleanAll();</span>
+<span class="s1">});</span>
+<span class="s1">const url = </span><span class="s2">'https://example.com'</span><span class="s1">;</span>
+<span class="s3">function </span><span class="s1">setEnv(obj) {</span>
+    <span class="s3">return </span><span class="s1">sandbox.stub(process, </span><span class="s2">'env'</span><span class="s1">).value(obj);</span>
+<span class="s1">}</span>
+<span class="s1">describe(</span><span class="s2">'🦖 option validation'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should throw an error if a url is not provided'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">await assert.rejects(request({}), /URL is required/);</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'🚙 error handling'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should throw on non-2xx responses by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">500</span><span class="s1">);</span>
+        <span class="s1">await assert.rejects(request({ url }), (err) =&gt; {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s3">return </span><span class="s1">err.status === </span><span class="s4">500</span><span class="s1">;</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should throw the error as a GaxiosError object, regardless of Content-Type header'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = {</span>
+            <span class="s1">error: {</span>
+                <span class="s1">message: </span><span class="s2">'File not found'</span><span class="s1">,</span>
+                <span class="s1">code: </span><span class="s4">404</span><span class="s1">,</span>
+                <span class="s1">status: </span><span class="s2">'NOT FOUND'</span><span class="s1">,</span>
+                <span class="s1">details: [</span>
+                    <span class="s1">{</span>
+                        <span class="s1">some: </span><span class="s2">'details'</span><span class="s1">,</span>
+                    <span class="s1">},</span>
+                <span class="s1">],</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">404</span><span class="s1">, body);</span>
+        <span class="s1">await assert.rejects(request({ url, responseType: </span><span class="s2">'json' </span><span class="s1">}), (err) =&gt; {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.deepStrictEqual(err.cause, body.error);</span>
+            <span class="s3">return </span><span class="s1">err.status === </span><span class="s4">404 </span><span class="s1">&amp;&amp; err.message === </span><span class="s2">'File not found'</span><span class="s1">;</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should throw the error as a `GaxiosError` object (with the message as a string), even if the request type is requested as an arraybuffer'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = {</span>
+            <span class="s1">error: {</span>
+                <span class="s1">status: </span><span class="s4">404</span><span class="s1">,</span>
+                <span class="s1">message: </span><span class="s2">'File not found'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">404</span><span class="s1">, body);</span>
+        <span class="s1">await assert.rejects(request({ url, responseType: </span><span class="s2">'arraybuffer' </span><span class="s1">}), (err) =&gt; {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s3">return </span><span class="s1">(err.status === </span><span class="s4">404 </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">err.message === </span><span class="s2">'Request failed with status code 404' </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">err.response?.data.error.message === </span><span class="s2">'File not found'</span><span class="s1">);</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle AIP-193 error bodies: passes API error in message'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = {</span>
+            <span class="s1">error: {</span>
+                <span class="s1">code: </span><span class="s4">429</span><span class="s1">,</span>
+                <span class="s1">message: </span><span class="s2">&quot;The zone 'us-east1-a' does not have enough resources available to fulfill the request. Try a different zone, or try again later.&quot;</span><span class="s1">,</span>
+                <span class="s1">status: </span><span class="s2">'RESOURCE_EXHAUSTED'</span><span class="s1">,</span>
+                <span class="s1">details: [],</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const readableStream = Readable.from(JSON.stringify(body));</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">429</span><span class="s1">, readableStream);</span>
+        <span class="s1">await assert.rejects(request({ url, responseType: </span><span class="s2">'stream' </span><span class="s1">}), (err) =&gt; {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">const apiError = JSON.parse(err.message);</span>
+            <span class="s3">return </span><span class="s1">(apiError.error.code === </span><span class="s4">429 </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">apiError.error.message ===</span>
+                    <span class="s2">&quot;The zone 'us-east1-a' does not have enough resources available to fulfill the request. Try a different zone, or try again later.&quot; </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">apiError.error.status === </span><span class="s2">'RESOURCE_EXHAUSTED' </span><span class="s1">&amp;&amp;</span>
+                <span class="s1">Array.isArray(apiError.error.details) &amp;&amp;</span>
+                <span class="s1">apiError.error.details.length === </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should not throw an error during a translation error'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const notJSON = </span><span class="s2">'.'</span><span class="s1">;</span>
+        <span class="s1">const response = {</span>
+            <span class="s1">config: {</span>
+                <span class="s1">responseType: </span><span class="s2">'json'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+            <span class="s1">data: notJSON,</span>
+            <span class="s1">status: </span><span class="s4">500</span><span class="s1">,</span>
+            <span class="s1">statusText: </span><span class="s2">''</span><span class="s1">,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers(),</span>
+            <span class="s0">// workaround for `node-fetch`'s `.data` deprecation...</span>
+            <span class="s1">bodyUsed: </span><span class="s3">true</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">const error = </span><span class="s3">new </span><span class="s1">GaxiosError(</span><span class="s2">'translation test'</span><span class="s1">, {}, response);</span>
+        <span class="s1">assert(error.response);</span>
+        <span class="s1">assert.equal(error.response.data, notJSON);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should support `instanceof` for GaxiosErrors of the same version'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">class A extends GaxiosError {</span>
+        <span class="s1">}</span>
+        <span class="s1">const wrongVersion = { [GAXIOS_ERROR_SYMBOL]: </span><span class="s2">'0.0.0' </span><span class="s1">};</span>
+        <span class="s1">const correctVersion = { [GAXIOS_ERROR_SYMBOL]: pkg.version };</span>
+        <span class="s1">const child = </span><span class="s3">new </span><span class="s1">A(</span><span class="s2">''</span><span class="s1">, {});</span>
+        <span class="s1">assert.equal(wrongVersion </span><span class="s3">instanceof </span><span class="s1">GaxiosError, </span><span class="s3">false</span><span class="s1">);</span>
+        <span class="s1">assert.equal(correctVersion </span><span class="s3">instanceof </span><span class="s1">GaxiosError, </span><span class="s3">true</span><span class="s1">);</span>
+        <span class="s1">assert.equal(child </span><span class="s3">instanceof </span><span class="s1">GaxiosError, </span><span class="s3">true</span><span class="s1">);</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'🥁 configuration options'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should accept `URL` objects'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">const res = await request({ url: </span><span class="s3">new </span><span class="s1">URL(url) });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">204</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should accept `Request` objects'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">const res = await request(</span><span class="s3">new </span><span class="s1">Request(url));</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">204</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should use options passed into the constructor'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).head(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const inst = </span><span class="s3">new </span><span class="s1">Gaxios({ method: </span><span class="s2">'HEAD' </span><span class="s1">});</span>
+        <span class="s1">const res = await inst.request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.config.method, </span><span class="s2">'HEAD'</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle nested options passed into the constructor'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const inst = </span><span class="s3">new </span><span class="s1">Gaxios({ headers: </span><span class="s3">new </span><span class="s1">Headers({ apple: </span><span class="s2">'juice' </span><span class="s1">}) });</span>
+        <span class="s1">const res = await inst.request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">headers: { figgy: </span><span class="s2">'pudding' </span><span class="s1">},</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.config.headers.get(</span><span class="s2">'apple'</span><span class="s1">), </span><span class="s2">'juice'</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.headers.get(</span><span class="s2">'figgy'</span><span class="s1">), </span><span class="s2">'pudding'</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow setting a base url in the options'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/v1/mango'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const inst = </span><span class="s3">new </span><span class="s1">Gaxios({ baseURL: `${url}/v1/` });</span>
+        <span class="s1">const res = await inst.request({ url: </span><span class="s2">'mango' </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow overriding valid status'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">304</span><span class="s1">);</span>
+        <span class="s1">const res = await request({ url, validateStatus: () =&gt; </span><span class="s3">true </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">304</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow setting maxContentLength'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'content-length'</span><span class="s1">: body.toString().length.toString() });</span>
+        <span class="s1">const maxContentLength = </span><span class="s4">1</span><span class="s1">;</span>
+        <span class="s1">await assert.rejects(request({ url, maxContentLength }), (err) =&gt; {</span>
+            <span class="s3">return </span><span class="s1">err </span><span class="s3">instanceof </span><span class="s1">GaxiosError &amp;&amp; /limit/.test(err.message);</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should support redirects by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scopes = [</span>
+            <span class="s1">nock(url).get(</span><span class="s2">'/foo'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body),</span>
+            <span class="s1">nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">302</span><span class="s1">, undefined, { location: </span><span class="s2">'/foo' </span><span class="s1">}),</span>
+        <span class="s1">];</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scopes.forEach(x =&gt; x.done());</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+        <span class="s1">assert.strictEqual(res.url, `${url}/foo`);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow overriding the adapter'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const response = {</span>
+            <span class="s1">data: { hello: </span><span class="s2">'🌎' </span><span class="s1">},</span>
+            <span class="s1">config: {},</span>
+            <span class="s1">status: </span><span class="s4">200</span><span class="s1">,</span>
+            <span class="s1">statusText: </span><span class="s2">'OK'</span><span class="s1">,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers(),</span>
+        <span class="s1">};</span>
+        <span class="s1">const adapter = () =&gt; Promise.resolve(response);</span>
+        <span class="s1">const res = await request({ url, adapter });</span>
+        <span class="s1">assert.strictEqual(response, res);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow overriding the adapter with default adapter wrapper'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const extraProperty = </span><span class="s2">'🦦'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const timings = [];</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">adapter: async (opts, defaultAdapter) =&gt; {</span>
+                <span class="s1">const begin = Date.now();</span>
+                <span class="s1">const res = await defaultAdapter(opts);</span>
+                <span class="s1">const end = Date.now();</span>
+                <span class="s1">res.data = {</span>
+                    <span class="s1">...res.data,</span>
+                    <span class="s1">extraProperty,</span>
+                <span class="s1">};</span>
+                <span class="s1">timings.push({ duration: end - begin });</span>
+                <span class="s3">return </span><span class="s1">res;</span>
+            <span class="s1">},</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {</span>
+            <span class="s1">...body,</span>
+            <span class="s1">extraProperty,</span>
+        <span class="s1">});</span>
+        <span class="s1">assert(timings.length === </span><span class="s4">1</span><span class="s1">);</span>
+        <span class="s1">assert(</span><span class="s3">typeof </span><span class="s1">timings[</span><span class="s4">0</span><span class="s1">].duration === </span><span class="s2">'number'</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should encode URL parameters'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const path = </span><span class="s2">'/?james=kirk&amp;montgomery=scott'</span><span class="s1">;</span>
+        <span class="s1">const opts = { url: `${url}${path}` };</span>
+        <span class="s1">const scope = nock(url).get(path).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request(opts);</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.url?.toString(), url + path);</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should preserve the original querystring'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const path = </span><span class="s2">'/?robot'</span><span class="s1">;</span>
+        <span class="s1">const opts = { url: `${url}${path}` };</span>
+        <span class="s1">const scope = nock(url).get(path).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request(opts);</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.url?.toString(), url + path);</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle empty querystring params'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">params: {},</span>
+        <span class="s1">});</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should encode parameters from the params option'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const opts = { url, params: { james: </span><span class="s2">'kirk'</span><span class="s1">, montgomery: </span><span class="s2">'scott' </span><span class="s1">} };</span>
+        <span class="s1">const qs = </span><span class="s2">'?james=kirk&amp;montgomery=scott'</span><span class="s1">;</span>
+        <span class="s1">const path = `/${qs}`;</span>
+        <span class="s1">const scope = nock(url).get(path).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request(opts);</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.url?.toString(), </span><span class="s3">new </span><span class="s1">URL(url + qs).toString());</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should merge URL parameters with the params option'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const opts = {</span>
+            <span class="s1">url: `${url}/?james=beckwith&amp;montgomery=scott`,</span>
+            <span class="s1">params: { james: </span><span class="s2">'kirk' </span><span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const path = </span><span class="s2">'/?james=beckwith&amp;montgomery=scott&amp;james=kirk'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url).get(path).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request(opts);</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.url?.toString(), url + path);</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow overriding the param serializer'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const qs = </span><span class="s2">'?oh=HAI'</span><span class="s1">;</span>
+        <span class="s1">const params = { james: </span><span class="s2">'kirk' </span><span class="s1">};</span>
+        <span class="s1">const opts = {</span>
+            <span class="s1">url,</span>
+            <span class="s1">params,</span>
+            <span class="s1">paramsSerializer: ps =&gt; {</span>
+                <span class="s1">assert.strictEqual(JSON.stringify(params), JSON.stringify(ps));</span>
+                <span class="s3">return </span><span class="s2">'?oh=HAI'</span><span class="s1">;</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(`/${qs}`).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request(opts);</span>
+        <span class="s1">assert.strictEqual(res.status, </span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">assert.strictEqual(res.config.url.toString(), </span><span class="s3">new </span><span class="s1">URL(url + qs).toString());</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return json by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(body, res.data);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should send an application/json header by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'accept'</span><span class="s1">, </span><span class="s2">'application/json'</span><span class="s1">)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({ url, responseType: </span><span class="s2">'json' </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'proxying'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const url = </span><span class="s2">'https://domain.example.com/with-path'</span><span class="s1">;</span>
+        <span class="s1">const proxy = </span><span class="s2">'https://fake.proxy/'</span><span class="s1">;</span>
+        <span class="s1">let gaxios;</span>
+        <span class="s1">let request;</span>
+        <span class="s1">let responseBody;</span>
+        <span class="s1">let scope;</span>
+        <span class="s1">beforeEach(() =&gt; {</span>
+            <span class="s1">gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">request = gaxios.request.bind(gaxios);</span>
+            <span class="s1">responseBody = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+            <span class="s1">const direct = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+            <span class="s1">scope = nock(direct.origin).get(direct.pathname).reply(</span><span class="s4">200</span><span class="s1">, responseBody);</span>
+        <span class="s1">});</span>
+        <span class="s3">function </span><span class="s1">expectDirect(res) {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.deepStrictEqual(res.data, responseBody);</span>
+            <span class="s1">assert.strictEqual(res.config.agent, undefined);</span>
+        <span class="s1">}</span>
+        <span class="s3">function </span><span class="s1">expectProxy(res) {</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.deepStrictEqual(res.data, responseBody);</span>
+            <span class="s1">assert.ok(res.config.agent </span><span class="s3">instanceof </span><span class="s1">HttpsProxyAgent);</span>
+            <span class="s1">assert.equal(res.config.agent.proxy.toString(), proxy);</span>
+        <span class="s1">}</span>
+        <span class="s1">it(</span><span class="s2">'should use an https proxy if asked nicely (config)'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const res = await request({ url, proxy });</span>
+            <span class="s1">expectProxy(res);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should use an https proxy if asked nicely (env)'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">setEnv({ https_proxy: proxy });</span>
+            <span class="s1">const res = await request({ url });</span>
+            <span class="s1">expectProxy(res);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should use mTLS with proxy'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const cert = </span><span class="s2">'cert'</span><span class="s1">;</span>
+            <span class="s1">const key = </span><span class="s2">'key'</span><span class="s1">;</span>
+            <span class="s1">const res = await request({ url, proxy, cert, key });</span>
+            <span class="s1">expectProxy(res);</span>
+            <span class="s1">assert(res.config.agent </span><span class="s3">instanceof </span><span class="s1">HttpsProxyAgent);</span>
+            <span class="s1">assert.equal(res.config.agent.connectOpts.cert, cert);</span>
+            <span class="s1">assert.equal(res.config.agent.connectOpts.key, key);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should load the proxy from the cache'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const res1 = await request({ url, proxy });</span>
+            <span class="s1">const agent = res1.config.agent;</span>
+            <span class="s1">expectProxy(res1);</span>
+            <span class="s1">const direct = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+            <span class="s1">scope = nock(direct.origin).get(direct.pathname).reply(</span><span class="s4">200</span><span class="s1">, responseBody);</span>
+            <span class="s1">const res2 = await request({ url, proxy });</span>
+            <span class="s1">assert.strictEqual(agent, res2.config.agent);</span>
+            <span class="s1">expectProxy(res2);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should load the proxy from the cache with mTLS'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const cert = </span><span class="s2">'cert'</span><span class="s1">;</span>
+            <span class="s1">const key = </span><span class="s2">'key'</span><span class="s1">;</span>
+            <span class="s1">const res1 = await request({ url, proxy, cert, key });</span>
+            <span class="s1">const agent = res1.config.agent;</span>
+            <span class="s1">expectProxy(res1);</span>
+            <span class="s1">const direct = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+            <span class="s1">scope = nock(direct.origin).get(direct.pathname).reply(</span><span class="s4">200</span><span class="s1">, responseBody);</span>
+            <span class="s1">const res2 = await request({ url, proxy });</span>
+            <span class="s1">assert.strictEqual(agent, res2.config.agent);</span>
+            <span class="s1">expectProxy(res2);</span>
+            <span class="s1">assert(res2.config.agent </span><span class="s3">instanceof </span><span class="s1">HttpsProxyAgent);</span>
+            <span class="s1">assert.equal(res2.config.agent.connectOpts.cert, cert);</span>
+            <span class="s1">assert.equal(res2.config.agent.connectOpts.key, key);</span>
+        <span class="s1">});</span>
+        <span class="s1">describe(</span><span class="s2">'noProxy'</span><span class="s1">, () =&gt; {</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy when url matches `noProxy` (config &gt; string)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [</span><span class="s3">new </span><span class="s1">URL(url).host];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy when url matches `noProxy` (config &gt; URL)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s0">// should match by `URL#origin`</span>
+                <span class="s1">const noProxyURL = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+                <span class="s1">noProxyURL.pathname = </span><span class="s2">'/some-other-path'</span><span class="s1">;</span>
+                <span class="s1">const noProxy = [noProxyURL];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy when url matches `noProxy` (config &gt; RegExp)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [/example.com/];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy when url matches `noProxy` (config + env &gt; match config)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [url];</span>
+                <span class="s1">setEnv({ no_proxy: </span><span class="s2">'https://foo.bar' </span><span class="s1">});</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy when url matches `noProxy` (config + env &gt; match env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [</span><span class="s2">'https://foo.bar'</span><span class="s1">];</span>
+                <span class="s1">setEnv({ no_proxy: url });</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy when url does not match `noProxy` (config &gt; string)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [url];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy if url does not match `noProxy` (config &gt; URL &gt; diff origin &gt; protocol)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxyURL = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+                <span class="s1">noProxyURL.protocol = </span><span class="s2">'http:'</span><span class="s1">;</span>
+                <span class="s1">const noProxy = [noProxyURL];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectProxy(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy if url does not match `noProxy` (config &gt; URL &gt; diff origin &gt; port)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxyURL = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+                <span class="s1">noProxyURL.port = </span><span class="s2">'8443'</span><span class="s1">;</span>
+                <span class="s1">const noProxy = [noProxyURL];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectProxy(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy if url does not match `noProxy` (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: </span><span class="s2">'https://blah' </span><span class="s1">});</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectProxy(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env var matches the origin or hostname of the URL (config &gt; string)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [</span><span class="s3">new </span><span class="s1">URL(url).hostname];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env var matches the origin or hostname of the URL (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: </span><span class="s3">new </span><span class="s1">URL(url).hostname });</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env variable has asterisk, and URL partially matches (config)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s1">const noProxy = [`*.${parentHost}`];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env variable has asterisk, and URL partially matches (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: `*.${parentHost}` });</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env variable starts with a dot, and URL partially matches (config)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s1">const noProxy = [`.${parentHost}`];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should not proxy if `noProxy` env variable starts with a dot, and URL partially matches (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: </span><span class="s2">'.example.com' </span><span class="s1">});</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy if `noProxy` env variable has asterisk, but URL is not matching (config)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const noProxy = [</span><span class="s2">'*.no.match'</span><span class="s1">];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectProxy(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should proxy if `noProxy` env variable has asterisk, but URL is not matching (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: </span><span class="s2">'*.no.match' </span><span class="s1">});</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectProxy(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should allow comma-separated lists for `noProxy` env variables (config)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s1">const noProxy = [</span><span class="s2">'google.com'</span><span class="s1">, `*.${parentHost}`, </span><span class="s2">'hello.com'</span><span class="s1">];</span>
+                <span class="s1">const res = await request({ url, proxy, noProxy });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+            <span class="s1">it(</span><span class="s2">'should allow comma-separated lists for `noProxy` env variables (env)'</span><span class="s1">, async () =&gt; {</span>
+                <span class="s1">const parentHost = </span><span class="s3">new </span><span class="s1">URL(url).hostname.split(</span><span class="s2">'.'</span><span class="s1">).slice(</span><span class="s4">1</span><span class="s1">).join(</span><span class="s2">'.'</span><span class="s1">);</span>
+                <span class="s0">// ensure we have a host for a valid test</span>
+                <span class="s1">assert(parentHost);</span>
+                <span class="s0">// added spaces to ensure trimming works as expected</span>
+                <span class="s1">const noProxy = [</span><span class="s2">' google.com '</span><span class="s1">, ` *.${parentHost} `, </span><span class="s2">' hello.com '</span><span class="s1">];</span>
+                <span class="s1">setEnv({ https_proxy: proxy, no_proxy: noProxy.join(</span><span class="s2">','</span><span class="s1">) });</span>
+                <span class="s1">const res = await request({ url });</span>
+                <span class="s1">expectDirect(res);</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should include the request data in the response config'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).post(</span><span class="s2">'/'</span><span class="s1">, body).reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const res = await request({ url, method: </span><span class="s2">'POST'</span><span class="s1">, data: body });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.config.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should not stringify the data if it is appended by a form'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const formData = </span><span class="s3">new </span><span class="s1">FormData();</span>
+        <span class="s1">formData.append(</span><span class="s2">'test'</span><span class="s1">, </span><span class="s2">'123'</span><span class="s1">);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, body =&gt; {</span>
+            <span class="s0">/** 
+             * Sample from native `node-fetch` 
+             * body: '------3785545705014550845559551617\r\n' + 
+             * 'Content-Disposition: form-data; name=&quot;test&quot;\r\n' + 
+             * '\r\n' + 
+             * '123\r\n' + 
+             * '------3785545705014550845559551617--', 
+             */</span>
+            <span class="s0">/** 
+             * Sample from native `fetch` 
+             * body: '------formdata-undici-0.39470493152687736\r\n' + 
+             * 'Content-Disposition: form-data; name=&quot;test&quot;\r\n' + 
+             * '\r\n' + 
+             * '123\r\n' + 
+             * '------formdata-undici-0.39470493152687736--', 
+             */</span>
+            <span class="s3">return </span><span class="s1">body.match(</span><span class="s2">'Content-Disposition: form-data;'</span><span class="s1">);</span>
+        <span class="s1">})</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: formData,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.config.data, formData);</span>
+        <span class="s1">assert.ok(res.config.body </span><span class="s3">instanceof </span><span class="s1">FormData);</span>
+        <span class="s1">assert.ok(res.config.data </span><span class="s3">instanceof </span><span class="s1">FormData);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow explicitly setting the fetch implementation'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">let customFetchCalled = </span><span class="s3">false</span><span class="s1">;</span>
+        <span class="s1">const myFetch = (...args) =&gt; {</span>
+            <span class="s1">customFetchCalled = </span><span class="s3">true</span><span class="s1">;</span>
+            <span class="s3">return </span><span class="s1">fetch(...args);</span>
+        <span class="s1">};</span>
+        <span class="s1">const scope = nock(url).post(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">fetchImplementation: myFetch,</span>
+            <span class="s0">// This `data` ensures the 'duplex' option has been set</span>
+            <span class="s1">data: { sample: </span><span class="s2">'data' </span><span class="s1">},</span>
+        <span class="s1">});</span>
+        <span class="s1">assert(customFetchCalled);</span>
+        <span class="s1">assert.equal(res.status, </span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">scope.done();</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should be able to disable the `errorRedactor`'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios({ url, errorRedactor: </span><span class="s3">false </span><span class="s1">});</span>
+        <span class="s1">assert.equal(instance.defaults.errorRedactor, </span><span class="s3">false</span><span class="s1">);</span>
+        <span class="s1">await instance.request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.equal(instance.defaults.errorRedactor, </span><span class="s3">false</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should be able to set a custom `errorRedactor`'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+        <span class="s1">const errorRedactor = (t) =&gt; t;</span>
+        <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios({ url, errorRedactor });</span>
+        <span class="s1">assert.equal(instance.defaults.errorRedactor, errorRedactor);</span>
+        <span class="s1">await instance.request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.equal(instance.defaults.errorRedactor, errorRedactor);</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'timeout'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">it(</span><span class="s2">'should accept and use a `timeout`'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">nock(url).get(</span><span class="s2">'/'</span><span class="s1">).delay(</span><span class="s4">2000</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+            <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">const timeout = </span><span class="s4">10</span><span class="s1">;</span>
+            <span class="s1">await assert.rejects(() =&gt; gaxios.request({ url, timeout }), /abort/);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should a `timeout`, an existing `signal`, and be triggered by timeout'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">nock(url).get(</span><span class="s2">'/'</span><span class="s1">).delay(</span><span class="s4">2000</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+            <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">const signal = </span><span class="s3">new </span><span class="s1">AbortController().signal;</span>
+            <span class="s1">const timeout = </span><span class="s4">10</span><span class="s1">;</span>
+            <span class="s1">await assert.rejects(() =&gt; gaxios.request({ url, timeout, signal }), /abort/);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should use a `timeout`, a `signal`, and be triggered by signal'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">nock(url).get(</span><span class="s2">'/'</span><span class="s1">).delay(</span><span class="s4">2000</span><span class="s1">).reply(</span><span class="s4">204</span><span class="s1">);</span>
+            <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">const ac = </span><span class="s3">new </span><span class="s1">AbortController();</span>
+            <span class="s1">const signal = ac.signal;</span>
+            <span class="s1">const timeout = </span><span class="s4">4000</span><span class="s1">; </span><span class="s0">// after network delay, so this shouldn't trigger</span>
+            <span class="s1">const message = </span><span class="s2">'Changed my mind - no request please'</span><span class="s1">;</span>
+            <span class="s1">setTimeout(() =&gt; ac.abort(message), </span><span class="s4">10</span><span class="s1">);</span>
+            <span class="s1">await assert.rejects(() =&gt; gaxios.request({ url, timeout, signal }), </span>
+            <span class="s0">// `node-fetch` always rejects with the generic 'abort' error:</span>
+            <span class="s1">/abort/);</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'🎏 data handling'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should accept a ReadableStream as request data'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).post(</span><span class="s2">'/'</span><span class="s1">, </span><span class="s2">'test'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: Readable.from(</span><span class="s2">'test'</span><span class="s1">),</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should accept a string in the request data'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const encoded = </span><span class="s3">new </span><span class="s1">URLSearchParams(body);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'content-type'</span><span class="s1">, </span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, encoded.toString())</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: encoded,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s1">,</span>
+            <span class="s1">}),</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should set application/json content-type for object request by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'Content-Type'</span><span class="s1">, </span><span class="s2">'application/json'</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, JSON.stringify(body))</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: body,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow other JSON content-types to be specified'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'Content-Type'</span><span class="s1">, </span><span class="s2">'application/json-patch+json'</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, JSON.stringify(body))</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: body,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json-patch+json'</span><span class="s1">,</span>
+            <span class="s1">}),</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should stringify with qs when content-type is set to application/x-www-form-urlencoded'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'Content-Type'</span><span class="s1">, </span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, </span><span class="s3">new </span><span class="s1">URLSearchParams(body).toString())</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: body,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s1">,</span>
+            <span class="s1">}),</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return stream if asked nicely'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({ url, responseType: </span><span class="s2">'stream' </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert(res.data </span><span class="s3">instanceof </span><span class="s1">stream.Readable);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return a `ReadableStream` when `fetch` has been provided '</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">responseType: </span><span class="s2">'stream'</span><span class="s1">,</span>
+            <span class="s1">fetchImplementation: fetch,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert(res.data </span><span class="s3">instanceof </span><span class="s1">ReadableStream);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return an ArrayBuffer if asked nicely'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">responseType: </span><span class="s2">'arraybuffer'</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert(res.data </span><span class="s3">instanceof </span><span class="s1">ArrayBuffer);</span>
+        <span class="s1">assert.deepStrictEqual(Buffer.from(JSON.stringify(body)), Buffer.from(res.data));</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return a blob if asked nicely'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({ url, responseType: </span><span class="s2">'blob' </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return text if asked nicely'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = </span><span class="s2">'hello 🌎'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({ url, responseType: </span><span class="s2">'text' </span><span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.strictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return status text'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s0">// node-fetch and native fetch specs differ...</span>
+        <span class="s0">// https://github.com/node-fetch/node-fetch/issues/1066</span>
+        <span class="s1">assert.strictEqual(</span><span class="s3">typeof </span><span class="s1">res.statusText, </span><span class="s2">'string'</span><span class="s1">);</span>
+        <span class="s0">// assert.strictEqual(res.statusText, 'OK');</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return JSON when response Content-Type=application/json'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'world' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return invalid JSON as text when response Content-Type=application/json'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = </span><span class="s2">'hello world'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return text when response Content-Type=text/plain'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = </span><span class="s2">'hello world'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'text/plain' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return text when response Content-Type=text/csv'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = </span><span class="s2">'&quot;col1&quot;,&quot;col2&quot;</span><span class="s3">\n</span><span class="s2">&quot;hello&quot;,&quot;world&quot;'</span><span class="s1">;</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'text/csv' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should return raw data when Content-Type is unable to be parsed'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = Buffer.from(</span><span class="s2">'hello world'</span><span class="s1">, </span><span class="s2">'utf-8'</span><span class="s1">);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, body, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'image/gif' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({ url });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+        <span class="s1">assert.notEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle multipart/related when options.multipart is set and a single part'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const bodyContent = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const body = </span><span class="s3">new </span><span class="s1">Readable();</span>
+        <span class="s1">body.push(JSON.stringify(bodyContent));</span>
+        <span class="s1">body.push(</span><span class="s3">null</span><span class="s1">);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'Content-Type'</span><span class="s1">, /multipart\/related; boundary=[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}/)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, /^(--[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}[\r\n]+Content-Type: application\/json[\r\n\r\n]+{</span><span class="s2">&quot;hello&quot;</span><span class="s1">:</span><span class="s2">&quot;🌎&quot;</span><span class="s1">}[\r\n]+--[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}--)$/)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">multipart: [</span>
+                <span class="s1">{</span>
+                    <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">}),</span>
+                    <span class="s1">content: body,</span>
+                <span class="s1">},</span>
+            <span class="s1">],</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle multipart/related when options.multipart is set and a multiple parts'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const jsonContent = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const textContent = </span><span class="s2">'hello world'</span><span class="s1">;</span>
+        <span class="s1">const body = </span><span class="s3">new </span><span class="s1">Readable();</span>
+        <span class="s1">body.push(JSON.stringify(jsonContent));</span>
+        <span class="s1">body.push(</span><span class="s3">null</span><span class="s1">);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'Content-Type'</span><span class="s1">, /multipart\/related; boundary=[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}/)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, /^(--[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}[\r\n]+Content-Type: application\/json[\r\n\r\n]+{</span><span class="s2">&quot;hello&quot;</span><span class="s1">:</span><span class="s2">&quot;🌎&quot;</span><span class="s1">}[\r\n]+--[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}[\r\n]+Content-Type: text\/plain[\r\n\r\n]+hello world[\r\n]+--[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">8</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">4</span><span class="s1">}-[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">9</span><span class="s1">a-f]{</span><span class="s4">12</span><span class="s1">}--)$/)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">multipart: [</span>
+                <span class="s1">{</span>
+                    <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">}),</span>
+                    <span class="s1">content: body,</span>
+                <span class="s1">},</span>
+                <span class="s1">{</span>
+                    <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'text/plain' </span><span class="s1">}),</span>
+                    <span class="s1">content: textContent,</span>
+                <span class="s1">},</span>
+            <span class="s1">],</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.ok(res.data);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should redact sensitive props via the `errorRedactor` by default'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const REDACT = </span><span class="s2">'&lt;&lt;REDACTED&gt; - See `errorRedactor` option in `gaxios` for configuration&gt;.'</span><span class="s1">;</span>
+        <span class="s1">const customURL = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'token'</span><span class="s1">, </span><span class="s2">'sensitive'</span><span class="s1">);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'client_secret'</span><span class="s1">, </span><span class="s2">'data'</span><span class="s1">);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'random'</span><span class="s1">, </span><span class="s2">'non-sensitive'</span><span class="s1">);</span>
+        <span class="s1">const config = {</span>
+            <span class="s1">headers: {</span>
+                <span class="s1">Authentication: </span><span class="s2">'My Auth'</span><span class="s1">,</span>
+                <span class="s0">/** 
+                 * Ensure casing is properly handled 
+                 */</span>
+                <span class="s1">AUTHORIZATION: </span><span class="s2">'My Auth'</span><span class="s1">,</span>
+                <span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/x-www-form-urlencoded'</span><span class="s1">,</span>
+                <span class="s1">random: </span><span class="s2">'data'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+            <span class="s1">data: {</span>
+                <span class="s1">grant_type: </span><span class="s2">'urn:ietf:params:oauth:grant-type:jwt-bearer'</span><span class="s1">,</span>
+                <span class="s1">assertion: </span><span class="s2">'somesensitivedata'</span><span class="s1">,</span>
+                <span class="s1">unrelated: </span><span class="s2">'data'</span><span class="s1">,</span>
+                <span class="s1">client_secret: </span><span class="s2">'data'</span><span class="s1">,</span>
+            <span class="s1">},</span>
+            <span class="s1">body: </span><span class="s2">'grant_type=somesensitivedata&amp;assertion=somesensitivedata&amp;client_secret=data'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s0">// simulate JSON response</span>
+        <span class="s1">const responseHeaders = {</span>
+            <span class="s1">...config.headers,</span>
+            <span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/json'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">const response = { ...config.data };</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.query(() =&gt; </span><span class="s3">true</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">404</span><span class="s1">, response, responseHeaders);</span>
+        <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios(JSON.parse(JSON.stringify(config)));</span>
+        <span class="s1">const requestConfig = {</span>
+            <span class="s1">url: customURL.toString(),</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">const requestConfigCopy = JSON.parse(JSON.stringify({ ...requestConfig }));</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">await instance.request(requestConfig);</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">'Expected a GaxiosError'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">catch </span><span class="s1">(e) {</span>
+            <span class="s1">assert(e </span><span class="s3">instanceof </span><span class="s1">GaxiosError);</span>
+            <span class="s0">// config should not be mutated</span>
+            <span class="s1">assert.deepStrictEqual(instance.defaults, config);</span>
+            <span class="s1">assert.deepStrictEqual(requestConfig, requestConfigCopy);</span>
+            <span class="s1">assert.notStrictEqual(e.config, config);</span>
+            <span class="s0">// config redactions - headers</span>
+            <span class="s1">const expectedRequestHeaders = </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s1">...config.headers, </span><span class="s0">// non-redactables should be present</span>
+                <span class="s1">Authentication: REDACT,</span>
+                <span class="s1">AUTHORIZATION: REDACT,</span>
+            <span class="s1">});</span>
+            <span class="s1">const actualHeaders = e.config.headers;</span>
+            <span class="s1">expectedRequestHeaders.forEach((value, key) =&gt; {</span>
+                <span class="s1">assert.equal(actualHeaders.get(key), value);</span>
+            <span class="s1">});</span>
+            <span class="s0">// config redactions - data</span>
+            <span class="s1">assert.deepStrictEqual(e.config.data, {</span>
+                <span class="s1">...config.data, </span><span class="s0">// non-redactables should be present</span>
+                <span class="s1">grant_type: REDACT,</span>
+                <span class="s1">assertion: REDACT,</span>
+                <span class="s1">client_secret: REDACT,</span>
+            <span class="s1">});</span>
+            <span class="s1">assert.deepStrictEqual(Object.fromEntries(e.config.body), {</span>
+                <span class="s1">...config.data, </span><span class="s0">// non-redactables should be present</span>
+                <span class="s1">grant_type: REDACT,</span>
+                <span class="s1">assertion: REDACT,</span>
+                <span class="s1">client_secret: REDACT,</span>
+            <span class="s1">});</span>
+            <span class="s1">expectedRequestHeaders.forEach((value, key) =&gt; {</span>
+                <span class="s1">assert.equal(actualHeaders.get(key), value);</span>
+            <span class="s1">});</span>
+            <span class="s0">// config redactions - url</span>
+            <span class="s1">assert(e.config.url);</span>
+            <span class="s1">const resultURL = </span><span class="s3">new </span><span class="s1">URL(e.config.url);</span>
+            <span class="s1">assert.notDeepStrictEqual(resultURL.toString(), customURL.toString());</span>
+            <span class="s1">customURL.searchParams.set(</span><span class="s2">'token'</span><span class="s1">, REDACT);</span>
+            <span class="s1">customURL.searchParams.set(</span><span class="s2">'client_secret'</span><span class="s1">, REDACT);</span>
+            <span class="s1">assert.deepStrictEqual(resultURL.toString(), customURL.toString());</span>
+            <span class="s0">// response redactions</span>
+            <span class="s1">assert(e.response);</span>
+            <span class="s1">assert.deepStrictEqual(e.response.config, e.config);</span>
+            <span class="s1">const expectedResponseHeaders = </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s1">...responseHeaders, </span><span class="s0">// non-redactables should be present</span>
+            <span class="s1">});</span>
+            <span class="s1">expectedResponseHeaders.set(</span><span class="s2">'authentication'</span><span class="s1">, REDACT);</span>
+            <span class="s1">expectedResponseHeaders.set(</span><span class="s2">'authorization'</span><span class="s1">, REDACT);</span>
+            <span class="s1">expectedResponseHeaders.forEach((value, key) =&gt; {</span>
+                <span class="s1">assert.equal(e.response?.headers.get(key), value);</span>
+            <span class="s1">});</span>
+            <span class="s1">assert.deepStrictEqual(e.response.data, {</span>
+                <span class="s1">...response, </span><span class="s0">// non-redactables should be present</span>
+                <span class="s1">assertion: REDACT,</span>
+                <span class="s1">client_secret: REDACT,</span>
+                <span class="s1">grant_type: REDACT,</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+        <span class="s3">finally </span><span class="s1">{</span>
+            <span class="s1">scope.done();</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should redact after final retry'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const customURL = </span><span class="s3">new </span><span class="s1">URL(url);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'token'</span><span class="s1">, </span><span class="s2">'sensitive'</span><span class="s1">);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'client_secret'</span><span class="s1">, </span><span class="s2">'data'</span><span class="s1">);</span>
+        <span class="s1">customURL.searchParams.append(</span><span class="s2">'random'</span><span class="s1">, </span><span class="s2">'non-sensitive'</span><span class="s1">);</span>
+        <span class="s1">const data = {</span>
+            <span class="s1">grant_type: </span><span class="s2">'urn:ietf:params:oauth:grant-type:jwt-bearer'</span><span class="s1">,</span>
+            <span class="s1">assertion: </span><span class="s2">'somesensitivedata'</span><span class="s1">,</span>
+            <span class="s1">unrelated: </span><span class="s2">'data'</span><span class="s1">,</span>
+            <span class="s1">client_secret: </span><span class="s2">'data'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">let retryAttempted = </span><span class="s3">false</span><span class="s1">;</span>
+        <span class="s1">const config = {</span>
+            <span class="s1">url: customURL,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: </span><span class="s3">new </span><span class="s1">URLSearchParams(data),</span>
+            <span class="s1">retry: </span><span class="s3">true</span><span class="s1">,</span>
+            <span class="s1">retryConfig: {</span>
+                <span class="s1">httpMethodsToRetry: [</span><span class="s2">'POST'</span><span class="s1">],</span>
+                <span class="s1">onRetryAttempt: err =&gt; {</span>
+                    <span class="s1">assert.deepStrictEqual(err.config.data, </span><span class="s3">new </span><span class="s1">URLSearchParams(data));</span>
+                    <span class="s1">retryAttempted = </span><span class="s3">true</span><span class="s1">;</span>
+                <span class="s1">},</span>
+            <span class="s1">},</span>
+        <span class="s1">};</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, data)</span>
+            <span class="s1">.query(() =&gt; </span><span class="s3">true</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">500</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, data)</span>
+            <span class="s1">.query(() =&gt; </span><span class="s3">true</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s3">try </span><span class="s1">{</span>
+            <span class="s1">await gaxios.request(config);</span>
+            <span class="s1">assert(retryAttempted);</span>
+        <span class="s1">}</span>
+        <span class="s3">finally </span><span class="s1">{</span>
+            <span class="s1">scope.done();</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should handle &quot;204 No Content&quot; responses when response type is &quot;json&quot;'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'content-type'</span><span class="s1">, </span><span class="s2">'application/json'</span><span class="s1">)</span>
+            <span class="s1">.put(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">204</span><span class="s1">, </span><span class="s2">''</span><span class="s1">, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'PUT'</span><span class="s1">,</span>
+            <span class="s1">data: {},</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/json'</span><span class="s1">,</span>
+                <span class="s1">accept: </span><span class="s2">'application/json'</span><span class="s1">,</span>
+            <span class="s1">}),</span>
+            <span class="s1">responseType: </span><span class="s2">'json'</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, </span><span class="s2">''</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should not throw an error in case of invalid json and &quot;json&quot; response type'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const invalidJsonText = </span><span class="s2">'{foo: 1}'</span><span class="s1">, scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'content-type'</span><span class="s1">, </span><span class="s2">'application/json'</span><span class="s1">)</span>
+            <span class="s1">.put(</span><span class="s2">'/'</span><span class="s1">)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, invalidJsonText, { </span><span class="s2">'Content-Type'</span><span class="s1">: </span><span class="s2">'application/json' </span><span class="s1">});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'PUT'</span><span class="s1">,</span>
+            <span class="s1">data: {},</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({</span>
+                <span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/json'</span><span class="s1">,</span>
+                <span class="s1">accept: </span><span class="s2">'application/json'</span><span class="s1">,</span>
+            <span class="s1">}),</span>
+            <span class="s1">responseType: </span><span class="s2">'json'</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, invalidJsonText);</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'🍂 defaults &amp; instances'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should allow creating a new instance'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const requestInstance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s1">assert.strictEqual(</span><span class="s3">typeof </span><span class="s1">requestInstance.request, </span><span class="s2">'function'</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow passing empty options'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const body = { hello: </span><span class="s2">'🌎' </span><span class="s1">};</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, body);</span>
+        <span class="s1">const gax = </span><span class="s3">new </span><span class="s1">Gaxios({ url });</span>
+        <span class="s1">const res = await gax.request();</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, body);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should allow buffer to be posted'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const pkg = fs.readFileSync(</span><span class="s2">'./package.json'</span><span class="s1">);</span>
+        <span class="s1">const pkgJson = JSON.parse(pkg.toString(</span><span class="s2">'utf8'</span><span class="s1">));</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'content-type'</span><span class="s1">, </span><span class="s2">'application/dicom'</span><span class="s1">)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, pkgJson)</span>
+            <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const res = await request({</span>
+            <span class="s1">url,</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+            <span class="s1">data: pkg,</span>
+            <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ </span><span class="s2">'content-type'</span><span class="s1">: </span><span class="s2">'application/dicom' </span><span class="s1">}),</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should not set a default content-type for buffers'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const jsonLike = </span><span class="s2">'{}'</span><span class="s1">;</span>
+        <span class="s1">const data = Buffer.from(jsonLike);</span>
+        <span class="s1">const scope = nock(url)</span>
+            <span class="s0">// no content type should be present</span>
+            <span class="s1">.matchHeader(</span><span class="s2">'content-type'</span><span class="s1">, v =&gt; v === undefined)</span>
+            <span class="s1">.post(</span><span class="s2">'/'</span><span class="s1">, jsonLike)</span>
+            <span class="s1">.reply(</span><span class="s4">204</span><span class="s1">);</span>
+        <span class="s1">const res = await request({ url, method: </span><span class="s2">'POST'</span><span class="s1">, data });</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.equal(res.status, </span><span class="s4">204</span><span class="s1">);</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'mtls'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">class GaxiosAssertAgentCache extends Gaxios {</span>
+            <span class="s1">getAgentCache() {</span>
+                <span class="s3">return this</span><span class="s1">.agentCache;</span>
+            <span class="s1">}</span>
+            <span class="s1">async _request(opts) {</span>
+                <span class="s1">assert(opts.agent);</span>
+                <span class="s3">return </span><span class="s1">super._request(opts);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s1">it(</span><span class="s2">'uses HTTPS agent if cert and key provided, on first request'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const key = fs.readFileSync(</span><span class="s2">'./test/fixtures/fake.key'</span><span class="s1">, </span><span class="s2">'utf8'</span><span class="s1">);</span>
+            <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+            <span class="s1">const inst = </span><span class="s3">new </span><span class="s1">GaxiosAssertAgentCache({</span>
+                <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ apple: </span><span class="s2">'juice' </span><span class="s1">}),</span>
+                <span class="s1">cert: fs.readFileSync(</span><span class="s2">'./test/fixtures/fake.cert'</span><span class="s1">, </span><span class="s2">'utf8'</span><span class="s1">),</span>
+                <span class="s1">key,</span>
+            <span class="s1">});</span>
+            <span class="s1">const res = await inst.request({</span>
+                <span class="s1">url,</span>
+                <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ figgy: </span><span class="s2">'pudding' </span><span class="s1">}),</span>
+            <span class="s1">});</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(res.config.headers.get(</span><span class="s2">'apple'</span><span class="s1">), </span><span class="s2">'juice'</span><span class="s1">);</span>
+            <span class="s1">assert.strictEqual(res.config.headers.get(</span><span class="s2">'figgy'</span><span class="s1">), </span><span class="s2">'pudding'</span><span class="s1">);</span>
+            <span class="s1">const agentCache = inst.getAgentCache();</span>
+            <span class="s1">assert(agentCache.get(key));</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'uses HTTPS agent if cert and key provided, on subsequent requests'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const key = fs.readFileSync(</span><span class="s2">'./test/fixtures/fake.key'</span><span class="s1">, </span><span class="s2">'utf8'</span><span class="s1">);</span>
+            <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">);</span>
+            <span class="s1">const inst = </span><span class="s3">new </span><span class="s1">GaxiosAssertAgentCache({</span>
+                <span class="s1">headers: </span><span class="s3">new </span><span class="s1">Headers({ apple: </span><span class="s2">'juice' </span><span class="s1">}),</span>
+                <span class="s1">cert: fs.readFileSync(</span><span class="s2">'./test/fixtures/fake.cert'</span><span class="s1">, </span><span class="s2">'utf8'</span><span class="s1">),</span>
+                <span class="s1">key,</span>
+            <span class="s1">});</span>
+            <span class="s1">await inst.request({ url, headers: </span><span class="s3">new </span><span class="s1">Headers({ figgy: </span><span class="s2">'pudding' </span><span class="s1">}) });</span>
+            <span class="s1">await inst.request({ url, headers: </span><span class="s3">new </span><span class="s1">Headers({ figgy: </span><span class="s2">'pudding' </span><span class="s1">}) });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">const agentCache = inst.getAgentCache();</span>
+            <span class="s1">assert(agentCache.get(key));</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'interceptors'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">describe(</span><span class="s2">'request'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">it(</span><span class="s2">'should invoke a request interceptor when one is provided'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url)</span>
+                <span class="s1">.matchHeader(</span><span class="s2">'hello'</span><span class="s1">, </span><span class="s2">'world'</span><span class="s1">)</span>
+                <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+                <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: config =&gt; {</span>
+                    <span class="s1">config.headers.set(</span><span class="s2">'hello'</span><span class="s1">, </span><span class="s2">'world'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(config);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should not invoke a request interceptor after it is removed'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).persist().get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const spyFunc = sinon.fake(() =&gt; Promise.resolve({</span>
+                <span class="s1">url,</span>
+                <span class="s1">validateStatus: () =&gt; {</span>
+                    <span class="s3">return true</span><span class="s1">;</span>
+                <span class="s1">},</span>
+            <span class="s1">}));</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">const interceptor = { resolved: spyFunc };</span>
+            <span class="s1">instance.interceptors.request.add(interceptor);</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">instance.interceptors.request.</span><span class="s3">delete</span><span class="s1">(interceptor);</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(spyFunc.callCount, </span><span class="s4">1</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should invoke multiple request interceptors in the order they were added'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url)</span>
+                <span class="s1">.matchHeader(</span><span class="s2">'foo'</span><span class="s1">, </span><span class="s2">'bar'</span><span class="s1">)</span>
+                <span class="s1">.matchHeader(</span><span class="s2">'bar'</span><span class="s1">, </span><span class="s2">'baz'</span><span class="s1">)</span>
+                <span class="s1">.matchHeader(</span><span class="s2">'baz'</span><span class="s1">, </span><span class="s2">'buzz'</span><span class="s1">)</span>
+                <span class="s1">.get(</span><span class="s2">'/'</span><span class="s1">)</span>
+                <span class="s1">.reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: config =&gt; {</span>
+                    <span class="s1">config.headers.set(</span><span class="s2">'foo'</span><span class="s1">, </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(config);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: config =&gt; {</span>
+                    <span class="s1">assert.strictEqual(config.headers.get(</span><span class="s2">'foo'</span><span class="s1">), </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s1">config.headers.set(</span><span class="s2">'bar'</span><span class="s1">, </span><span class="s2">'baz'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(config);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: config =&gt; {</span>
+                    <span class="s1">assert.strictEqual(config.headers.get(</span><span class="s2">'foo'</span><span class="s1">), </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s1">assert.strictEqual(config.headers.get(</span><span class="s2">'bar'</span><span class="s1">), </span><span class="s2">'baz'</span><span class="s1">);</span>
+                    <span class="s1">config.headers.set(</span><span class="s2">'baz'</span><span class="s1">, </span><span class="s2">'buzz'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(config);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should not invoke a any request interceptors after they are removed'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).persist().get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const spyFunc = sinon.fake(() =&gt; Promise.resolve({</span>
+                <span class="s1">url,</span>
+                <span class="s1">validateStatus: () =&gt; {</span>
+                    <span class="s3">return true</span><span class="s1">;</span>
+                <span class="s1">},</span>
+            <span class="s1">}));</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">instance.interceptors.request.clear();</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(spyFunc.callCount, </span><span class="s4">3</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should invoke the rejected function when a previous request interceptor rejects'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: () =&gt; {</span>
+                    <span class="s3">throw new </span><span class="s1">Error(</span><span class="s2">'Something went wrong'</span><span class="s1">);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.request.add({</span>
+                <span class="s1">resolved: config =&gt; {</span>
+                    <span class="s1">config.headers.set(</span><span class="s2">'hello'</span><span class="s1">, </span><span class="s2">'world'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(config);</span>
+                <span class="s1">},</span>
+                <span class="s1">rejected: err =&gt; {</span>
+                    <span class="s1">assert.strictEqual(err.message, </span><span class="s2">'Something went wrong'</span><span class="s1">);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s0">// Because the options wind up being invalid the call will reject with a URL problem.</span>
+            <span class="s1">await assert.rejects(instance.request({ url }));</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+    <span class="s1">describe(</span><span class="s2">'response'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">it(</span><span class="s2">'should invoke a response interceptor when one is provided'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved(response) {</span>
+                    <span class="s1">response.headers.set(</span><span class="s2">'hello'</span><span class="s1">, </span><span class="s2">'world'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(response);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">const resp = await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(resp.headers.get(</span><span class="s2">'hello'</span><span class="s1">), </span><span class="s2">'world'</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should not invoke a response interceptor after it is removed'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).persist().get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const spyFunc = sinon.fake(() =&gt; Promise.resolve({</span>
+                <span class="s1">url,</span>
+                <span class="s1">validateStatus: () =&gt; {</span>
+                    <span class="s3">return true</span><span class="s1">;</span>
+                <span class="s1">},</span>
+            <span class="s1">}));</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">const interceptor = { resolved: spyFunc };</span>
+            <span class="s1">instance.interceptors.response.add(interceptor);</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">instance.interceptors.response.</span><span class="s3">delete</span><span class="s1">(interceptor);</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(spyFunc.callCount, </span><span class="s4">1</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should invoke multiple response interceptors in the order they were added'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: response =&gt; {</span>
+                    <span class="s1">response.headers.set(</span><span class="s2">'foo'</span><span class="s1">, </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(response);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: response =&gt; {</span>
+                    <span class="s1">assert.strictEqual(response.headers.get(</span><span class="s2">'foo'</span><span class="s1">), </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s1">response.headers.set(</span><span class="s2">'bar'</span><span class="s1">, </span><span class="s2">'baz'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(response);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: response =&gt; {</span>
+                    <span class="s1">assert.strictEqual(response.headers.get(</span><span class="s2">'foo'</span><span class="s1">), </span><span class="s2">'bar'</span><span class="s1">);</span>
+                    <span class="s1">assert.strictEqual(response.headers.get(</span><span class="s2">'bar'</span><span class="s1">), </span><span class="s2">'baz'</span><span class="s1">);</span>
+                    <span class="s1">response.headers.set(</span><span class="s2">'baz'</span><span class="s1">, </span><span class="s2">'buzz'</span><span class="s1">);</span>
+                    <span class="s3">return </span><span class="s1">Promise.resolve(response);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">const resp = await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(resp.headers.get(</span><span class="s2">'foo'</span><span class="s1">), </span><span class="s2">'bar'</span><span class="s1">);</span>
+            <span class="s1">assert.strictEqual(resp.headers.get(</span><span class="s2">'bar'</span><span class="s1">), </span><span class="s2">'baz'</span><span class="s1">);</span>
+            <span class="s1">assert.strictEqual(resp.headers.get(</span><span class="s2">'baz'</span><span class="s1">), </span><span class="s2">'buzz'</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should not invoke a any response interceptors after they are removed'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).persist().get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+            <span class="s1">const spyFunc = sinon.fake(() =&gt; Promise.resolve({</span>
+                <span class="s1">url,</span>
+                <span class="s1">validateStatus: () =&gt; {</span>
+                    <span class="s3">return true</span><span class="s1">;</span>
+                <span class="s1">},</span>
+            <span class="s1">}));</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">resolved: spyFunc,</span>
+            <span class="s1">});</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">instance.interceptors.response.clear();</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+            <span class="s1">assert.strictEqual(spyFunc.callCount, </span><span class="s4">3</span><span class="s1">);</span>
+        <span class="s1">});</span>
+        <span class="s1">it(</span><span class="s2">'should invoke the rejected function when a request has an error'</span><span class="s1">, async () =&gt; {</span>
+            <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">404</span><span class="s1">, {});</span>
+            <span class="s1">const instance = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+            <span class="s1">instance.interceptors.response.add({</span>
+                <span class="s1">rejected: err =&gt; {</span>
+                    <span class="s1">assert.strictEqual(err.status, </span><span class="s4">404</span><span class="s1">);</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+            <span class="s1">await instance.request({ url });</span>
+            <span class="s1">scope.done();</span>
+        <span class="s1">});</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s0">/** 
+ * Fetch-compliant API testing. 
+ * 
+ * Documentation: 
+ * - https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API 
+ * - https://nodejs.org/docs/latest/api/globals.html#fetch 
+ */</span>
+<span class="s1">describe(</span><span class="s2">'fetch-compatible API'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should accept a `string`'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s1">const res = await gaxios.fetch(url);</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert(</span><span class="s3">typeof </span><span class="s1">url === </span><span class="s2">'string'</span><span class="s1">);</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should accept a `URL`'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).get(</span><span class="s2">'/'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s1">const res = await gaxios.fetch(</span><span class="s3">new </span><span class="s1">URL(url));</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should accept an input with initialization'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).post(</span><span class="s2">'/'</span><span class="s1">, </span><span class="s2">'abc'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s1">const res = await gaxios.fetch(url, {</span>
+            <span class="s1">body: Buffer.from(</span><span class="s2">'abc'</span><span class="s1">),</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+        <span class="s1">});</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should accept `GaxiosOptions`'</span><span class="s1">, async () =&gt; {</span>
+        <span class="s1">const scope = nock(url).post(</span><span class="s2">'/'</span><span class="s1">, </span><span class="s2">'abc'</span><span class="s1">).reply(</span><span class="s4">200</span><span class="s1">, {});</span>
+        <span class="s1">const gaxios = </span><span class="s3">new </span><span class="s1">Gaxios();</span>
+        <span class="s1">const options = {</span>
+            <span class="s1">body: Buffer.from(</span><span class="s2">'abc'</span><span class="s1">),</span>
+            <span class="s1">method: </span><span class="s2">'POST'</span><span class="s1">,</span>
+        <span class="s1">};</span>
+        <span class="s1">const res = await gaxios.fetch(url, options);</span>
+        <span class="s1">scope.done();</span>
+        <span class="s1">assert.deepStrictEqual(res.data, {});</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s1">describe(</span><span class="s2">'merge headers'</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">it(</span><span class="s2">'should merge Headers'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const base = { a: </span><span class="s2">'a' </span><span class="s1">};</span>
+        <span class="s1">const append = { b: </span><span class="s2">'b' </span><span class="s1">};</span>
+        <span class="s1">const expected = </span><span class="s3">new </span><span class="s1">Headers({ ...base, ...append });</span>
+        <span class="s1">const matrixBase = [{ ...base }, Object.entries(base), </span><span class="s3">new </span><span class="s1">Headers(base)];</span>
+        <span class="s1">const matrixAppend = [</span>
+            <span class="s1">{ ...append },</span>
+            <span class="s1">Object.entries(append),</span>
+            <span class="s3">new </span><span class="s1">Headers(append),</span>
+        <span class="s1">];</span>
+        <span class="s3">for </span><span class="s1">(const base of matrixBase) {</span>
+            <span class="s3">for </span><span class="s1">(const append of matrixAppend) {</span>
+                <span class="s1">const headers = Gaxios.mergeHeaders(base, append);</span>
+                <span class="s1">assert.deepStrictEqual(headers, expected);</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should merge multiple Headers'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const base = { a: </span><span class="s2">'a' </span><span class="s1">};</span>
+        <span class="s1">const append = { b: </span><span class="s2">'b' </span><span class="s1">};</span>
+        <span class="s1">const appendMore = { c: </span><span class="s2">'c' </span><span class="s1">};</span>
+        <span class="s1">const expected = </span><span class="s3">new </span><span class="s1">Headers({ ...base, ...append, ...appendMore });</span>
+        <span class="s1">const headers = Gaxios.mergeHeaders(base, append, appendMore);</span>
+        <span class="s1">assert.deepStrictEqual(headers, expected);</span>
+    <span class="s1">});</span>
+    <span class="s1">it(</span><span class="s2">'should merge Set-Cookie Headers'</span><span class="s1">, () =&gt; {</span>
+        <span class="s1">const base = { </span><span class="s2">'set-cookie'</span><span class="s1">: </span><span class="s2">'a=a' </span><span class="s1">};</span>
+        <span class="s1">const append = { </span><span class="s2">'set-cookie'</span><span class="s1">: </span><span class="s2">'b=b' </span><span class="s1">};</span>
+        <span class="s1">const expected = </span><span class="s3">new </span><span class="s1">Headers([</span>
+            <span class="s1">[</span><span class="s2">'set-cookie'</span><span class="s1">, </span><span class="s2">'a=a'</span><span class="s1">],</span>
+            <span class="s1">[</span><span class="s2">'set-cookie'</span><span class="s1">, </span><span class="s2">'b=b'</span><span class="s1">],</span>
+        <span class="s1">]);</span>
+        <span class="s1">const headers = Gaxios.mergeHeaders(base, append);</span>
+        <span class="s1">assert.deepStrictEqual(headers.getSetCookie(), expected.getSetCookie());</span>
+    <span class="s1">});</span>
+<span class="s1">});</span>
+<span class="s0">//# sourceMappingURL=test.getch.js.map</span></pre>
+</body>
+</html>

@@ -1,0 +1,526 @@
+<html>
+<head>
+<title>trace-mapping.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8; font-style: italic;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+trace-mapping.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ encode, decode } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@jridgewell/sourcemap-codec</span><span class="s2">';</span>
+
+<span class="s0">import </span><span class="s2">resolver </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./resolve</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">maybeSort </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sort</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">buildBySources </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./by-source</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">memoizedState,</span>
+  <span class="s2">memoizedBinarySearch,</span>
+  <span class="s2">upperBound,</span>
+  <span class="s2">lowerBound,</span>
+  <span class="s2">found </span><span class="s0">as </span><span class="s2">bsFound,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./binary-search</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">COLUMN,</span>
+  <span class="s2">SOURCES_INDEX,</span>
+  <span class="s2">SOURCE_LINE,</span>
+  <span class="s2">SOURCE_COLUMN,</span>
+  <span class="s2">NAMES_INDEX,</span>
+  <span class="s2">REV_GENERATED_LINE,</span>
+  <span class="s2">REV_GENERATED_COLUMN,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sourcemap-segment</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ parse } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+
+<span class="s0">import type </span><span class="s2">{ SourceMapSegment, ReverseSegment } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sourcemap-segment</span><span class="s2">';</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">SourceMapV3,</span>
+  <span class="s2">DecodedSourceMap,</span>
+  <span class="s2">EncodedSourceMap,</span>
+  <span class="s2">InvalidOriginalMapping,</span>
+  <span class="s2">OriginalMapping,</span>
+  <span class="s2">InvalidGeneratedMapping,</span>
+  <span class="s2">GeneratedMapping,</span>
+  <span class="s2">SourceMapInput,</span>
+  <span class="s2">Needle,</span>
+  <span class="s2">SourceNeedle,</span>
+  <span class="s2">SourceMap,</span>
+  <span class="s2">EachMapping,</span>
+  <span class="s2">Bias,</span>
+  <span class="s2">XInput,</span>
+  <span class="s2">SectionedSourceMap,</span>
+  <span class="s2">Ro,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+<span class="s0">import type </span><span class="s2">{ Source } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./by-source</span><span class="s2">';</span>
+<span class="s0">import type </span><span class="s2">{ MemoState } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./binary-search</span><span class="s2">';</span>
+
+<span class="s0">export type </span><span class="s2">{ SourceMapSegment } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sourcemap-segment</span><span class="s2">';</span>
+<span class="s0">export type </span><span class="s2">{</span>
+  <span class="s2">SourceMap,</span>
+  <span class="s2">DecodedSourceMap,</span>
+  <span class="s2">EncodedSourceMap,</span>
+  <span class="s2">Section,</span>
+  <span class="s2">SectionedSourceMap,</span>
+  <span class="s2">SourceMapV3,</span>
+  <span class="s2">Bias,</span>
+  <span class="s2">EachMapping,</span>
+  <span class="s2">GeneratedMapping,</span>
+  <span class="s2">InvalidGeneratedMapping,</span>
+  <span class="s2">InvalidOriginalMapping,</span>
+  <span class="s2">Needle,</span>
+  <span class="s2">OriginalMapping,</span>
+  <span class="s2">OriginalMapping </span><span class="s0">as </span><span class="s2">Mapping,</span>
+  <span class="s2">SectionedSourceMapInput,</span>
+  <span class="s2">SourceMapInput,</span>
+  <span class="s2">SourceNeedle,</span>
+  <span class="s2">XInput,</span>
+  <span class="s2">EncodedSourceMapXInput,</span>
+  <span class="s2">DecodedSourceMapXInput,</span>
+  <span class="s2">SectionedSourceMapXInput,</span>
+  <span class="s2">SectionXInput,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+
+<span class="s0">interface </span><span class="s2">PublicMap {</span>
+  <span class="s2">_encoded: TraceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">_encoded</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s2">_decoded: TraceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">_decoded</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s2">_decodedMemo: TraceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">_decodedMemo</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s2">_bySources: TraceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">_bySources</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s2">_bySourceMemos: TraceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">_bySourceMemos</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">LINE_GTR_ZERO = '</span><span class="s3">`line` must be greater than 0 (lines start at line 1)</span><span class="s2">';</span>
+<span class="s0">const </span><span class="s2">COL_GTR_EQ_ZERO = '</span><span class="s3">`column` must be greater than or equal to 0 (columns start at column 0)</span><span class="s2">';</span>
+
+<span class="s0">export const </span><span class="s2">LEAST_UPPER_BOUND = -</span><span class="s4">1</span><span class="s2">;</span>
+<span class="s0">export const </span><span class="s2">GREATEST_LOWER_BOUND = </span><span class="s4">1</span><span class="s2">;</span>
+
+<span class="s0">export </span><span class="s2">{ FlattenMap, FlattenMap </span><span class="s0">as </span><span class="s2">AnyMap } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./flatten-map</span><span class="s2">';</span>
+
+<span class="s0">export class </span><span class="s2">TraceMap </span><span class="s0">implements </span><span class="s2">SourceMap {</span>
+  <span class="s0">declare </span><span class="s2">version: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">version</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">file: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">file</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">names: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">names</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">sourceRoot: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">sourceRoot</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">sources: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">sources</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">sourcesContent: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">sourcesContent</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">declare </span><span class="s2">ignoreList: SourceMapV3</span><span class="s1">[</span><span class="s2">'</span><span class="s3">ignoreList</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+
+  <span class="s0">declare </span><span class="s2">resolvedSources: string</span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">declare private </span><span class="s2">_encoded: string | undefined;</span>
+
+  <span class="s0">declare private </span><span class="s2">_decoded: SourceMapSegment</span><span class="s1">[][] </span><span class="s2">| undefined;</span>
+  <span class="s0">declare private </span><span class="s2">_decodedMemo: MemoState;</span>
+
+  <span class="s0">declare private </span><span class="s2">_bySources: Source</span><span class="s1">[] </span><span class="s2">| undefined;</span>
+  <span class="s0">declare private </span><span class="s2">_bySourceMemos: MemoState</span><span class="s1">[] </span><span class="s2">| undefined;</span>
+
+  <span class="s0">constructor</span><span class="s2">(map: Ro&lt;SourceMapInput&gt;, mapUrl?: string | null) {</span>
+    <span class="s0">const </span><span class="s2">isString = typeof map === '</span><span class="s3">string</span><span class="s2">';</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!isString &amp;&amp; </span><span class="s1">(</span><span class="s2">map </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">{ _decodedMemo: any }</span><span class="s1">)</span><span class="s2">._decodedMemo</span><span class="s1">) </span><span class="s0">return </span><span class="s2">map </span><span class="s0">as </span><span class="s2">TraceMap;</span>
+
+    <span class="s0">const </span><span class="s2">parsed = </span><span class="s5">parse</span><span class="s1">(</span><span class="s2">map </span><span class="s0">as </span><span class="s2">Exclude&lt;SourceMapInput, TraceMap&gt;</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s2">{ version, file, names, sourceRoot, sources, sourcesContent } = parsed;</span>
+    <span class="s2">this.version = version;</span>
+    <span class="s2">this.file = file;</span>
+    <span class="s2">this.names = names || </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s2">this.sourceRoot = sourceRoot;</span>
+    <span class="s2">this.sources = sources;</span>
+    <span class="s2">this.sourcesContent = sourcesContent;</span>
+    <span class="s2">this.ignoreList = parsed.ignoreList || </span><span class="s1">(</span><span class="s2">parsed </span><span class="s0">as </span><span class="s2">XInput</span><span class="s1">)</span><span class="s2">.x_google_ignoreList || </span><span class="s6">undefined</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s2">resolve = </span><span class="s5">resolver</span><span class="s1">(</span><span class="s2">mapUrl, sourceRoot</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">this.resolvedSources = sources.</span><span class="s5">map</span><span class="s1">(</span><span class="s2">resolve</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s2">{ mappings } = parsed;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof mappings === '</span><span class="s3">string</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this._encoded = mappings;</span>
+      <span class="s2">this._decoded = </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">mappings</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s2">this._encoded = </span><span class="s6">undefined</span><span class="s2">;</span>
+      <span class="s2">this._decoded = </span><span class="s5">maybeSort</span><span class="s1">(</span><span class="s2">mappings, isString</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">((</span><span class="s2">parsed </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">SectionedSourceMap</span><span class="s1">)</span><span class="s2">.sections</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">TraceMap passed sectioned source map, please use FlattenMap export instead</span><span class="s2">`</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">`</span><span class="s3">invalid source map: </span><span class="s2">${JSON.</span><span class="s5">stringify</span><span class="s1">(</span><span class="s2">parsed</span><span class="s1">)</span><span class="s2">}`</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s2">this._decodedMemo = </span><span class="s5">memoizedState</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">this._bySources = </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">this._bySourceMemos = </span><span class="s6">undefined</span><span class="s2">;</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Typescript doesn't allow friend access to private fields, so this just casts the map into a type 
+ * with public access modifiers. 
+ </span><span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">cast</span><span class="s2">(map: unknown): PublicMap {</span>
+  <span class="s0">return </span><span class="s2">map </span><span class="s0">as </span><span class="s2">any;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Returns the encoded (VLQ string) form of the SourceMap's mappings field. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">encodedMappings</span><span class="s2">(map: TraceMap): EncodedSourceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">mappings</span><span class="s2">'</span><span class="s1">] </span><span class="s2">{</span>
+  <span class="s0">return </span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._encoded ??= </span><span class="s5">encode</span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._decoded!</span><span class="s1">))</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Returns the decoded (array of lines of segments) form of the SourceMap's mappings field. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">decodedMappings</span><span class="s2">(map: TraceMap): Readonly&lt;DecodedSourceMap</span><span class="s1">[</span><span class="s2">'</span><span class="s3">mappings</span><span class="s2">'</span><span class="s1">]</span><span class="s2">&gt; {</span>
+  <span class="s0">return </span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._decoded ||= </span><span class="s5">decode</span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._encoded!</span><span class="s1">))</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* A low-level API to find the segment associated with a generated line/column (think, from a 
+ * stack trace). Line and column here are 0-based, unlike `originalPositionFor`. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">traceSegment</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+<span class="s2">): Readonly&lt;SourceMapSegment&gt; | null {</span>
+  <span class="s0">const </span><span class="s2">decoded = </span><span class="s5">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s2">// </span><span class="s7">It's common for parent source maps to have pointers to lines that have no</span>
+  <span class="s2">// </span><span class="s7">mapping (like a &quot;//# sourceMappingURL=&quot;) at the end of the child file.</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">line &gt;= decoded.</span><span class="s1">length) </span><span class="s0">return </span><span class="s6">null</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">segments = decoded</span><span class="s1">[</span><span class="s2">line</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">index = </span><span class="s5">traceSegmentInternal</span><span class="s1">(</span>
+    <span class="s2">segments,</span>
+    <span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._decodedMemo,</span>
+    <span class="s2">line,</span>
+    <span class="s2">column,</span>
+    <span class="s2">GREATEST_LOWER_BOUND,</span>
+  <span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">return </span><span class="s2">index === -</span><span class="s4">1 </span><span class="s2">? </span><span class="s6">null </span><span class="s2">: segments</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* A higher-level API to find the source/line/column associated with a generated line/column 
+ * (think, from a stack trace). Line is 1-based, but column is 0-based, due to legacy behavior in 
+ * `source-map` library. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">originalPositionFor</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">needle: Needle,</span>
+<span class="s2">): OriginalMapping | InvalidOriginalMapping {</span>
+  <span class="s0">let </span><span class="s2">{ line, column, bias } = needle;</span>
+  <span class="s2">line--;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">line &lt; </span><span class="s4">0</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">LINE_GTR_ZERO</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">column &lt; </span><span class="s4">0</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">COL_GTR_EQ_ZERO</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">decoded = </span><span class="s5">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s2">// </span><span class="s7">It's common for parent source maps to have pointers to lines that have no</span>
+  <span class="s2">// </span><span class="s7">mapping (like a &quot;//# sourceMappingURL=&quot;) at the end of the child file.</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">line &gt;= decoded.</span><span class="s1">length) </span><span class="s0">return </span><span class="s5">OMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">segments = decoded</span><span class="s1">[</span><span class="s2">line</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">index = </span><span class="s5">traceSegmentInternal</span><span class="s1">(</span>
+    <span class="s2">segments,</span>
+    <span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._decodedMemo,</span>
+    <span class="s2">line,</span>
+    <span class="s2">column,</span>
+    <span class="s2">bias || GREATEST_LOWER_BOUND,</span>
+  <span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">index === -</span><span class="s4">1</span><span class="s1">) </span><span class="s0">return </span><span class="s5">OMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">segment = segments</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">segment.</span><span class="s1">length </span><span class="s2">=== </span><span class="s4">1</span><span class="s1">) </span><span class="s0">return </span><span class="s5">OMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">{ names, resolvedSources } = map;</span>
+  <span class="s0">return </span><span class="s5">OMapping</span><span class="s1">(</span>
+    <span class="s2">resolvedSources</span><span class="s1">[</span><span class="s2">segment</span><span class="s1">[</span><span class="s2">SOURCES_INDEX</span><span class="s1">]]</span><span class="s2">,</span>
+    <span class="s2">segment</span><span class="s1">[</span><span class="s2">SOURCE_LINE</span><span class="s1">] </span><span class="s2">+ </span><span class="s4">1</span><span class="s2">,</span>
+    <span class="s2">segment</span><span class="s1">[</span><span class="s2">SOURCE_COLUMN</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">segment.</span><span class="s1">length </span><span class="s2">=== </span><span class="s4">5 </span><span class="s2">? names</span><span class="s1">[</span><span class="s2">segment</span><span class="s1">[</span><span class="s2">NAMES_INDEX</span><span class="s1">]] </span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+  <span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Finds the generated line/column position of the provided source/line/column source position. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">generatedPositionFor</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">needle: SourceNeedle,</span>
+<span class="s2">): GeneratedMapping | InvalidGeneratedMapping {</span>
+  <span class="s0">const </span><span class="s2">{ source, line, column, bias } = needle;</span>
+  <span class="s0">return </span><span class="s5">generatedPosition</span><span class="s1">(</span><span class="s2">map, source, line, column, bias || GREATEST_LOWER_BOUND, </span><span class="s6">false</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Finds all generated line/column positions of the provided source/line/column source position. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">allGeneratedPositionsFor</span><span class="s2">(map: TraceMap, needle: SourceNeedle): GeneratedMapping</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">const </span><span class="s2">{ source, line, column, bias } = needle;</span>
+  <span class="s2">// </span><span class="s7">SourceMapConsumer uses LEAST_UPPER_BOUND for some reason, so we follow suit.</span>
+  <span class="s0">return </span><span class="s5">generatedPosition</span><span class="s1">(</span><span class="s2">map, source, line, column, bias || LEAST_UPPER_BOUND, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Iterates each mapping in generated position order. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">eachMapping</span><span class="s2">(map: TraceMap, </span><span class="s5">cb</span><span class="s2">: (mapping: EachMapping) </span><span class="s0">=&gt; </span><span class="s2">void): void {</span>
+  <span class="s0">const </span><span class="s2">decoded = </span><span class="s5">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">{ names, resolvedSources } = map;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s4">0</span><span class="s2">; i &lt; decoded.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">line = decoded</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">j = </span><span class="s4">0</span><span class="s2">; j &lt; line.</span><span class="s1">length</span><span class="s2">; j++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">seg = line</span><span class="s1">[</span><span class="s2">j</span><span class="s1">]</span><span class="s2">;</span>
+
+      <span class="s0">const </span><span class="s2">generatedLine = i + </span><span class="s4">1</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">generatedColumn = seg</span><span class="s1">[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">source = </span><span class="s6">null</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">originalLine = </span><span class="s6">null</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">originalColumn = </span><span class="s6">null</span><span class="s2">;</span>
+      <span class="s0">let </span><span class="s2">name = </span><span class="s6">null</span><span class="s2">;</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">seg.</span><span class="s1">length </span><span class="s2">!== </span><span class="s4">1</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">source = resolvedSources</span><span class="s1">[</span><span class="s2">seg</span><span class="s1">[</span><span class="s4">1</span><span class="s1">]]</span><span class="s2">;</span>
+        <span class="s2">originalLine = seg</span><span class="s1">[</span><span class="s4">2</span><span class="s1">] </span><span class="s2">+ </span><span class="s4">1</span><span class="s2">;</span>
+        <span class="s2">originalColumn = seg</span><span class="s1">[</span><span class="s4">3</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">seg.</span><span class="s1">length </span><span class="s2">=== </span><span class="s4">5</span><span class="s1">) </span><span class="s2">name = names</span><span class="s1">[</span><span class="s2">seg</span><span class="s1">[</span><span class="s4">4</span><span class="s1">]]</span><span class="s2">;</span>
+
+      <span class="s5">cb</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">generatedLine,</span>
+        <span class="s2">generatedColumn,</span>
+        <span class="s2">source,</span>
+        <span class="s2">originalLine,</span>
+        <span class="s2">originalColumn,</span>
+        <span class="s2">name,</span>
+      <span class="s2">} </span><span class="s0">as </span><span class="s2">EachMapping</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">sourceIndex</span><span class="s2">(map: TraceMap, source: string): number {</span>
+  <span class="s0">const </span><span class="s2">{ sources, resolvedSources } = map;</span>
+  <span class="s0">let </span><span class="s2">index = sources.</span><span class="s5">indexOf</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">index === -</span><span class="s4">1</span><span class="s1">) </span><span class="s2">index = resolvedSources.</span><span class="s5">indexOf</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">index;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Retrieves the source content for a particular source, if its found. Returns null if not. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">sourceContentFor</span><span class="s2">(map: TraceMap, source: string): string | null {</span>
+  <span class="s0">const </span><span class="s2">{ sourcesContent } = map;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">sourcesContent == </span><span class="s6">null</span><span class="s1">) </span><span class="s0">return </span><span class="s6">null</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">index = </span><span class="s5">sourceIndex</span><span class="s1">(</span><span class="s2">map, source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">index === -</span><span class="s4">1 </span><span class="s2">? </span><span class="s6">null </span><span class="s2">: sourcesContent</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Determines if the source is marked to ignore by the source map. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">isIgnored</span><span class="s2">(map: TraceMap, source: string): boolean {</span>
+  <span class="s0">const </span><span class="s2">{ ignoreList } = map;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">ignoreList == </span><span class="s6">null</span><span class="s1">) </span><span class="s0">return </span><span class="s6">false</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">index = </span><span class="s5">sourceIndex</span><span class="s1">(</span><span class="s2">map, source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">index === -</span><span class="s4">1 </span><span class="s2">? </span><span class="s6">false </span><span class="s2">: ignoreList.</span><span class="s5">includes</span><span class="s1">(</span><span class="s2">index</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* A helper that skips sorting of the input map's mappings array, which can be expensive for larger 
+ * maps. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">presortedDecodedMap</span><span class="s2">(map: DecodedSourceMap, mapUrl?: string): TraceMap {</span>
+  <span class="s0">const </span><span class="s2">tracer = new </span><span class="s5">TraceMap</span><span class="s1">(</span><span class="s5">clone</span><span class="s1">(</span><span class="s2">map, </span><span class="s1">[])</span><span class="s2">, mapUrl</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s5">cast</span><span class="s1">(</span><span class="s2">tracer</span><span class="s1">)</span><span class="s2">._decoded = map.mappings;</span>
+  <span class="s0">return </span><span class="s2">tracer;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Returns a sourcemap object (with decoded mappings) suitable for passing to a library that expects 
+ * a sourcemap, or to JSON.stringify. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">decodedMap</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+<span class="s2">): Omit&lt;DecodedSourceMap, '</span><span class="s3">mappings</span><span class="s2">'&gt; &amp; { mappings: </span><span class="s0">readonly </span><span class="s2">SourceMapSegment</span><span class="s1">[][] </span><span class="s2">} {</span>
+  <span class="s0">return </span><span class="s5">clone</span><span class="s1">(</span><span class="s2">map, </span><span class="s5">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">))</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s2">/**</span>
+ <span class="s7">* Returns a sourcemap object (with encoded mappings) suitable for passing to a library that expects 
+ * a sourcemap, or to JSON.stringify. 
+ </span><span class="s2">*/</span>
+<span class="s0">export function </span><span class="s5">encodedMap</span><span class="s2">(map: TraceMap): EncodedSourceMap {</span>
+  <span class="s0">return </span><span class="s5">clone</span><span class="s1">(</span><span class="s2">map, </span><span class="s5">encodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">))</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">clone</span><span class="s2">&lt;T </span><span class="s0">extends </span><span class="s2">string | </span><span class="s0">readonly </span><span class="s2">SourceMapSegment</span><span class="s1">[][]</span><span class="s2">&gt;(</span>
+  <span class="s2">map: TraceMap | DecodedSourceMap,</span>
+  <span class="s2">mappings: T,</span>
+<span class="s2">): T </span><span class="s0">extends </span><span class="s2">string ? EncodedSourceMap : DecodedSourceMap {</span>
+  <span class="s0">return </span><span class="s2">{</span>
+    <span class="s1">version</span><span class="s2">: map.version,</span>
+    <span class="s1">file</span><span class="s2">: map.file,</span>
+    <span class="s1">names</span><span class="s2">: map.names,</span>
+    <span class="s1">sourceRoot</span><span class="s2">: map.sourceRoot,</span>
+    <span class="s1">sources</span><span class="s2">: map.sources,</span>
+    <span class="s1">sourcesContent</span><span class="s2">: map.sourcesContent,</span>
+    <span class="s2">mappings,</span>
+    <span class="s1">ignoreList</span><span class="s2">: map.ignoreList || </span><span class="s1">(</span><span class="s2">map </span><span class="s0">as </span><span class="s2">XInput</span><span class="s1">)</span><span class="s2">.x_google_ignoreList,</span>
+  <span class="s2">} </span><span class="s0">as </span><span class="s2">any;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">OMapping</span><span class="s2">(source: null, line: null, column: null, name: null): InvalidOriginalMapping;</span>
+<span class="s0">function </span><span class="s5">OMapping</span><span class="s2">(</span>
+  <span class="s2">source: string,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">name: string | null,</span>
+<span class="s2">): OriginalMapping;</span>
+<span class="s0">function </span><span class="s5">OMapping</span><span class="s2">(</span>
+  <span class="s2">source: string | null,</span>
+  <span class="s2">line: number | null,</span>
+  <span class="s2">column: number | null,</span>
+  <span class="s2">name: string | null,</span>
+<span class="s2">): OriginalMapping | InvalidOriginalMapping {</span>
+  <span class="s0">return </span><span class="s2">{ source, line, column, name } </span><span class="s0">as </span><span class="s2">any;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">GMapping</span><span class="s2">(line: null, column: null): InvalidGeneratedMapping;</span>
+<span class="s0">function </span><span class="s5">GMapping</span><span class="s2">(line: number, column: number): GeneratedMapping;</span>
+<span class="s0">function </span><span class="s5">GMapping</span><span class="s2">(</span>
+  <span class="s2">line: number | null,</span>
+  <span class="s2">column: number | null,</span>
+<span class="s2">): GeneratedMapping | InvalidGeneratedMapping {</span>
+  <span class="s0">return </span><span class="s2">{ line, column } </span><span class="s0">as </span><span class="s2">any;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span>
+  <span class="s2">segments: SourceMapSegment</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">memo: MemoState,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+<span class="s2">): number;</span>
+<span class="s0">function </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span>
+  <span class="s2">segments: ReverseSegment</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">memo: MemoState,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+<span class="s2">): number;</span>
+<span class="s0">function </span><span class="s5">traceSegmentInternal</span><span class="s2">(</span>
+  <span class="s2">segments: SourceMapSegment</span><span class="s1">[] </span><span class="s2">| ReverseSegment</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">memo: MemoState,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+<span class="s2">): number {</span>
+  <span class="s0">let </span><span class="s2">index = </span><span class="s5">memoizedBinarySearch</span><span class="s1">(</span><span class="s2">segments, column, memo, line</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">bsFound</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s2">index = </span><span class="s1">(</span><span class="s2">bias === LEAST_UPPER_BOUND ? upperBound : lowerBound</span><span class="s1">)(</span><span class="s2">segments, column, index</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">bias === LEAST_UPPER_BOUND</span><span class="s1">) </span><span class="s2">index++;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">index === -</span><span class="s4">1 </span><span class="s2">|| index === segments.</span><span class="s1">length) </span><span class="s0">return </span><span class="s2">-</span><span class="s4">1</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">index;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">sliceGeneratedPositions</span><span class="s2">(</span>
+  <span class="s2">segments: ReverseSegment</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">memo: MemoState,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+<span class="s2">): GeneratedMapping</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">let </span><span class="s2">min = </span><span class="s5">traceSegmentInternal</span><span class="s1">(</span><span class="s2">segments, memo, line, column, GREATEST_LOWER_BOUND</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s2">// </span><span class="s7">We ignored the bias when tracing the segment so that we're guarnateed to find the first (in</span>
+  <span class="s2">// </span><span class="s7">insertion order) segment that matched. Even if we did respect the bias when tracing, we would</span>
+  <span class="s2">// </span><span class="s7">still need to call `lowerBound()` to find the first segment, which is slower than just looking</span>
+  <span class="s2">// </span><span class="s7">for the GREATEST_LOWER_BOUND to begin with. The only difference that matters for us is when the</span>
+  <span class="s2">// </span><span class="s7">binary search didn't match, in which case GREATEST_LOWER_BOUND just needs to increment to</span>
+  <span class="s2">// </span><span class="s7">match LEAST_UPPER_BOUND.</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">!bsFound &amp;&amp; bias === LEAST_UPPER_BOUND</span><span class="s1">) </span><span class="s2">min++;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">min === -</span><span class="s4">1 </span><span class="s2">|| min === segments.</span><span class="s1">length) </span><span class="s0">return </span><span class="s1">[]</span><span class="s2">;</span>
+
+  <span class="s2">// </span><span class="s7">We may have found the segment that started at an earlier column. If this is the case, then we</span>
+  <span class="s2">// </span><span class="s7">need to slice all generated segments that match _that_ column, because all such segments span</span>
+  <span class="s2">// </span><span class="s7">to our desired column.</span>
+  <span class="s0">const </span><span class="s2">matchedColumn = bsFound ? column : segments</span><span class="s1">[</span><span class="s2">min</span><span class="s1">][</span><span class="s2">COLUMN</span><span class="s1">]</span><span class="s2">;</span>
+
+  <span class="s2">// </span><span class="s7">The binary search is not guaranteed to find the lower bound when a match wasn't found.</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">!bsFound</span><span class="s1">) </span><span class="s2">min = </span><span class="s5">lowerBound</span><span class="s1">(</span><span class="s2">segments, matchedColumn, min</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">max = </span><span class="s5">upperBound</span><span class="s1">(</span><span class="s2">segments, matchedColumn, min</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">result = </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s2">; min &lt;= max; min++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">segment = segments</span><span class="s1">[</span><span class="s2">min</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s2">result.</span><span class="s5">push</span><span class="s1">(</span><span class="s5">GMapping</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">[</span><span class="s2">REV_GENERATED_LINE</span><span class="s1">] </span><span class="s2">+ </span><span class="s4">1</span><span class="s2">, segment</span><span class="s1">[</span><span class="s2">REV_GENERATED_COLUMN</span><span class="s1">]))</span><span class="s2">;</span>
+  <span class="s2">}</span>
+  <span class="s0">return </span><span class="s2">result;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s5">generatedPosition</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">source: string,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+  <span class="s2">all: false,</span>
+<span class="s2">): GeneratedMapping | InvalidGeneratedMapping;</span>
+<span class="s0">function </span><span class="s5">generatedPosition</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">source: string,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+  <span class="s2">all: true,</span>
+<span class="s2">): GeneratedMapping</span><span class="s1">[]</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s5">generatedPosition</span><span class="s2">(</span>
+  <span class="s2">map: TraceMap,</span>
+  <span class="s2">source: string,</span>
+  <span class="s2">line: number,</span>
+  <span class="s2">column: number,</span>
+  <span class="s2">bias: Bias,</span>
+  <span class="s2">all: boolean,</span>
+<span class="s2">): GeneratedMapping | InvalidGeneratedMapping | GeneratedMapping</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s2">line--;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">line &lt; </span><span class="s4">0</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">LINE_GTR_ZERO</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">column &lt; </span><span class="s4">0</span><span class="s1">) </span><span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">COL_GTR_EQ_ZERO</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">{ sources, resolvedSources } = map;</span>
+  <span class="s0">let </span><span class="s2">sourceIndex = sources.</span><span class="s5">indexOf</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">sourceIndex === -</span><span class="s4">1</span><span class="s1">) </span><span class="s2">sourceIndex = resolvedSources.</span><span class="s5">indexOf</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">sourceIndex === -</span><span class="s4">1</span><span class="s1">) </span><span class="s0">return </span><span class="s2">all ? </span><span class="s1">[] </span><span class="s2">: </span><span class="s5">GMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">bySourceMemos = </span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._bySourceMemos ||= sources.</span><span class="s5">map</span><span class="s1">(</span><span class="s2">memoizedState</span><span class="s1">))</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">generated = </span><span class="s1">(</span><span class="s5">cast</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">._bySources ||= </span><span class="s5">buildBySources</span><span class="s1">(</span><span class="s5">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">, bySourceMemos</span><span class="s1">))</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">segments = generated</span><span class="s1">[</span><span class="s2">sourceIndex</span><span class="s1">][</span><span class="s2">line</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">segments == </span><span class="s6">null</span><span class="s1">) </span><span class="s0">return </span><span class="s2">all ? </span><span class="s1">[] </span><span class="s2">: </span><span class="s5">GMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">memo = bySourceMemos</span><span class="s1">[</span><span class="s2">sourceIndex</span><span class="s1">]</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">all</span><span class="s1">) </span><span class="s0">return </span><span class="s5">sliceGeneratedPositions</span><span class="s1">(</span><span class="s2">segments, memo, line, column, bias</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">index = </span><span class="s5">traceSegmentInternal</span><span class="s1">(</span><span class="s2">segments, memo, line, column, bias</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">index === -</span><span class="s4">1</span><span class="s1">) </span><span class="s0">return </span><span class="s5">GMapping</span><span class="s1">(</span><span class="s6">null</span><span class="s2">, </span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">segment = segments</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s5">GMapping</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">[</span><span class="s2">REV_GENERATED_LINE</span><span class="s1">] </span><span class="s2">+ </span><span class="s4">1</span><span class="s2">, segment</span><span class="s1">[</span><span class="s2">REV_GENERATED_COLUMN</span><span class="s1">])</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

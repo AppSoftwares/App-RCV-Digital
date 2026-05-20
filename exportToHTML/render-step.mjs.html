@@ -1,0 +1,119 @@
+<html>
+<head>
+<title>render-step.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+render-step.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ statsBuffer } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../stats/buffer.mjs</span><span class="s2">';</span>
+
+<span class="s0">function </span><span class="s4">createRenderStep</span><span class="s2">(runNextFrame, stepName) {</span>
+    <span class="s2">/**</span>
+     <span class="s5">* We create and reuse two queues, one to queue jobs for the current frame 
+     * and one for the next. We reuse to avoid triggering GC after x frames. 
+     </span><span class="s2">*/</span>
+    <span class="s0">let </span><span class="s2">thisFrame = new </span><span class="s4">Set</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">nextFrame = new </span><span class="s4">Set</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* Track whether we're currently processing jobs in this step. This way 
+     * we can decide whether to schedule new jobs for this frame or next. 
+     </span><span class="s2">*/</span>
+    <span class="s0">let </span><span class="s2">isProcessing = </span><span class="s6">false</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">flushNextFrame = </span><span class="s6">false</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s5">* A set of processes which were marked keepAlive when scheduled. 
+     </span><span class="s2">*/</span>
+    <span class="s0">const </span><span class="s2">toKeepAlive = new </span><span class="s4">WeakSet</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">latestFrameData = {</span>
+        <span class="s1">delta</span><span class="s2">: </span><span class="s7">0.0</span><span class="s2">,</span>
+        <span class="s1">timestamp</span><span class="s2">: </span><span class="s7">0.0</span><span class="s2">,</span>
+        <span class="s1">isProcessing</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+    <span class="s2">};</span>
+    <span class="s0">let </span><span class="s2">numCalls = </span><span class="s7">0</span><span class="s2">;</span>
+    <span class="s0">function </span><span class="s4">triggerCallback</span><span class="s2">(callback) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">toKeepAlive.</span><span class="s4">has</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s2">step.</span><span class="s4">schedule</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s4">runNextFrame</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">numCalls++;</span>
+        <span class="s4">callback</span><span class="s1">(</span><span class="s2">latestFrameData</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">const </span><span class="s2">step = {</span>
+        <span class="s2">/**</span>
+         <span class="s5">* Schedule a process to run on the next frame. 
+         </span><span class="s2">*/</span>
+        <span class="s4">schedule</span><span class="s2">: (callback, keepAlive = </span><span class="s6">false</span><span class="s2">, immediate = </span><span class="s6">false</span><span class="s2">) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">addToCurrentFrame = immediate &amp;&amp; isProcessing;</span>
+            <span class="s0">const </span><span class="s2">queue = addToCurrentFrame ? thisFrame : nextFrame;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">keepAlive</span><span class="s1">)</span>
+                <span class="s2">toKeepAlive.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">queue.</span><span class="s4">add</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">return </span><span class="s2">callback;</span>
+        <span class="s2">},</span>
+        <span class="s2">/**</span>
+         <span class="s5">* Cancel the provided callback from running on the next frame. 
+         </span><span class="s2">*/</span>
+        <span class="s4">cancel</span><span class="s2">: (callback) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">nextFrame.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">toKeepAlive.</span><span class="s4">delete</span><span class="s1">(</span><span class="s2">callback</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">},</span>
+        <span class="s2">/**</span>
+         <span class="s5">* Execute all schedule callbacks. 
+         </span><span class="s2">*/</span>
+        <span class="s4">process</span><span class="s2">: (frameData) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">latestFrameData = frameData;</span>
+            <span class="s2">/**</span>
+             <span class="s5">* If we're already processing we've probably been triggered by a flushSync 
+             * inside an existing process. Instead of executing, mark flushNextFrame 
+             * as true and ensure we flush the following frame at the end of this one. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">isProcessing</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">flushNextFrame = </span><span class="s6">true</span><span class="s2">;</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">isProcessing = </span><span class="s6">true</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s5">Swap this frame and the next to avoid GC</span>
+            <span class="s0">const </span><span class="s2">prevFrame = thisFrame;</span>
+            <span class="s2">thisFrame = nextFrame;</span>
+            <span class="s2">nextFrame = prevFrame;</span>
+            <span class="s2">// </span><span class="s5">Execute this frame</span>
+            <span class="s2">thisFrame.</span><span class="s4">forEach</span><span class="s1">(</span><span class="s2">triggerCallback</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s5">* If we're recording stats then 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">stepName &amp;&amp; statsBuffer.value</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">statsBuffer.value.frameloop</span><span class="s1">[</span><span class="s2">stepName</span><span class="s1">]</span><span class="s2">.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">numCalls</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">numCalls = </span><span class="s7">0</span><span class="s2">;</span>
+            <span class="s2">// </span><span class="s5">Clear the frame so no callbacks remain. This is to avoid</span>
+            <span class="s2">// </span><span class="s5">memory leaks should this render step not run for a while.</span>
+            <span class="s2">thisFrame.</span><span class="s4">clear</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">isProcessing = </span><span class="s6">false</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">flushNextFrame</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">flushNextFrame = </span><span class="s6">false</span><span class="s2">;</span>
+                <span class="s2">step.</span><span class="s4">process</span><span class="s1">(</span><span class="s2">frameData</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">},</span>
+    <span class="s2">};</span>
+    <span class="s0">return </span><span class="s2">step;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ createRenderStep };</span>
+<span class="s2">//</span><span class="s5"># sourceMappingURL=render-step.mjs.map</span>
+</pre>
+</body>
+</html>

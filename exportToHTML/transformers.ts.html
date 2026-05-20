@@ -1,0 +1,296 @@
+<html>
+<head>
+<title>transformers.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #bcbec4;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #6aab73;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+.s8 { color: #42c3d4;}
+.s9 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+transformers.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">/**</span>
+ <span class="s1">* Helpers to convert the change Payload into native JS types. 
+ </span><span class="s0">*/</span>
+
+<span class="s0">// </span><span class="s1">Adapted from epgsql (src/epgsql_binary.erl), this module licensed under</span>
+<span class="s0">// </span><span class="s1">3-clause BSD found here: https://raw.githubusercontent.com/epgsql/epgsql/devel/LICENSE</span>
+
+<span class="s3">export enum </span><span class="s0">PostgresTypes {</span>
+  <span class="s0">abstime = '</span><span class="s4">abstime</span><span class="s0">',</span>
+  <span class="s0">bool = '</span><span class="s4">bool</span><span class="s0">',</span>
+  <span class="s0">date = '</span><span class="s4">date</span><span class="s0">',</span>
+  <span class="s0">daterange = '</span><span class="s4">daterange</span><span class="s0">',</span>
+  <span class="s0">float4 = '</span><span class="s4">float4</span><span class="s0">',</span>
+  <span class="s0">float8 = '</span><span class="s4">float8</span><span class="s0">',</span>
+  <span class="s0">int2 = '</span><span class="s4">int2</span><span class="s0">',</span>
+  <span class="s0">int4 = '</span><span class="s4">int4</span><span class="s0">',</span>
+  <span class="s0">int4range = '</span><span class="s4">int4range</span><span class="s0">',</span>
+  <span class="s0">int8 = '</span><span class="s4">int8</span><span class="s0">',</span>
+  <span class="s0">int8range = '</span><span class="s4">int8range</span><span class="s0">',</span>
+  <span class="s0">json = '</span><span class="s4">json</span><span class="s0">',</span>
+  <span class="s0">jsonb = '</span><span class="s4">jsonb</span><span class="s0">',</span>
+  <span class="s0">money = '</span><span class="s4">money</span><span class="s0">',</span>
+  <span class="s0">numeric = '</span><span class="s4">numeric</span><span class="s0">',</span>
+  <span class="s0">oid = '</span><span class="s4">oid</span><span class="s0">',</span>
+  <span class="s0">reltime = '</span><span class="s4">reltime</span><span class="s0">',</span>
+  <span class="s0">text = '</span><span class="s4">text</span><span class="s0">',</span>
+  <span class="s0">time = '</span><span class="s4">time</span><span class="s0">',</span>
+  <span class="s0">timestamp = '</span><span class="s4">timestamp</span><span class="s0">',</span>
+  <span class="s0">timestamptz = '</span><span class="s4">timestamptz</span><span class="s0">',</span>
+  <span class="s0">timetz = '</span><span class="s4">timetz</span><span class="s0">',</span>
+  <span class="s0">tsrange = '</span><span class="s4">tsrange</span><span class="s0">',</span>
+  <span class="s0">tstzrange = '</span><span class="s4">tstzrange</span><span class="s0">',</span>
+<span class="s0">}</span>
+
+<span class="s3">type </span><span class="s0">Columns = {</span>
+  <span class="s0">name: string // </span><span class="s1">the column name. eg: &quot;user_id&quot;</span>
+  <span class="s0">type: string // </span><span class="s1">the column type. eg: &quot;uuid&quot;</span>
+  <span class="s0">flags?: string</span><span class="s2">[] </span><span class="s0">// </span><span class="s1">any special flags for the column. eg: [&quot;key&quot;]</span>
+  <span class="s0">type_modifier?: number // </span><span class="s1">the type modifier. eg: 4294967295</span>
+<span class="s0">}</span><span class="s2">[]</span>
+
+<span class="s3">type </span><span class="s0">BaseValue = null | string | number | boolean</span>
+<span class="s3">type </span><span class="s0">RecordValue = BaseValue | BaseValue</span><span class="s2">[]</span>
+
+<span class="s3">type </span><span class="s0">Record = {</span>
+  <span class="s2">[</span><span class="s0">key: string</span><span class="s2">]</span><span class="s0">: RecordValue</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Takes an array of columns and an object of string values then converts each string value 
+ * to its mapped type. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{{name: String, type: String}[]} columns</span>
+ <span class="s1">* </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{Object} record</span>
+ <span class="s1">* </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{Object} options </span><span class="s1">The map of various options that can be applied to the mapper 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{Array} options.skipTypes </span><span class="s1">The array of types that should not be converted 
+ * 
+ * </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertChangeData([{name: 'first_name', type: 'text'}, {name: 'age', type: 'int4'}], {first_name: 'Paul', age:'33'}, {}) 
+ </span><span class="s1">* </span><span class="s2">//=&gt;{ first_name: 'Paul', age: 33 } 
+ </span><span class="s0">*/</span>
+<span class="s3">export const </span><span class="s5">convertChangeData </span><span class="s0">= </span><span class="s2">(</span>
+  <span class="s0">columns: Columns,</span>
+  <span class="s0">record: Record | null,</span>
+  <span class="s0">options: { skipTypes?: string</span><span class="s2">[] </span><span class="s0">} = {}</span>
+<span class="s2">)</span><span class="s0">: Record </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">const </span><span class="s0">skipTypes = options.skipTypes ?? </span><span class="s2">[]</span>
+
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">!record</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">return </span><span class="s0">{}</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">Object.</span><span class="s5">keys</span><span class="s2">(</span><span class="s0">record</span><span class="s2">)</span><span class="s0">.</span><span class="s5">reduce</span><span class="s2">(</span><span class="s0">(acc, rec_key) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s0">acc</span><span class="s2">[</span><span class="s0">rec_key</span><span class="s2">] </span><span class="s0">= </span><span class="s5">convertColumn</span><span class="s2">(</span><span class="s0">rec_key, columns, record, skipTypes</span><span class="s2">)</span>
+    <span class="s3">return </span><span class="s0">acc</span>
+  <span class="s0">}, {} </span><span class="s3">as </span><span class="s0">Record</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts the value of an individual column. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{String} columnName </span><span class="s1">The column that you want to convert 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{{name: String, type: String}[]} columns </span><span class="s1">All of the columns 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{Object} record </span><span class="s1">The map of string values 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{Array} skipTypes </span><span class="s1">An array of types that should not be converted 
+ * </span><span class="s0">@</span><span class="s3">return </span><span class="s0">{object} </span><span class="s1">Useless information 
+ * 
+ * </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertColumn('age', [{name: 'first_name', type: 'text'}, {name: 'age', type: 'int4'}], {first_name: 'Paul', age: '33'}, []) 
+ </span><span class="s1">* </span><span class="s2">//=&gt; 33 
+ </span><span class="s1">* </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertColumn('age', [{name: 'first_name', type: 'text'}, {name: 'age', type: 'int4'}], {first_name: 'Paul', age: '33'}, ['int4']) 
+ </span><span class="s1">* </span><span class="s2">//=&gt; &quot;33&quot; 
+ </span><span class="s0">*/</span>
+<span class="s3">export const </span><span class="s5">convertColumn </span><span class="s0">= </span><span class="s2">(</span>
+  <span class="s0">columnName: string,</span>
+  <span class="s0">columns: Columns,</span>
+  <span class="s0">record: Record,</span>
+  <span class="s0">skipTypes: string</span><span class="s2">[]</span>
+<span class="s2">)</span><span class="s0">: RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">const </span><span class="s0">column = columns.</span><span class="s5">find</span><span class="s2">(</span><span class="s0">(x) </span><span class="s3">=&gt; </span><span class="s0">x.name === columnName</span><span class="s2">)</span>
+  <span class="s3">const </span><span class="s0">colType = column?.type</span>
+  <span class="s3">const </span><span class="s0">value = record</span><span class="s2">[</span><span class="s0">columnName</span><span class="s2">]</span>
+
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">colType &amp;&amp; !skipTypes.</span><span class="s5">includes</span><span class="s2">(</span><span class="s0">colType</span><span class="s2">)) </span><span class="s0">{</span>
+    <span class="s3">return </span><span class="s5">convertCell</span><span class="s2">(</span><span class="s0">colType, value</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s5">noop</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* If the value of the cell is `null`, returns null. 
+ * Otherwise converts the string value to the correct type. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{String} type </span><span class="s1">A postgres column type 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">{String} value </span><span class="s1">The cell value 
+ * 
+ * </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertCell('bool', 't') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; true 
+ </span><span class="s1">* </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertCell('int8', '10') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; 10 
+ </span><span class="s1">* </span><span class="s0">@</span><span class="s3">example </span><span class="s2">convertCell('_int4', '{1,2,3,4}') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; [1,2,3,4] 
+ </span><span class="s0">*/</span>
+<span class="s3">export const </span><span class="s5">convertCell </span><span class="s0">= (type: string, value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s0">// </span><span class="s1">if data type is an array</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">type.</span><span class="s5">charAt</span><span class="s2">(</span><span class="s6">0</span><span class="s2">) </span><span class="s0">=== '</span><span class="s4">_</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">dataType = type.</span><span class="s5">slice</span><span class="s2">(</span><span class="s6">1</span><span class="s0">, type.</span><span class="s2">length)</span>
+    <span class="s3">return </span><span class="s5">toArray</span><span class="s2">(</span><span class="s0">value, dataType</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">// </span><span class="s1">If not null, convert to correct type.</span>
+  <span class="s3">switch </span><span class="s2">(</span><span class="s0">type</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.bool:</span>
+      <span class="s3">return </span><span class="s5">toBoolean</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.float4:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.float8:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.int2:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.int4:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.int8:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.numeric:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.oid:</span>
+      <span class="s3">return </span><span class="s5">toNumber</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.json:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.jsonb:</span>
+      <span class="s3">return </span><span class="s5">toJson</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.timestamp:</span>
+      <span class="s3">return </span><span class="s5">toTimestampString</span><span class="s2">(</span><span class="s0">value</span><span class="s2">) </span><span class="s0">// </span><span class="s1">Format to be consistent with PostgREST</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.abstime: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.date: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.daterange:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.int4range:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.int8range:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.money:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.reltime: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.text:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.time: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.timestamptz: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.timetz: // </span><span class="s1">To allow users to cast it based on Timezone</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.tsrange:</span>
+    <span class="s3">case </span><span class="s0">PostgresTypes.tstzrange:</span>
+      <span class="s3">return </span><span class="s5">noop</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s3">default</span><span class="s0">:</span>
+      <span class="s0">// </span><span class="s1">Return the value for remaining types</span>
+      <span class="s3">return </span><span class="s5">noop</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s3">const </span><span class="s5">noop </span><span class="s0">= (value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">return </span><span class="s0">value</span>
+<span class="s0">}</span>
+<span class="s3">export const </span><span class="s5">toBoolean </span><span class="s0">= (value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">switch </span><span class="s2">(</span><span class="s0">value</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">case </span><span class="s0">'</span><span class="s4">t</span><span class="s0">':</span>
+      <span class="s3">return </span><span class="s7">true</span>
+    <span class="s3">case </span><span class="s0">'</span><span class="s4">f</span><span class="s0">':</span>
+      <span class="s3">return </span><span class="s7">false</span>
+    <span class="s3">default</span><span class="s0">:</span>
+      <span class="s3">return </span><span class="s0">value</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s3">export const </span><span class="s5">toNumber </span><span class="s0">= (value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">typeof value === '</span><span class="s4">string</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">const </span><span class="s0">parsedValue = </span><span class="s5">parseFloat</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">!Number.</span><span class="s5">isNaN</span><span class="s2">(</span><span class="s0">parsedValue</span><span class="s2">)) </span><span class="s0">{</span>
+      <span class="s3">return </span><span class="s0">parsedValue</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">value</span>
+<span class="s0">}</span>
+<span class="s3">export const </span><span class="s5">toJson </span><span class="s0">= (value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">typeof value === '</span><span class="s4">string</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">try </span><span class="s0">{</span>
+      <span class="s3">return </span><span class="s0">JSON.</span><span class="s5">parse</span><span class="s2">(</span><span class="s0">value</span><span class="s2">)</span>
+    <span class="s0">} </span><span class="s3">catch </span><span class="s0">{</span>
+      <span class="s3">return </span><span class="s0">value</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s3">return </span><span class="s0">value</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a Postgres Array into a native JS array 
+ * 
+ * </span><span class="s0">@</span><span class="s3">example </span><span class="s2">toArray('{}', 'int4') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; [] 
+ </span><span class="s1">* </span><span class="s0">@</span><span class="s3">example </span><span class="s2">toArray('{&quot;[2021-01-01,2021-12-31)&quot;,&quot;(2021-01-01,2021-12-32]&quot;}', 'daterange') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; ['[2021-01-01,2021-12-31)', '(2021-01-01,2021-12-32]'] 
+ </span><span class="s1">* </span><span class="s0">@</span><span class="s3">example </span><span class="s2">toArray([1,2,3,4], 'int4') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; [1,2,3,4] 
+ </span><span class="s0">*/</span>
+<span class="s3">export const </span><span class="s5">toArray </span><span class="s0">= (value: RecordValue, type: string): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">typeof value !== '</span><span class="s4">string</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">return </span><span class="s0">value</span>
+  <span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s0">lastIdx = value.</span><span class="s2">length </span><span class="s0">- </span><span class="s6">1</span>
+  <span class="s3">const </span><span class="s0">closeBrace = value</span><span class="s2">[</span><span class="s0">lastIdx</span><span class="s2">]</span>
+  <span class="s3">const </span><span class="s0">openBrace = value</span><span class="s2">[</span><span class="s6">0</span><span class="s2">]</span>
+
+  <span class="s0">// </span><span class="s1">Confirm value is a Postgres array by checking curly brackets</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">openBrace === '</span><span class="s4">{</span><span class="s0">' &amp;&amp; closeBrace === '</span><span class="s4">}</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">let </span><span class="s0">arr</span>
+    <span class="s3">const </span><span class="s0">valTrim = value.</span><span class="s5">slice</span><span class="s2">(</span><span class="s6">1</span><span class="s0">, lastIdx</span><span class="s2">)</span>
+
+    <span class="s0">// </span><span class="s1">TODO: find a better solution to separate Postgres array data</span>
+    <span class="s3">try </span><span class="s0">{</span>
+      <span class="s0">arr = JSON.</span><span class="s5">parse</span><span class="s2">(</span><span class="s0">'</span><span class="s4">[</span><span class="s0">' + valTrim + '</span><span class="s4">]</span><span class="s0">'</span><span class="s2">)</span>
+    <span class="s0">} </span><span class="s3">catch </span><span class="s2">(</span><span class="s0">_</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">// </span><span class="s1">WARNING: splitting on comma does not cover all edge cases</span>
+      <span class="s0">arr = valTrim ? valTrim.</span><span class="s5">split</span><span class="s2">(</span><span class="s0">'</span><span class="s4">,</span><span class="s0">'</span><span class="s2">) </span><span class="s0">: </span><span class="s2">[]</span>
+    <span class="s0">}</span>
+
+    <span class="s3">return </span><span class="s0">arr.</span><span class="s5">map</span><span class="s2">(</span><span class="s0">(val: BaseValue) </span><span class="s3">=&gt; </span><span class="s5">convertCell</span><span class="s2">(</span><span class="s0">type, val</span><span class="s2">))</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">value</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Fixes timestamp to be ISO-8601. Swaps the space between the date and time for a 'T' 
+ * See https://github.com/supabase/supabase/issues/18 
+ * 
+ * </span><span class="s0">@</span><span class="s3">example </span><span class="s2">toTimestampString('2019-09-10 00:00:00') 
+ </span><span class="s1">* </span><span class="s2">//=&gt; '2019-09-10T00:00:00' 
+ </span><span class="s0">*/</span>
+<span class="s3">export const </span><span class="s5">toTimestampString </span><span class="s0">= (value: RecordValue): RecordValue </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">typeof value === '</span><span class="s4">string</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">return </span><span class="s0">value.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">' ', '</span><span class="s4">T</span><span class="s0">'</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">value</span>
+<span class="s0">}</span>
+
+<span class="s3">export const </span><span class="s5">httpEndpointURL </span><span class="s0">= (socketUrl: string): string </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">const </span><span class="s0">wsUrl = new </span><span class="s5">URL</span><span class="s2">(</span><span class="s0">socketUrl</span><span class="s2">)</span>
+
+  <span class="s0">wsUrl.protocol = wsUrl.protocol.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s3">^</span><span class="s8">ws</span><span class="s0">/</span><span class="s3">i</span><span class="s0">, '</span><span class="s4">http</span><span class="s0">'</span><span class="s2">)</span>
+
+  <span class="s0">wsUrl.pathname = wsUrl.pathname</span>
+    <span class="s0">.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s9">\/</span><span class="s0">+</span><span class="s3">$</span><span class="s0">/, ''</span><span class="s2">) </span><span class="s0">// </span><span class="s1">remove all trailing slashes</span>
+    <span class="s0">.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s9">\/</span><span class="s8">socket</span><span class="s9">\/</span><span class="s8">websocket</span><span class="s3">$</span><span class="s0">/</span><span class="s3">i</span><span class="s0">, ''</span><span class="s2">) </span><span class="s0">// </span><span class="s1">remove the socket/websocket path</span>
+    <span class="s0">.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s9">\/</span><span class="s8">socket</span><span class="s3">$</span><span class="s0">/</span><span class="s3">i</span><span class="s0">, ''</span><span class="s2">) </span><span class="s0">// </span><span class="s1">remove the socket path</span>
+    <span class="s0">.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s9">\/</span><span class="s8">websocket</span><span class="s3">$</span><span class="s0">/</span><span class="s3">i</span><span class="s0">, ''</span><span class="s2">) </span><span class="s0">// </span><span class="s1">remove the websocket path</span>
+
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">wsUrl.pathname === '' || wsUrl.pathname === '</span><span class="s4">/</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">wsUrl.pathname = '</span><span class="s4">/api/broadcast</span><span class="s0">'</span>
+  <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+    <span class="s0">wsUrl.pathname = wsUrl.pathname + '</span><span class="s4">/api/broadcast</span><span class="s0">'</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">wsUrl.href</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

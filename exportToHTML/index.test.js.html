@@ -1,0 +1,510 @@
+<html>
+<head>
+<title>index.test.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+index.test.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const promisify = require(</span><span class="s0">&quot;util.promisify&quot;</span><span class="s1">);</span>
+<span class="s1">const gensync = require(</span><span class="s0">&quot;../&quot;</span><span class="s1">);</span>
+
+<span class="s1">const TEST_ERROR = </span><span class="s2">new </span><span class="s1">Error(</span><span class="s0">&quot;TEST_ERROR&quot;</span><span class="s1">);</span>
+
+<span class="s1">const DID_ERROR = </span><span class="s2">new </span><span class="s1">Error(</span><span class="s0">&quot;DID_ERROR&quot;</span><span class="s1">);</span>
+
+<span class="s1">const doSuccess = gensync({</span>
+  <span class="s1">sync: () =&gt; </span><span class="s3">42</span><span class="s1">,</span>
+  <span class="s1">async: () =&gt; Promise.resolve(</span><span class="s3">42</span><span class="s1">),</span>
+<span class="s1">});</span>
+
+<span class="s1">const doError = gensync({</span>
+  <span class="s1">sync: () =&gt; {</span>
+    <span class="s2">throw </span><span class="s1">DID_ERROR;</span>
+  <span class="s1">},</span>
+  <span class="s1">async: () =&gt; Promise.reject(DID_ERROR),</span>
+<span class="s1">});</span>
+
+<span class="s2">function </span><span class="s1">throwTestError() {</span>
+  <span class="s2">throw </span><span class="s1">TEST_ERROR;</span>
+<span class="s1">}</span>
+
+<span class="s1">async </span><span class="s2">function </span><span class="s1">expectResult(</span>
+  <span class="s1">fn,</span>
+  <span class="s1">arg,</span>
+  <span class="s1">{ error, value, expectSync = </span><span class="s2">false</span><span class="s1">, syncErrback = expectSync }</span>
+<span class="s1">) {</span>
+  <span class="s2">if </span><span class="s1">(!expectSync) {</span>
+    <span class="s1">expect(() =&gt; fn.sync(arg)).toThrow(TEST_ERROR);</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(error) {</span>
+    <span class="s1">expect(() =&gt; fn.sync(arg)).toThrow(error);</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">expect(fn.sync(arg)).toBe(value);</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(error) {</span>
+    <span class="s1">await expect(fn.async(arg)).rejects.toBe(error);</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">await expect(fn.async(arg)).resolves.toBe(value);</span>
+  <span class="s1">}</span>
+
+  <span class="s1">await </span><span class="s2">new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+    <span class="s1">let sync = </span><span class="s2">true</span><span class="s1">;</span>
+    <span class="s1">fn.errback(arg, (err, val) =&gt; {</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">expect(err).toBe(error);</span>
+        <span class="s1">expect(val).toBe(value);</span>
+        <span class="s1">expect(sync).toBe(syncErrback);</span>
+
+        <span class="s1">resolve();</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+        <span class="s1">reject(e);</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+    <span class="s1">sync = </span><span class="s2">false</span><span class="s1">;</span>
+  <span class="s1">});</span>
+<span class="s1">}</span>
+
+<span class="s1">describe(</span><span class="s0">&quot;gensync({})&quot;</span><span class="s1">, () =&gt; {</span>
+  <span class="s1">describe(</span><span class="s0">&quot;option validation&quot;</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;disallow async and errback handler together&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: throwTestError,</span>
+          <span class="s1">async: throwTestError,</span>
+          <span class="s1">errback: throwTestError,</span>
+        <span class="s1">});</span>
+
+        <span class="s1">throwTestError();</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s1">expect(err.message).toMatch(</span>
+          <span class="s1">/Expected one of either opts.async or opts.errback, but got _both_\./</span>
+        <span class="s1">);</span>
+        <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_OPTIONS_ERROR&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;disallow missing sync handler&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">async: throwTestError,</span>
+        <span class="s1">});</span>
+
+        <span class="s1">throwTestError();</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s1">expect(err.message).toMatch(/Expected opts.sync to be a </span><span class="s2">function</span><span class="s1">./);</span>
+        <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_OPTIONS_ERROR&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;errback callback required&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">async: throwTestError,</span>
+      <span class="s1">});</span>
+
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">fn.errback();</span>
+
+        <span class="s1">throwTestError();</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s1">expect(err.message).toMatch(/</span><span class="s2">function </span><span class="s1">called without callback/);</span>
+        <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_ERRBACK_NO_CALLBACK&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">describe(</span><span class="s0">&quot;generator function metadata&quot;</span><span class="s1">, () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;automatic naming&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: </span><span class="s2">function </span><span class="s1">readFileSync() {},</span>
+          <span class="s1">async: () =&gt; {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: </span><span class="s2">function </span><span class="s1">readFile() {},</span>
+          <span class="s1">async: () =&gt; {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: </span><span class="s2">function </span><span class="s1">readFileAsync() {},</span>
+          <span class="s1">async: () =&gt; {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFileAsync&quot;</span><span class="s1">);</span>
+
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">async: </span><span class="s2">function </span><span class="s1">readFileSync() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFileSync&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">async: </span><span class="s2">function </span><span class="s1">readFile() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">async: </span><span class="s2">function </span><span class="s1">readFileAsync() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">errback: </span><span class="s2">function </span><span class="s1">readFileSync() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFileSync&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">errback: </span><span class="s2">function </span><span class="s1">readFile() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">errback: </span><span class="s2">function </span><span class="s1">readFileAsync() {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFileAsync&quot;</span><span class="s1">);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;explicit naming&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">name: </span><span class="s0">&quot;readFile&quot;</span><span class="s1">,</span>
+          <span class="s1">sync: () =&gt; {},</span>
+          <span class="s1">async: () =&gt; {},</span>
+        <span class="s1">}).name</span>
+      <span class="s1">).toBe(</span><span class="s0">&quot;readFile&quot;</span><span class="s1">);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;default arity&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">sync: </span><span class="s2">function</span><span class="s1">(a, b, c, d, e, f, g) {</span>
+            <span class="s1">throwTestError();</span>
+          <span class="s1">},</span>
+          <span class="s1">async: throwTestError,</span>
+        <span class="s1">}).length</span>
+      <span class="s1">).toBe(</span><span class="s3">7</span><span class="s1">);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;explicit arity&quot;</span><span class="s1">, () =&gt; {</span>
+      <span class="s1">expect(</span>
+        <span class="s1">gensync({</span>
+          <span class="s1">arity: </span><span class="s3">3</span><span class="s1">,</span>
+          <span class="s1">sync: throwTestError,</span>
+          <span class="s1">async: throwTestError,</span>
+        <span class="s1">}).length</span>
+      <span class="s1">).toBe(</span><span class="s3">3</span><span class="s1">);</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">describe(</span><span class="s0">&quot;'sync' handler&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: (...args) =&gt; JSON.stringify(args),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { value: </span><span class="s0">&quot;[42]&quot;</span><span class="s1">, expectSync: </span><span class="s2">true </span><span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;failure&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: (...args) =&gt; {</span>
+          <span class="s2">throw </span><span class="s1">JSON.stringify(args);</span>
+        <span class="s1">},</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { error: </span><span class="s0">&quot;[42]&quot;</span><span class="s1">, expectSync: </span><span class="s2">true </span><span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">describe(</span><span class="s0">&quot;'async' handler&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">async: (...args) =&gt; Promise.resolve(JSON.stringify(args)),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { value: </span><span class="s0">&quot;[42]&quot; </span><span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;failure&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">async: (...args) =&gt; Promise.reject(JSON.stringify(args)),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { error: </span><span class="s0">&quot;[42]&quot; </span><span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">describe(</span><span class="s0">&quot;'errback' sync handler&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">errback: (...args) =&gt; args.pop()(</span><span class="s2">null</span><span class="s1">, JSON.stringify(args)),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { value: </span><span class="s0">&quot;[42]&quot;</span><span class="s1">, syncErrback: </span><span class="s2">true </span><span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;failure&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">errback: (...args) =&gt; args.pop()(JSON.stringify(args)),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { error: </span><span class="s0">&quot;[42]&quot;</span><span class="s1">, syncErrback: </span><span class="s2">true </span><span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">describe(</span><span class="s0">&quot;'errback' async handler&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">errback: (...args) =&gt;</span>
+          <span class="s1">process.nextTick(() =&gt; args.pop()(</span><span class="s2">null</span><span class="s1">, JSON.stringify(args))),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { value: </span><span class="s0">&quot;[42]&quot; </span><span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s1">test(</span><span class="s0">&quot;failure&quot;</span><span class="s1">, async () =&gt; {</span>
+      <span class="s1">const fn = gensync({</span>
+        <span class="s1">sync: throwTestError,</span>
+        <span class="s1">errback: (...args) =&gt;</span>
+          <span class="s1">process.nextTick(() =&gt; args.pop()(JSON.stringify(args))),</span>
+      <span class="s1">});</span>
+
+      <span class="s1">await expectResult(fn, </span><span class="s3">42</span><span class="s1">, { error: </span><span class="s0">&quot;[42]&quot; </span><span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+<span class="s1">});</span>
+
+<span class="s1">describe(</span><span class="s0">&quot;gensync(function* () {})&quot;</span><span class="s1">, () =&gt; {</span>
+  <span class="s1">test(</span><span class="s0">&quot;sync throw before body&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*(arg = throwTestError()) {});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: TEST_ERROR,</span>
+      <span class="s1">syncErrback: </span><span class="s2">true</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;sync throw inside body&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">throwTestError();</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: TEST_ERROR,</span>
+      <span class="s1">syncErrback: </span><span class="s2">true</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;async throw inside body&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">const val = yield* doSuccess();</span>
+      <span class="s1">throwTestError();</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: TEST_ERROR,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;error inside body&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield* doError();</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: DID_ERROR,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;successful return value&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">const value = yield* doSuccess();</span>
+
+      <span class="s1">expect(value).toBe(</span><span class="s3">42</span><span class="s1">);</span>
+
+      <span class="s2">return </span><span class="s3">84</span><span class="s1">;</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">value: </span><span class="s3">84</span><span class="s1">,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;successful final value&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s2">return </span><span class="s3">42</span><span class="s1">;</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">value: </span><span class="s3">42</span><span class="s1">,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;yield unexpected object&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield {};</span>
+    <span class="s1">});</span>
+
+    <span class="s2">try </span><span class="s1">{</span>
+      <span class="s1">await fn.async();</span>
+
+      <span class="s1">throwTestError();</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+      <span class="s1">expect(err.message).toMatch(</span>
+        <span class="s1">/Got unexpected yielded value </span><span class="s2">in </span><span class="s1">gensync generator/</span>
+      <span class="s1">);</span>
+      <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_EXPECTED_START&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;yield suspend yield&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield Symbol.</span><span class="s2">for</span><span class="s1">(</span><span class="s0">&quot;gensync:v1:start&quot;</span><span class="s1">);</span>
+
+      <span class="s4">// Should be &quot;yield*&quot; for no error.</span>
+      <span class="s1">yield {};</span>
+    <span class="s1">});</span>
+
+    <span class="s2">try </span><span class="s1">{</span>
+      <span class="s1">await fn.async();</span>
+
+      <span class="s1">throwTestError();</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+      <span class="s1">expect(err.message).toMatch(/Expected GENSYNC_SUSPEND, got {}/);</span>
+      <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_EXPECTED_SUSPEND&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;yield suspend return&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield Symbol.</span><span class="s2">for</span><span class="s1">(</span><span class="s0">&quot;gensync:v1:start&quot;</span><span class="s1">);</span>
+
+      <span class="s4">// Should be &quot;yield*&quot; for no error.</span>
+      <span class="s2">return </span><span class="s1">{};</span>
+    <span class="s1">});</span>
+
+    <span class="s2">try </span><span class="s1">{</span>
+      <span class="s1">await fn.async();</span>
+
+      <span class="s1">throwTestError();</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+      <span class="s1">expect(err.message).toMatch(/Unexpected generator completion/);</span>
+      <span class="s1">expect(err.code).toBe(</span><span class="s0">&quot;GENSYNC_EXPECTED_SUSPEND&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+  <span class="s1">});</span>
+<span class="s1">});</span>
+
+<span class="s1">describe(</span><span class="s0">&quot;gensync.all()&quot;</span><span class="s1">, () =&gt; {</span>
+  <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">const result = yield* gensync.all([doSuccess(), doSuccess()]);</span>
+
+      <span class="s1">expect(result).toEqual([</span><span class="s3">42</span><span class="s1">, </span><span class="s3">42</span><span class="s1">]);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">value: undefined,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;error first&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield* gensync.all([doError(), doSuccess()]);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: DID_ERROR,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;error last&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield* gensync.all([doSuccess(), doError()]);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: DID_ERROR,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;empty list&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield* gensync.all([]);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">value: undefined,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+<span class="s1">});</span>
+
+<span class="s1">describe(</span><span class="s0">&quot;gensync.race()&quot;</span><span class="s1">, () =&gt; {</span>
+  <span class="s1">test(</span><span class="s0">&quot;success&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">const result = yield* gensync.race([doSuccess(), doError()]);</span>
+
+      <span class="s1">expect(result).toEqual(</span><span class="s3">42</span><span class="s1">);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">value: undefined,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+
+  <span class="s1">test(</span><span class="s0">&quot;error&quot;</span><span class="s1">, async () =&gt; {</span>
+    <span class="s1">const fn = gensync(</span><span class="s2">function</span><span class="s1">*() {</span>
+      <span class="s1">yield* gensync.race([doError(), doSuccess()]);</span>
+    <span class="s1">});</span>
+
+    <span class="s1">await expectResult(fn, undefined, {</span>
+      <span class="s1">error: DID_ERROR,</span>
+      <span class="s1">expectSync: </span><span class="s2">true</span><span class="s1">,</span>
+      <span class="s1">syncErrback: </span><span class="s2">false</span><span class="s1">,</span>
+    <span class="s1">});</span>
+  <span class="s1">});</span>
+<span class="s1">});</span>
+</pre>
+</body>
+</html>

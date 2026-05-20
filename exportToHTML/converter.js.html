@@ -1,0 +1,331 @@
+<html>
+<head>
+<title>converter.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+converter.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">/** 
+ * Runtime message from/to plain object converters. 
+ * @namespace 
+ */</span>
+<span class="s3">var </span><span class="s1">converter = exports;</span>
+
+<span class="s3">var </span><span class="s1">Enum = require(</span><span class="s0">&quot;./enum&quot;</span><span class="s1">),</span>
+    <span class="s1">util = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s2">/** 
+ * Generates a partial value fromObject conveter. 
+ * @param {Codegen} gen Codegen instance 
+ * @param {Field} field Reflected field 
+ * @param {number} fieldIndex Field index 
+ * @param {string} prop Property reference 
+ * @returns {Codegen} Codegen instance 
+ * @ignore 
+ */</span>
+<span class="s3">function </span><span class="s1">genValuePartial_fromObject(gen, field, fieldIndex, prop) {</span>
+    <span class="s3">var </span><span class="s1">defaultAlreadyEmitted = </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s2">/* eslint-disable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+    <span class="s3">if </span><span class="s1">(field.resolvedType) {</span>
+        <span class="s3">if </span><span class="s1">(field.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum) { gen</span>
+            <span class="s1">(</span><span class="s0">&quot;switch(d%s){&quot;</span><span class="s1">, prop);</span>
+            <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">values = field.resolvedType.values, keys = Object.keys(values), i = </span><span class="s4">0</span><span class="s1">; i &lt; keys.length; ++i) {</span>
+                <span class="s2">// enum unknown values passthrough</span>
+                <span class="s3">if </span><span class="s1">(values[keys[i]] === field.typeDefault &amp;&amp; !defaultAlreadyEmitted) { gen</span>
+                    <span class="s1">(</span><span class="s0">&quot;default:&quot;</span><span class="s1">)</span>
+                        <span class="s1">(</span><span class="s0">&quot;if(typeof(d%s)===</span><span class="s3">\&quot;</span><span class="s0">number</span><span class="s3">\&quot;</span><span class="s0">){m%s=d%s;break}&quot;</span><span class="s1">, prop, prop, prop);</span>
+                    <span class="s3">if </span><span class="s1">(!field.repeated) gen </span><span class="s2">// fallback to default value only for</span>
+                                             <span class="s2">// arrays, to avoid leaving holes.</span>
+                        <span class="s1">(</span><span class="s0">&quot;break&quot;</span><span class="s1">);           </span><span class="s2">// for non-repeated fields, just ignore</span>
+                    <span class="s1">defaultAlreadyEmitted = </span><span class="s3">true</span><span class="s1">;</span>
+                <span class="s1">}</span>
+                <span class="s1">gen</span>
+                <span class="s1">(</span><span class="s0">&quot;case%j:&quot;</span><span class="s1">, keys[i])</span>
+                <span class="s1">(</span><span class="s0">&quot;case %i:&quot;</span><span class="s1">, values[keys[i]])</span>
+                    <span class="s1">(</span><span class="s0">&quot;m%s=%j&quot;</span><span class="s1">, prop, values[keys[i]])</span>
+                    <span class="s1">(</span><span class="s0">&quot;break&quot;</span><span class="s1">);</span>
+            <span class="s1">} gen</span>
+            <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s3">else </span><span class="s1">gen</span>
+            <span class="s1">(</span><span class="s0">&quot;if(typeof d%s!==</span><span class="s3">\&quot;</span><span class="s0">object</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                <span class="s1">(</span><span class="s0">&quot;throw TypeError(%j)&quot;</span><span class="s1">, field.fullName + </span><span class="s0">&quot;: object expected&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;m%s=types[%i].fromObject(d%s,n+1)&quot;</span><span class="s1">, prop, fieldIndex, prop);</span>
+    <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+        <span class="s3">var </span><span class="s1">isUnsigned = </span><span class="s3">false</span><span class="s1">;</span>
+        <span class="s3">switch </span><span class="s1">(field.type) {</span>
+            <span class="s3">case </span><span class="s0">&quot;double&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;float&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;m%s=Number(d%s)&quot;</span><span class="s1">, prop, prop); </span><span class="s2">// also catches &quot;NaN&quot;, &quot;Infinity&quot;</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;uint32&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;fixed32&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;m%s=d%s&gt;&gt;&gt;0&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;int32&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sint32&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sfixed32&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;m%s=d%s|0&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;uint64&quot;</span><span class="s1">:</span>
+                <span class="s1">isUnsigned = </span><span class="s3">true</span><span class="s1">;</span>
+                <span class="s2">// eslint-disable-next-line no-fallthrough</span>
+            <span class="s3">case </span><span class="s0">&quot;int64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sint64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;fixed64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sfixed64&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;if(util.Long)&quot;</span><span class="s1">)</span>
+                    <span class="s1">(</span><span class="s0">&quot;(m%s=util.Long.fromValue(d%s)).unsigned=%j&quot;</span><span class="s1">, prop, prop, isUnsigned)</span>
+                <span class="s1">(</span><span class="s0">&quot;else if(typeof d%s===</span><span class="s3">\&quot;</span><span class="s0">string</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                    <span class="s1">(</span><span class="s0">&quot;m%s=parseInt(d%s,10)&quot;</span><span class="s1">, prop, prop)</span>
+                <span class="s1">(</span><span class="s0">&quot;else if(typeof d%s===</span><span class="s3">\&quot;</span><span class="s0">number</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                    <span class="s1">(</span><span class="s0">&quot;m%s=d%s&quot;</span><span class="s1">, prop, prop)</span>
+                <span class="s1">(</span><span class="s0">&quot;else if(typeof d%s===</span><span class="s3">\&quot;</span><span class="s0">object</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                    <span class="s1">(</span><span class="s0">&quot;m%s=new util.LongBits(d%s.low&gt;&gt;&gt;0,d%s.high&gt;&gt;&gt;0).toNumber(%s)&quot;</span><span class="s1">, prop, prop, prop, isUnsigned ? </span><span class="s0">&quot;true&quot; </span><span class="s1">: </span><span class="s0">&quot;&quot;</span><span class="s1">);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;bytes&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;if(typeof d%s===</span><span class="s3">\&quot;</span><span class="s0">string</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                    <span class="s1">(</span><span class="s0">&quot;util.base64.decode(d%s,m%s=util.newBuffer(util.base64.length(d%s)),0)&quot;</span><span class="s1">, prop, prop, prop)</span>
+                <span class="s1">(</span><span class="s0">&quot;else if(d%s.length &gt;= 0)&quot;</span><span class="s1">, prop)</span>
+                    <span class="s1">(</span><span class="s0">&quot;m%s=d%s&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;string&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;m%s=String(d%s)&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;bool&quot;</span><span class="s1">: gen</span>
+                <span class="s1">(</span><span class="s0">&quot;m%s=Boolean(d%s)&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s2">/* default: gen 
+                (&quot;m%s=d%s&quot;, prop, prop); 
+                break; */</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">gen;</span>
+    <span class="s2">/* eslint-enable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Generates a plain object to runtime message converter specific to the specified message type. 
+ * @param {Type} mtype Message type 
+ * @returns {Codegen} Codegen instance 
+ */</span>
+<span class="s1">converter.fromObject = </span><span class="s3">function </span><span class="s1">fromObject(mtype) {</span>
+    <span class="s2">/* eslint-disable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+    <span class="s3">var </span><span class="s1">fields = mtype.fieldsArray;</span>
+    <span class="s3">var </span><span class="s1">gen = util.codegen([</span><span class="s0">&quot;d&quot;</span><span class="s1">, </span><span class="s0">&quot;n&quot;</span><span class="s1">], mtype.name + </span><span class="s0">&quot;$fromObject&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(d instanceof this.ctor)&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;return d&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(n===undefined)n=0&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(n&gt;util.recursionLimit)&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;throw Error(</span><span class="s3">\&quot;</span><span class="s0">maximum nesting depth exceeded</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">);</span>
+    <span class="s3">if </span><span class="s1">(!fields.length) </span><span class="s3">return </span><span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;return new this.ctor&quot;</span><span class="s1">);</span>
+    <span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;var m=new this.ctor&quot;</span><span class="s1">);</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; fields.length; ++i) {</span>
+        <span class="s3">var </span><span class="s1">field  = fields[i].resolve(),</span>
+            <span class="s1">prop   = util.safeProp(field.name);</span>
+
+        <span class="s2">// Map fields</span>
+        <span class="s3">if </span><span class="s1">(field.map) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(d%s){&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;if(typeof d%s!==</span><span class="s3">\&quot;</span><span class="s0">object</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+            <span class="s1">(</span><span class="s0">&quot;throw TypeError(%j)&quot;</span><span class="s1">, field.fullName + </span><span class="s0">&quot;: object expected&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;m%s={}&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var ks=Object.keys(d%s),i=0;i&lt;ks.length;++i){&quot;</span><span class="s1">, prop);</span>
+            <span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;if(ks[i]===</span><span class="s3">\&quot;</span><span class="s0">__proto__</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;util.makeProp(m%s,ks[i])&quot;</span><span class="s1">, prop);</span>
+            <span class="s1">genValuePartial_fromObject(gen, field, </span><span class="s2">/* not sorted */ </span><span class="s1">i, prop + </span><span class="s0">&quot;[ks[i]]&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+
+        <span class="s2">// Repeated fields</span>
+        <span class="s1">} </span><span class="s3">else if </span><span class="s1">(field.repeated) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(d%s){&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;if(!Array.isArray(d%s))&quot;</span><span class="s1">, prop)</span>
+            <span class="s1">(</span><span class="s0">&quot;throw TypeError(%j)&quot;</span><span class="s1">, field.fullName + </span><span class="s0">&quot;: array expected&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;m%s=[]&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var i=0;i&lt;d%s.length;++i){&quot;</span><span class="s1">, prop);</span>
+            <span class="s1">genValuePartial_fromObject(gen, field, </span><span class="s2">/* not sorted */ </span><span class="s1">i, prop + </span><span class="s0">&quot;[i]&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+
+        <span class="s2">// Non-repeated fields</span>
+        <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">if </span><span class="s1">(!(field.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum)) gen </span><span class="s2">// no need to test for null/undefined if an enum (uses switch)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(d%s!=null){&quot;</span><span class="s1">, prop); </span><span class="s2">// !== undefined &amp;&amp; !== null</span>
+        <span class="s1">genValuePartial_fromObject(gen, field, </span><span class="s2">/* not sorted */ </span><span class="s1">i, prop);</span>
+            <span class="s3">if </span><span class="s1">(!(field.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum)) gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+        <span class="s1">}</span>
+    <span class="s1">} </span><span class="s3">return </span><span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;return m&quot;</span><span class="s1">);</span>
+    <span class="s2">/* eslint-enable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Generates a partial value toObject converter. 
+ * @param {Codegen} gen Codegen instance 
+ * @param {Field} field Reflected field 
+ * @param {number} fieldIndex Field index 
+ * @param {string} prop Property reference 
+ * @returns {Codegen} Codegen instance 
+ * @ignore 
+ */</span>
+<span class="s3">function </span><span class="s1">genValuePartial_toObject(gen, field, fieldIndex, prop) {</span>
+    <span class="s2">/* eslint-disable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+    <span class="s3">if </span><span class="s1">(field.resolvedType) {</span>
+        <span class="s3">if </span><span class="s1">(field.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum) gen</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=o.enums===String?(types[%i].values[m%s]===undefined?m%s:types[%i].values[m%s]):m%s&quot;</span><span class="s1">, prop, fieldIndex, prop, prop, fieldIndex, prop, prop);</span>
+        <span class="s3">else </span><span class="s1">gen</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=types[%i].toObject(m%s,o)&quot;</span><span class="s1">, prop, fieldIndex, prop);</span>
+    <span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+        <span class="s3">var </span><span class="s1">isUnsigned = </span><span class="s3">false</span><span class="s1">;</span>
+        <span class="s3">switch </span><span class="s1">(field.type) {</span>
+            <span class="s3">case </span><span class="s0">&quot;double&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;float&quot;</span><span class="s1">: gen</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=o.json&amp;&amp;!isFinite(m%s)?String(m%s):m%s&quot;</span><span class="s1">, prop, prop, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;uint64&quot;</span><span class="s1">:</span>
+                <span class="s1">isUnsigned = </span><span class="s3">true</span><span class="s1">;</span>
+                <span class="s2">// eslint-disable-next-line no-fallthrough</span>
+            <span class="s3">case </span><span class="s0">&quot;int64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sint64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;fixed64&quot;</span><span class="s1">:</span>
+            <span class="s3">case </span><span class="s0">&quot;sfixed64&quot;</span><span class="s1">: gen</span>
+            <span class="s1">(</span><span class="s0">&quot;if(typeof m%s===</span><span class="s3">\&quot;</span><span class="s0">number</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">, prop)</span>
+                <span class="s1">(</span><span class="s0">&quot;d%s=o.longs===String?String(m%s):m%s&quot;</span><span class="s1">, prop, prop, prop)</span>
+            <span class="s1">(</span><span class="s0">&quot;else&quot;</span><span class="s1">) </span><span class="s2">// Long-like</span>
+                <span class="s1">(</span><span class="s0">&quot;d%s=o.longs===String?util.Long.prototype.toString.call(m%s):o.longs===Number?new util.LongBits(m%s.low&gt;&gt;&gt;0,m%s.high&gt;&gt;&gt;0).toNumber(%s):m%s&quot;</span><span class="s1">, prop, prop, prop, prop, isUnsigned ? </span><span class="s0">&quot;true&quot;</span><span class="s1">: </span><span class="s0">&quot;&quot;</span><span class="s1">, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">case </span><span class="s0">&quot;bytes&quot;</span><span class="s1">: gen</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=o.bytes===String?util.base64.encode(m%s,0,m%s.length):o.bytes===Array?Array.prototype.slice.call(m%s):m%s&quot;</span><span class="s1">, prop, prop, prop, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+            <span class="s3">default</span><span class="s1">: gen</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=m%s&quot;</span><span class="s1">, prop, prop);</span>
+                <span class="s3">break</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">gen;</span>
+    <span class="s2">/* eslint-enable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Generates a runtime message to plain object converter specific to the specified message type. 
+ * @param {Type} mtype Message type 
+ * @returns {Codegen} Codegen instance 
+ */</span>
+<span class="s1">converter.toObject = </span><span class="s3">function </span><span class="s1">toObject(mtype) {</span>
+    <span class="s2">/* eslint-disable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+    <span class="s3">var </span><span class="s1">fields = mtype.fieldsArray.slice().sort(util.compareFieldsById);</span>
+    <span class="s3">if </span><span class="s1">(!fields.length)</span>
+        <span class="s3">return </span><span class="s1">util.codegen()(</span><span class="s0">&quot;return {}&quot;</span><span class="s1">);</span>
+    <span class="s3">var </span><span class="s1">gen = util.codegen([</span><span class="s0">&quot;m&quot;</span><span class="s1">, </span><span class="s0">&quot;o&quot;</span><span class="s1">], mtype.name + </span><span class="s0">&quot;$toObject&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;if(!o)&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;o={}&quot;</span><span class="s1">)</span>
+    <span class="s1">(</span><span class="s0">&quot;var d={}&quot;</span><span class="s1">);</span>
+
+    <span class="s3">var </span><span class="s1">repeatedFields = [],</span>
+        <span class="s1">mapFields = [],</span>
+        <span class="s1">normalFields = [],</span>
+        <span class="s1">i = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s3">for </span><span class="s1">(; i &lt; fields.length; ++i)</span>
+        <span class="s3">if </span><span class="s1">(!fields[i].partOf)</span>
+            <span class="s1">( fields[i].resolve().repeated ? repeatedFields</span>
+            <span class="s1">: fields[i].map ? mapFields</span>
+            <span class="s1">: normalFields).push(fields[i]);</span>
+
+    <span class="s3">if </span><span class="s1">(repeatedFields.length) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(o.arrays||o.defaults){&quot;</span><span class="s1">);</span>
+        <span class="s3">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; repeatedFields.length; ++i) gen</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s=[]&quot;</span><span class="s1">, util.safeProp(repeatedFields[i].name));</span>
+        <span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">if </span><span class="s1">(mapFields.length) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(o.objects||o.defaults){&quot;</span><span class="s1">);</span>
+        <span class="s3">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; mapFields.length; ++i) gen</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s={}&quot;</span><span class="s1">, util.safeProp(mapFields[i].name));</span>
+        <span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">if </span><span class="s1">(normalFields.length) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(o.defaults){&quot;</span><span class="s1">);</span>
+        <span class="s3">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; normalFields.length; ++i) {</span>
+            <span class="s3">var </span><span class="s1">field = normalFields[i],</span>
+                <span class="s1">prop  = util.safeProp(field.name);</span>
+            <span class="s3">if </span><span class="s1">(field.resolvedType </span><span class="s3">instanceof </span><span class="s1">Enum) gen</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s=o.enums===String?%j:%j&quot;</span><span class="s1">, prop, field.resolvedType.valuesById[field.typeDefault], field.typeDefault);</span>
+            <span class="s3">else if </span><span class="s1">(field.long) gen</span>
+        <span class="s1">(</span><span class="s0">&quot;if(util.Long){&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;var n=new util.Long(%i,%i,%j)&quot;</span><span class="s1">, field.typeDefault.low, field.typeDefault.high, field.typeDefault.unsigned)</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=o.longs===String?n.toString():o.longs===Number?n.toNumber():n&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;}else&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=o.longs===String?%j:%i&quot;</span><span class="s1">, prop, field.typeDefault.toString(), field.typeDefault.toNumber());</span>
+            <span class="s3">else if </span><span class="s1">(field.bytes) {</span>
+                <span class="s3">var </span><span class="s1">arrayDefault = Array.prototype.slice.call(field.typeDefault);</span>
+                <span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;if(o.bytes===String)d%s=%j&quot;</span><span class="s1">, prop, String.fromCharCode.apply(String, field.typeDefault))</span>
+        <span class="s1">(</span><span class="s0">&quot;else{&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=%j&quot;</span><span class="s1">, prop, arrayDefault)</span>
+            <span class="s1">(</span><span class="s0">&quot;if(o.bytes!==Array)d%s=util.newBuffer(d%s)&quot;</span><span class="s1">, prop, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+            <span class="s1">} </span><span class="s3">else </span><span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s=%j&quot;</span><span class="s1">, prop, field.typeDefault); </span><span class="s2">// also messages (=null)</span>
+        <span class="s1">} gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">var </span><span class="s1">hasKs2 = </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s3">for </span><span class="s1">(i = </span><span class="s4">0</span><span class="s1">; i &lt; fields.length; ++i) {</span>
+        <span class="s3">var </span><span class="s1">field = fields[i],</span>
+            <span class="s1">index = mtype._fieldsArray.indexOf(field),</span>
+            <span class="s1">prop  = util.safeProp(field.name);</span>
+        <span class="s3">if </span><span class="s1">(field.map) {</span>
+            <span class="s3">if </span><span class="s1">(!hasKs2) { hasKs2 = </span><span class="s3">true</span><span class="s1">; gen</span>
+    <span class="s1">(</span><span class="s0">&quot;var ks2&quot;</span><span class="s1">);</span>
+            <span class="s1">} gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(m%s&amp;&amp;(ks2=Object.keys(m%s)).length){&quot;</span><span class="s1">, prop, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s={}&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var j=0;j&lt;ks2.length;++j){&quot;</span><span class="s1">);</span>
+            <span class="s1">gen</span>
+        <span class="s1">(</span><span class="s0">&quot;if(ks2[j]===</span><span class="s3">\&quot;</span><span class="s0">__proto__</span><span class="s3">\&quot;</span><span class="s0">)&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;util.makeProp(d%s,ks2[j])&quot;</span><span class="s1">, prop);</span>
+            <span class="s1">genValuePartial_toObject(gen, field, </span><span class="s2">/* sorted */ </span><span class="s1">index, prop + </span><span class="s0">&quot;[ks2[j]]&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s3">else if </span><span class="s1">(field.repeated) { gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(m%s&amp;&amp;m%s.length){&quot;</span><span class="s1">, prop, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;d%s=[]&quot;</span><span class="s1">, prop)</span>
+        <span class="s1">(</span><span class="s0">&quot;for(var j=0;j&lt;m%s.length;++j){&quot;</span><span class="s1">, prop);</span>
+            <span class="s1">genValuePartial_toObject(gen, field, </span><span class="s2">/* sorted */ </span><span class="s1">index, prop + </span><span class="s0">&quot;[j]&quot;</span><span class="s1">)</span>
+        <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+        <span class="s1">} </span><span class="s3">else </span><span class="s1">{ gen</span>
+    <span class="s1">(</span><span class="s0">&quot;if(m%s!=null&amp;&amp;m.hasOwnProperty(%j)){&quot;</span><span class="s1">, prop, field.name); </span><span class="s2">// !== undefined &amp;&amp; !== null</span>
+        <span class="s1">genValuePartial_toObject(gen, field, </span><span class="s2">/* sorted */ </span><span class="s1">index, prop);</span>
+        <span class="s3">if </span><span class="s1">(field.partOf) gen</span>
+        <span class="s1">(</span><span class="s0">&quot;if(o.oneofs)&quot;</span><span class="s1">)</span>
+            <span class="s1">(</span><span class="s0">&quot;d%s=%j&quot;</span><span class="s1">, util.safeProp(field.partOf.name), field.name);</span>
+        <span class="s1">}</span>
+        <span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;}&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+    <span class="s3">return </span><span class="s1">gen</span>
+    <span class="s1">(</span><span class="s0">&quot;return d&quot;</span><span class="s1">);</span>
+    <span class="s2">/* eslint-enable no-unexpected-multiline, block-scoped-var, no-redeclare */</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

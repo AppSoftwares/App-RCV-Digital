@@ -1,0 +1,2186 @@
+<html>
+<head>
+<title>test.d.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #bcbec4;}
+.s4 { color: #6aab73;}
+.s5 { color: #56a8f5;}
+.s6 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+test.d.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">/**</span>
+ <span class="s1">* The `node:test` module facilitates the creation of JavaScript tests. 
+ * To access it: 
+ * 
+ * ```js 
+ * import test from 'node:test'; 
+ * ``` 
+ * 
+ * This module is only available under the `node:` scheme. The following will not 
+ * work: 
+ * 
+ * ```js 
+ * import test from 'node:test'; 
+ * ``` 
+ * 
+ * Tests created via the `test` module consist of a single function that is 
+ * processed in one of three ways: 
+ * 
+ * 1. A synchronous function that is considered failing if it throws an exception, 
+ * and is considered passing otherwise. 
+ * 2. A function that returns a `Promise` that is considered failing if the `Promise` rejects, and is considered passing if the `Promise` fulfills. 
+ * 3. A function that receives a callback function. If the callback receives any 
+ * truthy value as its first argument, the test is considered failing. If a 
+ * falsy value is passed as the first argument to the callback, the test is 
+ * considered passing. If the test function receives a callback function and 
+ * also returns a `Promise`, the test will fail. 
+ * 
+ * The following example illustrates how tests are written using the `test` module. 
+ * 
+ * ```js 
+ * test('synchronous passing test', (t) =&gt; { 
+ *   // This test passes because it does not throw an exception. 
+ *   assert.strictEqual(1, 1); 
+ * }); 
+ * 
+ * test('synchronous failing test', (t) =&gt; { 
+ *   // This test fails because it throws an exception. 
+ *   assert.strictEqual(1, 2); 
+ * }); 
+ * 
+ * test('asynchronous passing test', async (t) =&gt; { 
+ *   // This test passes because the Promise returned by the async 
+ *   // function is settled and not rejected. 
+ *   assert.strictEqual(1, 1); 
+ * }); 
+ * 
+ * test('asynchronous failing test', async (t) =&gt; { 
+ *   // This test fails because the Promise returned by the async 
+ *   // function is rejected. 
+ *   assert.strictEqual(1, 2); 
+ * }); 
+ * 
+ * test('failing test using Promises', (t) =&gt; { 
+ *   // Promises can be used directly as well. 
+ *   return new Promise((resolve, reject) =&gt; { 
+ *     setImmediate(() =&gt; { 
+ *       reject(new Error('this will cause the test to fail')); 
+ *     }); 
+ *   }); 
+ * }); 
+ * 
+ * test('callback passing test', (t, done) =&gt; { 
+ *   // done() is the callback function. When the setImmediate() runs, it invokes 
+ *   // done() with no arguments. 
+ *   setImmediate(done); 
+ * }); 
+ * 
+ * test('callback failing test', (t, done) =&gt; { 
+ *   // When the setImmediate() runs, done() is invoked with an Error object and 
+ *   // the test fails. 
+ *   setImmediate(() =&gt; { 
+ *     done(new Error('callback failure')); 
+ *   }); 
+ * }); 
+ * ``` 
+ * 
+ * If any tests fail, the process exit code is set to `1`. 
+ * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+ * </span><span class="s0">@</span><span class="s2">see </span><span class="s0">[source](https:</span><span class="s1">//github.com/nodejs/node/blob/v22.x/lib/test.js) 
+ </span><span class="s0">*/</span>
+<span class="s2">declare module </span><span class="s0">&quot;</span><span class="s4">node:test</span><span class="s0">&quot; {</span>
+    <span class="s2">import </span><span class="s0">{ AssertMethodNames } </span><span class="s2">from </span><span class="s0">&quot;</span><span class="s4">node:assert</span><span class="s0">&quot;;</span>
+    <span class="s2">import </span><span class="s0">{ Readable } </span><span class="s2">from </span><span class="s0">&quot;</span><span class="s4">node:stream</span><span class="s0">&quot;;</span>
+    <span class="s2">import </span><span class="s0">{ URL } </span><span class="s2">from </span><span class="s0">&quot;</span><span class="s4">node:url</span><span class="s0">&quot;;</span>
+    <span class="s2">import </span><span class="s0">TestFn = test.TestFn;</span>
+    <span class="s2">import </span><span class="s0">TestOptions = test.TestOptions;</span>
+    <span class="s0">/**</span>
+     <span class="s1">* The `test()` function is the value imported from the `test` module. Each 
+     * invocation of this function results in reporting the test to the `TestsStream`. 
+     * 
+     * The `TestContext` object passed to the `fn` argument can be used to perform 
+     * actions related to the current test. Examples include skipping the test, adding 
+     * additional diagnostic information, or creating subtests. 
+     * 
+     * `test()` returns a `Promise` that fulfills once the test completes. 
+     * if `test()` is called within a suite, it fulfills immediately. 
+     * The return value can usually be discarded for top level tests. 
+     * However, the return value from subtests should be used to prevent the parent 
+     * test from finishing first and cancelling the subtest 
+     * as shown in the following example. 
+     * 
+     * ```js 
+     * test('top level test', async (t) =&gt; { 
+     *   // The setTimeout() in the following subtest would cause it to outlive its 
+     *   // parent test if 'await' is removed on the next line. Once the parent test 
+     *   // completes, it will cancel any outstanding subtests. 
+     *   await t.test('longer running subtest', async (t) =&gt; { 
+     *     return new Promise((resolve, reject) =&gt; { 
+     *       setTimeout(resolve, 1000); 
+     *     }); 
+     *   }); 
+     * }); 
+     * ``` 
+     * 
+     * The `timeout` option can be used to fail the test if it takes longer than `timeout` milliseconds to complete. However, it is not a reliable mechanism for 
+     * canceling tests because a running test might block the application thread and 
+     * thus prevent the scheduled cancellation. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+     * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">name </span><span class="s1">The name of the test, which is displayed when reporting test results. 
+     * Defaults to the `name` property of `fn`, or `'&lt;anonymous&gt;'` if `fn` does not have a name. 
+     * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the test. 
+     * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The function under test. The first argument to this function is a </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">TestContext} </span><span class="s1">object. 
+     * If the test uses callbacks, the callback function is passed as the second argument. 
+     * </span><span class="s0">@</span><span class="s2">return </span><span class="s1">Fulfilled with `undefined` once the test completes, or immediately if the test runs within a suite. 
+     </span><span class="s0">*/</span>
+    <span class="s2">function </span><span class="s5">test</span><span class="s0">(name?: string, fn?: TestFn): Promise&lt;void&gt;;</span>
+    <span class="s2">function </span><span class="s5">test</span><span class="s0">(name?: string, options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+    <span class="s2">function </span><span class="s5">test</span><span class="s0">(options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+    <span class="s2">function </span><span class="s5">test</span><span class="s0">(fn?: TestFn): Promise&lt;void&gt;;</span>
+    <span class="s2">namespace </span><span class="s0">test {</span>
+        <span class="s2">export </span><span class="s0">{ test };</span>
+        <span class="s2">export </span><span class="s0">{ suite </span><span class="s2">as </span><span class="s0">describe, test </span><span class="s2">as </span><span class="s0">it };</span>
+    <span class="s0">}</span>
+    <span class="s2">namespace </span><span class="s0">test {</span>
+        <span class="s0">/**</span>
+         <span class="s1">* **Note:** `shard` is used to horizontally parallelize test running across 
+         * machines or processes, ideal for large-scale executions across varied 
+         * environments. It's incompatible with `watch` mode, tailored for rapid 
+         * code iteration by automatically rerunning tests on file changes. 
+         * 
+         * ```js 
+         * import { tap } from 'node:test/reporters'; 
+         * import { run } from 'node:test'; 
+         * import process from 'node:process'; 
+         * import path from 'node:path'; 
+         * 
+         * run({ files: [path.resolve('./tests/test.js')] }) 
+         *   .compose(tap) 
+         *   .pipe(process.stdout); 
+         * ``` 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.9.0, v16.19.0 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for running tests. 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">run</span><span class="s0">(options?: RunOptions): TestsStream;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The `suite()` function is imported from the `node:test` module. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">name </span><span class="s1">The name of the suite, which is displayed when reporting test results. 
+         * Defaults to the `name` property of `fn`, or `'&lt;anonymous&gt;'` if `fn` does not have a name. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the suite. This supports the same options as </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test}</span><span class="s1">. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The suite function declaring nested tests and suites. The first argument to this function is a </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">SuiteContext} </span><span class="s1">object. 
+         * </span><span class="s0">@</span><span class="s2">return </span><span class="s1">Immediately fulfilled with `undefined`. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.13.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">suite</span><span class="s0">(name?: string, options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">suite</span><span class="s0">(name?: string, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">suite</span><span class="s0">(options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">suite</span><span class="s0">(fn?: SuiteFn): Promise&lt;void&gt;;</span>
+        <span class="s2">namespace </span><span class="s0">suite {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Shorthand for skipping a suite. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">suite} </span><span class="s1">with `options.skip` set to `true`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">skip</span><span class="s0">(name?: string, options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">skip</span><span class="s0">(name?: string, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">skip</span><span class="s0">(options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">skip</span><span class="s0">(fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Shorthand for marking a suite as `TODO`. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">suite} </span><span class="s1">with `options.todo` set to `true`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">todo</span><span class="s0">(name?: string, options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">todo</span><span class="s0">(name?: string, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">todo</span><span class="s0">(options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">todo</span><span class="s0">(fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Shorthand for marking a suite as `only`. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">suite} </span><span class="s1">with `options.only` set to `true`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">only</span><span class="s0">(name?: string, options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">only</span><span class="s0">(name?: string, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">only</span><span class="s0">(options?: TestOptions, fn?: SuiteFn): Promise&lt;void&gt;;</span>
+            <span class="s2">function </span><span class="s5">only</span><span class="s0">(fn?: SuiteFn): Promise&lt;void&gt;;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* Shorthand for skipping a test. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test} </span><span class="s1">with `options.skip` set to `true`. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.2.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">skip</span><span class="s0">(name?: string, options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">skip</span><span class="s0">(name?: string, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">skip</span><span class="s0">(options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">skip</span><span class="s0">(fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* Shorthand for marking a test as `TODO`. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test} </span><span class="s1">with `options.todo` set to `true`. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.2.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">todo</span><span class="s0">(name?: string, options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">todo</span><span class="s0">(name?: string, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">todo</span><span class="s0">(options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">todo</span><span class="s0">(fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* Shorthand for marking a test as `only`. This is the same as calling </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test} </span><span class="s1">with `options.only` set to `true`. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.2.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">only</span><span class="s0">(name?: string, options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">only</span><span class="s0">(name?: string, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">only</span><span class="s0">(options?: TestOptions, fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s2">function </span><span class="s5">only</span><span class="s0">(fn?: TestFn): Promise&lt;void&gt;;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The type of a function passed to </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test}</span><span class="s1">. The first argument to this function is a </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">TestContext} </span><span class="s1">object. 
+         * If the test uses callbacks, the callback function is passed as the second argument. 
+         </span><span class="s0">*/</span>
+        <span class="s2">type </span><span class="s0">TestFn = (t: TestContext, </span><span class="s5">done</span><span class="s0">: (result?: any) </span><span class="s2">=&gt; </span><span class="s0">void) </span><span class="s2">=&gt; </span><span class="s0">void | Promise&lt;void&gt;;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The type of a suite test function. The argument to this function is a </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">SuiteContext} </span><span class="s1">object. 
+         </span><span class="s0">*/</span>
+        <span class="s2">type </span><span class="s0">SuiteFn = (s: SuiteContext) </span><span class="s2">=&gt; </span><span class="s0">void | Promise&lt;void&gt;;</span>
+        <span class="s2">interface </span><span class="s0">TestShard {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A positive integer between 1 and `total` that specifies the index of the shard to run. 
+             </span><span class="s0">*/</span>
+            <span class="s0">index: number;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A positive integer that specifies the total number of shards to split the test files to. 
+             </span><span class="s0">*/</span>
+            <span class="s0">total: number;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">RunOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If a number is provided, then that many test processes would run in parallel, where each process corresponds to one test file. 
+             * If `true`, it would run `os.availableParallelism() - 1` test files in parallel. If `false`, it would only run one test file at a time. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">concurrency?: number | boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array containing the list of files to run. If omitted, files are run according to the 
+             * [test runner execution model](https://nodejs.org/docs/latest-v22.x/api/test.html#test-runner-execution-model). 
+             </span><span class="s0">*/</span>
+            <span class="s0">files?: </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Configures the test runner to exit the process once all known 
+             * tests have finished executing even if the event loop would 
+             * otherwise remain active. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">forceExit?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array containing the list of glob patterns to match test files. 
+             * This option cannot be used together with `files`. If omitted, files are run according to the 
+             * [test runner execution model](https://nodejs.org/docs/latest-v22.x/api/test.html#test-runner-execution-model). 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.6.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">globPatterns?: </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Sets inspector port of test child process. 
+             * This can be a number, or a function that takes no arguments and returns a 
+             * number. If a nullish value is provided, each process gets its own port, 
+             * incremented from the primary's `process.debugPort`. This option is ignored 
+             * if the `isolation` option is set to `'none'` as no child processes are 
+             * spawned. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">inspectPort?: number | </span><span class="s3">(</span><span class="s0">() </span><span class="s2">=&gt; </span><span class="s0">number</span><span class="s3">) </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Configures the type of test isolation. If set to 
+             * `'process'`, each test file is run in a separate child process. If set to 
+             * `'none'`, all test files run in the current process. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">'process'</span>
+             <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.8.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">isolation?: &quot;</span><span class="s4">process</span><span class="s0">&quot; | &quot;</span><span class="s4">none</span><span class="s0">&quot; | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If truthy, the test context will only run tests that have the `only` option set 
+             </span><span class="s0">*/</span>
+            <span class="s0">only?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A function that accepts the `TestsStream` instance and can be used to setup listeners before any tests are run. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">setup?: </span><span class="s3">(</span><span class="s0">(reporter: TestsStream) </span><span class="s2">=&gt; </span><span class="s0">void | Promise&lt;void&gt;</span><span class="s3">) </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array of CLI flags to pass to the `node` executable when 
+             * spawning the subprocesses. This option has no effect when `isolation` is `'none`'. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">[]</span>
+             <span class="s0">*/</span>
+            <span class="s0">execArgv?: </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array of CLI flags to pass to each test file when spawning the 
+             * subprocesses. This option has no effect when `isolation` is `'none'`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">[]</span>
+             <span class="s0">*/</span>
+            <span class="s0">argv?: </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Allows aborting an in-progress test execution. 
+             </span><span class="s0">*/</span>
+            <span class="s0">signal?: AbortSignal | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If provided, only run tests whose name matches the provided pattern. 
+             * Strings are interpreted as JavaScript regular expressions. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">testNamePatterns?: string | RegExp | ReadonlyArray&lt;string | RegExp&gt; | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A String, RegExp or a RegExp Array, that can be used to exclude running tests whose 
+             * name matches the provided pattern. Test name patterns are interpreted as JavaScript 
+             * regular expressions. For each test that is executed, any corresponding test hooks, 
+             * such as `beforeEach()`, are also run. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.1.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">testSkipPatterns?: string | RegExp | ReadonlyArray&lt;string | RegExp&gt; | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The number of milliseconds after which the test execution will fail. 
+             * If unspecified, subtests inherit this value from their parent. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">Infinity</span>
+             <span class="s0">*/</span>
+            <span class="s0">timeout?: number | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Whether to run in watch mode or not. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">watch?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Running tests in a specific shard. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">shard?: TestShard | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* enable [code coverage](https://nodejs.org/docs/latest-v22.x/api/test.html#collecting-code-coverage) collection. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">coverage?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Excludes specific files from code coverage 
+             * using a glob pattern, which can match both absolute and relative file paths. 
+             * This property is only applicable when `coverage` was set to `true`. 
+             * If both `coverageExcludeGlobs` and `coverageIncludeGlobs` are provided, 
+             * files must meet **both** criteria to be included in the coverage report. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">coverageExcludeGlobs?: string | </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Includes specific files in code coverage 
+             * using a glob pattern, which can match both absolute and relative file paths. 
+             * This property is only applicable when `coverage` was set to `true`. 
+             * If both `coverageExcludeGlobs` and `coverageIncludeGlobs` are provided, 
+             * files must meet **both** criteria to be included in the coverage report. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s0">*/</span>
+            <span class="s0">coverageIncludeGlobs?: string | </span><span class="s2">readonly </span><span class="s0">string</span><span class="s3">[] </span><span class="s0">| undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Require a minimum percent of covered lines. If code 
+             * coverage does not reach the threshold specified, the process will exit with code `1`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">0</span>
+             <span class="s0">*/</span>
+            <span class="s0">lineCoverage?: number | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Require a minimum percent of covered branches. If code 
+             * coverage does not reach the threshold specified, the process will exit with code `1`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">0</span>
+             <span class="s0">*/</span>
+            <span class="s0">branchCoverage?: number | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Require a minimum percent of covered functions. If code 
+             * coverage does not reach the threshold specified, the process will exit with code `1`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.10.0 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">0</span>
+             <span class="s0">*/</span>
+            <span class="s0">functionCoverage?: number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* A successful call to `run()` will return a new `TestsStream` object, streaming a series of events representing the execution of the tests. 
+         * 
+         * Some of the events are guaranteed to be emitted in the same order as the tests are defined, while others are emitted in the order that the tests execute. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.9.0, v16.19.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">TestsStream </span><span class="s2">extends </span><span class="s0">Readable {</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestCoverage) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestComplete) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDequeue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDiagnostic) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestEnqueue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestFail) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPass) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPlan) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStart) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStderr) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStdout) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestSummary) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">addListener</span><span class="s0">(event: string, </span><span class="s5">listener</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, data: EventData.TestCoverage): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, data: EventData.TestComplete): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, data: EventData.TestDequeue): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, data: EventData.TestDiagnostic): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, data: EventData.TestEnqueue): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, data: EventData.TestFail): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, data: EventData.TestPass): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, data: EventData.TestPlan): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, data: EventData.TestStart): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, data: EventData.TestStderr): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, data: EventData.TestStdout): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, data: EventData.TestSummary): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;): boolean;</span>
+            <span class="s5">emit</span><span class="s0">(event: string | symbol, ...args: any</span><span class="s3">[]</span><span class="s0">): boolean;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestCoverage) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestComplete) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDequeue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDiagnostic) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestEnqueue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestFail) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPass) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPlan) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStart) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStderr) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStdout) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestSummary) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">on</span><span class="s0">(event: string, </span><span class="s5">listener</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestCoverage) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestComplete) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDequeue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDiagnostic) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestEnqueue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestFail) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPass) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPlan) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStart) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStderr) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStdout) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestSummary) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">once</span><span class="s0">(event: string, </span><span class="s5">listener</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestCoverage) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestComplete) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDequeue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDiagnostic) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestEnqueue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestFail) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPass) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPlan) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStart) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStderr) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStdout) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestSummary) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependListener</span><span class="s0">(event: string, </span><span class="s5">listener</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestCoverage) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestComplete) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDequeue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestDiagnostic) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestEnqueue) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestFail) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPass) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestPlan) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStart) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStderr) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestStdout) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: (data: EventData.TestSummary) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;, </span><span class="s5">listener</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+            <span class="s5">prependOnceListener</span><span class="s0">(event: string, </span><span class="s5">listener</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): this;</span>
+        <span class="s0">}</span>
+        <span class="s2">namespace </span><span class="s0">EventData {</span>
+            <span class="s2">interface </span><span class="s0">Error </span><span class="s2">extends </span><span class="s0">globalThis.Error {</span>
+                <span class="s0">cause: globalThis.Error;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The column number where the test is defined, or 
+                 * `undefined` if the test was run through the REPL. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">column?: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The path of the test file, `undefined` if test was run through the REPL. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">file?: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The line number where the test is defined, or `undefined` if the test was run through the REPL. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">line?: number;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestDiagnostic </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The diagnostic message. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">message: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The severity level of the diagnostic message. 
+                 * Possible values are: 
+                 * * `'info'`: Informational messages. 
+                 * * `'warn'`: Warnings. 
+                 * * `'error'`: Errors. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">level: &quot;</span><span class="s4">info</span><span class="s0">&quot; | &quot;</span><span class="s4">warn</span><span class="s0">&quot; | &quot;</span><span class="s4">error</span><span class="s0">&quot;;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestCoverage {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* An object containing the coverage report. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">summary: {</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* An array of coverage reports for individual files. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">files: Array&lt;{</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The absolute path of the file. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">path: string;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of lines. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalLineCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of branches. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalBranchCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of functions. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalFunctionCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered lines. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredLineCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered branches. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredBranchCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered functions. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredFunctionCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of lines covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredLinePercent: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of branches covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredBranchPercent: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of functions covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredFunctionPercent: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* An array of functions representing function coverage. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">functions: Array&lt;{</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The name of the function. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">name: string;</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The line number where the function is defined. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">line: number;</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The number of times the function was called. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">count: number;</span>
+                        <span class="s0">}&gt;;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* An array of branches representing branch coverage. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">branches: Array&lt;{</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The line number where the branch is defined. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">line: number;</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The number of times the branch was taken. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">count: number;</span>
+                        <span class="s0">}&gt;;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* An array of lines representing line numbers and the number of times they were covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">lines: Array&lt;{</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The line number. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">line: number;</span>
+                            <span class="s0">/**</span>
+                             <span class="s1">* The number of times the line was covered. 
+                             </span><span class="s0">*/</span>
+                            <span class="s0">count: number;</span>
+                        <span class="s0">}&gt;;</span>
+                    <span class="s0">}&gt;;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* An object containing whether or not the coverage for 
+                     * each coverage type. 
+                     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.9.0 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">thresholds: {</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The function coverage threshold. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">function: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The branch coverage threshold. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">branch: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The line coverage threshold. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">line: number;</span>
+                    <span class="s0">};</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* An object containing a summary of coverage for all files. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">totals: {</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of lines. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalLineCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of branches. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalBranchCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The total number of functions. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">totalFunctionCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered lines. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredLineCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered branches. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredBranchCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The number of covered functions. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredFunctionCount: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of lines covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredLinePercent: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of branches covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredBranchPercent: number;</span>
+                        <span class="s0">/**</span>
+                         <span class="s1">* The percentage of functions covered. 
+                         </span><span class="s0">*/</span>
+                        <span class="s0">coveredFunctionPercent: number;</span>
+                    <span class="s0">};</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The working directory when code coverage began. This 
+                     * is useful for displaying relative path names in case 
+                     * the tests changed the working directory of the Node.js process. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">workingDirectory: string;</span>
+                <span class="s0">};</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestComplete </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Additional execution metadata. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">details: {</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* Whether the test passed or not. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">passed: boolean;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The duration of the test in milliseconds. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">duration_ms: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* An error wrapping the error thrown by the test if it did not pass. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">error?: Error;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The type of the test, used to denote whether this is a suite. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">type?: &quot;</span><span class="s4">suite</span><span class="s0">&quot;;</span>
+                <span class="s0">};</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The ordinal number of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">testNumber: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.todo` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">todo?: string | boolean;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.skip` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">skip?: string | boolean;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestDequeue </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test type. Either `'suite'` or `'test'`. 
+                 * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.15.0 
+                 </span><span class="s0">*/</span>
+                <span class="s0">type: &quot;</span><span class="s4">suite</span><span class="s0">&quot; | &quot;</span><span class="s4">test</span><span class="s0">&quot;;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestEnqueue </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test type. Either `'suite'` or `'test'`. 
+                 * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.15.0 
+                 </span><span class="s0">*/</span>
+                <span class="s0">type: &quot;</span><span class="s4">suite</span><span class="s0">&quot; | &quot;</span><span class="s4">test</span><span class="s0">&quot;;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestFail </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Additional execution metadata. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">details: {</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The duration of the test in milliseconds. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">duration_ms: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* An error wrapping the error thrown by the test. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">error: Error;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The type of the test, used to denote whether this is a suite. 
+                     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.0.0, v19.9.0, v18.17.0 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">type?: &quot;</span><span class="s4">suite</span><span class="s0">&quot;;</span>
+                <span class="s0">};</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The ordinal number of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">testNumber: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.todo` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">todo?: string | boolean;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.skip` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">skip?: string | boolean;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestPass </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Additional execution metadata. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">details: {</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The duration of the test in milliseconds. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">duration_ms: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The type of the test, used to denote whether this is a suite. 
+                     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">20.0.0, 19.9.0, 18.17.0 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">type?: &quot;</span><span class="s4">suite</span><span class="s0">&quot;;</span>
+                <span class="s0">};</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The ordinal number of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">testNumber: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.todo` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">todo?: string | boolean;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Present if `context.skip` is called. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">skip?: string | boolean;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestPlan </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The number of subtests that have ran. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">count: number;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestStart </span><span class="s2">extends </span><span class="s0">LocationInfo {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The test name. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">name: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The nesting level of the test. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">nesting: number;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestStderr {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The path of the test file. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">file: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The message written to `stderr`. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">message: string;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestStdout {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The path of the test file. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">file: string;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The message written to `stdout`. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">message: string;</span>
+            <span class="s0">}</span>
+            <span class="s2">interface </span><span class="s0">TestSummary {</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* An object containing the counts of various test results. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">counts: {</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of cancelled tests. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">cancelled: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of passed tests. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">passed: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of skipped tests. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">skipped: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of suites run. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">suites: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of tests run, excluding suites. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">tests: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of TODO tests. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">todo: number;</span>
+                    <span class="s0">/**</span>
+                     <span class="s1">* The total number of top level tests and suites. 
+                     </span><span class="s0">*/</span>
+                    <span class="s0">topLevel: number;</span>
+                <span class="s0">};</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The duration of the test run in milliseconds. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">duration_ms: number;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* The path of the test file that generated the 
+                 * summary. If the summary corresponds to multiple files, this value is 
+                 * `undefined`. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">file: string | undefined;</span>
+                <span class="s0">/**</span>
+                 <span class="s1">* Indicates whether or not the test run is considered 
+                 * successful or not. If any error condition occurs, such as a failing test or 
+                 * unmet coverage threshold, this value will be set to `false`. 
+                 </span><span class="s0">*/</span>
+                <span class="s0">success: boolean;</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* An instance of `TestContext` is passed to each test function in order to 
+         * interact with the test runner. However, the `TestContext` constructor is not 
+         * exposed as part of the API. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">TestContext {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An object containing assertion methods bound to the test context. 
+             * The top-level functions from the `node:assert` module are exposed here for the purpose of creating test plans. 
+             * 
+             * **Note:** Some of the functions from `node:assert` contain type assertions. If these are called via the 
+             * TestContext `assert` object, then the context parameter in the test's function signature **must be explicitly typed** 
+             * (ie. the parameter must have a type annotation), otherwise an error will be raised by the TypeScript compiler: 
+             * ```ts 
+             * import { test, type TestContext } from 'node:test'; 
+             * 
+             * // The test function's context parameter must have a type annotation. 
+             * test('example', (t: TestContext) =&gt; { 
+             *   t.assert.deepStrictEqual(actual, expected); 
+             * }); 
+             * 
+             * // Omitting the type annotation will result in a compilation error. 
+             * test('example', t =&gt; { 
+             *   t.assert.deepStrictEqual(actual, expected); // Error: 't' needs an explicit type annotation. 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.2.0, v20.15.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">assert: TestContextAssert;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a hook running before subtest of the current test. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. The first argument to this function is a `TestContext` object. 
+             * If the hook uses callbacks, the callback function is passed as the second argument. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.1.0, v18.17.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">before</span><span class="s0">(fn?: TestContextHookFn, options?: HookOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a hook running before each subtest of the current test. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. The first argument to this function is a `TestContext` object. 
+             * If the hook uses callbacks, the callback function is passed as the second argument. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">beforeEach</span><span class="s0">(fn?: TestContextHookFn, options?: HookOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a hook that runs after the current test finishes. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. The first argument to this function is a `TestContext` object. 
+             * If the hook uses callbacks, the callback function is passed as the second argument. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">after</span><span class="s0">(fn?: TestContextHookFn, options?: HookOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a hook running after each subtest of the current test. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. The first argument to this function is a `TestContext` object. 
+             * If the hook uses callbacks, the callback function is passed as the second argument. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">afterEach</span><span class="s0">(fn?: TestContextHookFn, options?: HookOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to write diagnostics to the output. Any diagnostic 
+             * information is included at the end of the test's results. This function does 
+             * not return a value. 
+             * 
+             * ```js 
+             * test('top level test', (t) =&gt; { 
+             *   t.diagnostic('A diagnostic message'); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">message </span><span class="s1">Message to be reported. 
+             </span><span class="s0">*/</span>
+            <span class="s5">diagnostic</span><span class="s0">(message: string): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The absolute path of the test file that created the current test. If a test file imports 
+             * additional modules that generate tests, the imported tests will return the path of the root test file. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.6.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">filePath: string | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The name of the test and each of its ancestors, separated by `&gt;`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">fullName: string;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The name of the test. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">name: string;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to set the number of assertions and subtests that are expected to run 
+             * within the test. If the number of assertions and subtests that run does not match the 
+             * expected count, the test will fail. 
+             * 
+             * &gt; Note: To make sure assertions are tracked, `t.assert` must be used instead of `assert` directly. 
+             * 
+             * ```js 
+             * test('top level test', (t) =&gt; { 
+             *   t.plan(2); 
+             *   t.assert.ok('some relevant assertion here'); 
+             *   t.test('subtest', () =&gt; {}); 
+             * }); 
+             * ``` 
+             * 
+             * When working with asynchronous code, the `plan` function can be used to ensure that the 
+             * correct number of assertions are run: 
+             * 
+             * ```js 
+             * test('planning with streams', (t, done) =&gt; { 
+             *   function* generate() { 
+             *     yield 'a'; 
+             *     yield 'b'; 
+             *     yield 'c'; 
+             *   } 
+             *   const expected = ['a', 'b', 'c']; 
+             *   t.plan(expected.length); 
+             *   const stream = Readable.from(generate()); 
+             *   stream.on('data', (chunk) =&gt; { 
+             *     t.assert.strictEqual(chunk, expected.shift()); 
+             *   }); 
+             * 
+             *   stream.on('end', () =&gt; { 
+             *     done(); 
+             *   }); 
+             * }); 
+             * ``` 
+             * 
+             * When using the `wait` option, you can control how long the test will wait for the expected assertions. 
+             * For example, setting a maximum wait time ensures that the test will wait for asynchronous assertions 
+             * to complete within the specified timeframe: 
+             * 
+             * ```js 
+             * test('plan with wait: 2000 waits for async assertions', (t) =&gt; { 
+             *   t.plan(1, { wait: 2000 }); // Waits for up to 2 seconds for the assertion to complete. 
+             * 
+             *   const asyncActivity = () =&gt; { 
+             *     setTimeout(() =&gt; { 
+             *          *       t.assert.ok(true, 'Async assertion completed within the wait time'); 
+             *     }, 1000); // Completes after 1 second, within the 2-second wait time. 
+             *   }; 
+             * 
+             *   asyncActivity(); // The test will pass because the assertion is completed in time. 
+             * }); 
+             * ``` 
+             * 
+             * Note: If a `wait` timeout is specified, it begins counting down only after the test function finishes executing. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.2.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">plan</span><span class="s0">(count: number, options?: TestContextPlanOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If `shouldRunOnlyTests` is truthy, the test context will only run tests that 
+             * have the `only` option set. Otherwise, all tests are run. If Node.js was not 
+             * started with the `--test-only` command-line option, this function is a 
+             * no-op. 
+             * 
+             * ```js 
+             * test('top level test', (t) =&gt; { 
+             *   // The test context can be set to run subtests with the 'only' option. 
+             *   t.runOnly(true); 
+             *   return Promise.all([ 
+             *     t.test('this subtest is now skipped'), 
+             *     t.test('this subtest is run', { only: true }), 
+             *   ]); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">shouldRunOnlyTests </span><span class="s1">Whether or not to run `only` tests. 
+             </span><span class="s0">*/</span>
+            <span class="s5">runOnly</span><span class="s0">(shouldRunOnlyTests: boolean): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* ```js 
+             * test('top level test', async (t) =&gt; { 
+             *   await fetch('some/uri', { signal: t.signal }); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.7.0, v16.17.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">signal: AbortSignal;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function causes the test's output to indicate the test as skipped. If `message` is provided, it is included in the output. Calling `skip()` does 
+             * not terminate execution of the test function. This function does not return a 
+             * value. 
+             * 
+             * ```js 
+             * test('top level test', (t) =&gt; { 
+             *   // Make sure to return here as well if the test contains additional logic. 
+             *   t.skip('this is skipped'); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">message </span><span class="s1">Optional skip message. 
+             </span><span class="s0">*/</span>
+            <span class="s5">skip</span><span class="s0">(message?: string): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function adds a `TODO` directive to the test's output. If `message` is 
+             * provided, it is included in the output. Calling `todo()` does not terminate 
+             * execution of the test function. This function does not return a value. 
+             * 
+             * ```js 
+             * test('top level test', (t) =&gt; { 
+             *   // This test is marked as `TODO` 
+             *   t.todo('this is a todo'); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0, v16.17.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">message </span><span class="s1">Optional `TODO` message. 
+             </span><span class="s0">*/</span>
+            <span class="s5">todo</span><span class="s0">(message?: string): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create subtests under the current test. This function behaves in 
+             * the same fashion as the top level </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">test} </span><span class="s1">function. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.0.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">name </span><span class="s1">The name of the test, which is displayed when reporting test results. 
+             * Defaults to the `name` property of `fn`, or `'&lt;anonymous&gt;'` if `fn` does not have a name. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the test. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The function under test. This first argument to this function is a </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">TestContext} </span><span class="s1">object. 
+             * If the test uses callbacks, the callback function is passed as the second argument. 
+             * </span><span class="s0">@</span><span class="s2">returns </span><span class="s1">A </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">Promise} </span><span class="s1">resolved with `undefined` once the test completes. 
+             </span><span class="s0">*/</span>
+            <span class="s0">test: typeof test;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This method polls a `condition` function until that function either returns 
+             * successfully or the operation times out. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.14.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">condition </span><span class="s1">An assertion function that is invoked 
+             * periodically until it completes successfully or the defined polling timeout 
+             * elapses. Successful completion is defined as not throwing or rejecting. This 
+             * function does not accept any arguments, and is allowed to return any value. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">An optional configuration object for the polling operation. 
+             * </span><span class="s0">@</span><span class="s2">returns </span><span class="s1">Fulfilled with the value returned by `condition`. 
+             </span><span class="s0">*/</span>
+            <span class="s5">waitFor</span><span class="s0">&lt;T&gt;(</span><span class="s5">condition</span><span class="s0">: () </span><span class="s2">=&gt; </span><span class="s0">T, options?: TestContextWaitForOptions): Promise&lt;Awaited&lt;T&gt;&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Each test provides its own MockTracker instance. 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">mock: MockTracker;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">TestContextAssert </span><span class="s2">extends </span><span class="s0">Pick&lt;typeof import</span><span class="s3">(</span><span class="s0">&quot;</span><span class="s4">assert</span><span class="s0">&quot;</span><span class="s3">)</span><span class="s0">, AssertMethodNames&gt; {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function serializes `value` and writes it to the file specified by `path`. 
+             * 
+             * ```js 
+             * test('snapshot test with default serialization', (t) =&gt; { 
+             *   t.assert.fileSnapshot({ value1: 1, value2: 2 }, './snapshots/snapshot.json'); 
+             * }); 
+             * ``` 
+             * 
+             * This function differs from `context.assert.snapshot()` in the following ways: 
+             * 
+             * * The snapshot file path is explicitly provided by the user. 
+             * * Each snapshot file is limited to a single snapshot value. 
+             * * No additional escaping is performed by the test runner. 
+             * 
+             * These differences allow snapshot files to better support features such as syntax 
+             * highlighting. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.14.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">value </span><span class="s1">A value to serialize to a string. If Node.js was started with 
+             * the [`--test-update-snapshots`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--test-update-snapshots) 
+             * flag, the serialized value is written to 
+             * `path`. Otherwise, the serialized value is compared to the contents of the 
+             * existing snapshot file. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">path </span><span class="s1">The file where the serialized `value` is written. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Optional configuration options. 
+             </span><span class="s0">*/</span>
+            <span class="s5">fileSnapshot</span><span class="s0">(value: any, path: string, options?: AssertSnapshotOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function implements assertions for snapshot testing. 
+             * ```js 
+             * test('snapshot test with default serialization', (t) =&gt; { 
+             *   t.assert.snapshot({ value1: 1, value2: 2 }); 
+             * }); 
+             * 
+             * test('snapshot test with custom serialization', (t) =&gt; { 
+             *   t.assert.snapshot({ value3: 3, value4: 4 }, { 
+             *     serializers: [(value) =&gt; JSON.stringify(value)] 
+             *   }); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">value </span><span class="s1">A value to serialize to a string. If Node.js was started with 
+             * the [`--test-update-snapshots`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--test-update-snapshots) 
+             * flag, the serialized value is written to 
+             * the snapshot file. Otherwise, the serialized value is compared to the 
+             * corresponding value in the existing snapshot file. 
+             </span><span class="s0">*/</span>
+            <span class="s5">snapshot</span><span class="s0">(value: any, options?: AssertSnapshotOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A custom assertion function registered with `assert.register()`. 
+             </span><span class="s0">*/</span>
+            <span class="s3">[</span><span class="s0">name: string</span><span class="s3">]</span><span class="s0">: (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">AssertSnapshotOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array of synchronous functions used to serialize `value` into a string. 
+             * `value` is passed as the only argument to the first serializer function. 
+             * The return value of each serializer is passed as input to the next serializer. 
+             * Once all serializers have run, the resulting value is coerced to a string. 
+             * 
+             * If no serializers are provided, the test runner's default serializers are used. 
+             </span><span class="s0">*/</span>
+            <span class="s0">serializers?: ReadonlyArray&lt;(value: any) </span><span class="s2">=&gt; </span><span class="s0">any&gt; | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">TestContextPlanOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The wait time for the plan: 
+             * * If `true`, the plan waits indefinitely for all assertions and subtests to run. 
+             * * If `false`, the plan performs an immediate check after the test function completes, 
+             * without waiting for any pending assertions or subtests. 
+             * Any assertions or subtests that complete after this check will not be counted towards the plan. 
+             * * If a number, it specifies the maximum wait time in milliseconds 
+             * before timing out while waiting for expected assertions and subtests to be matched. 
+             * If the timeout is reached, the test will fail. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">wait?: boolean | number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">TestContextWaitForOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The number of milliseconds to wait after an unsuccessful 
+             * invocation of `condition` before trying again. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">50</span>
+             <span class="s0">*/</span>
+            <span class="s0">interval?: number | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The poll timeout in milliseconds. If `condition` has not 
+             * succeeded by the time this elapses, an error occurs. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">1000</span>
+             <span class="s0">*/</span>
+            <span class="s0">timeout?: number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* An instance of `SuiteContext` is passed to each suite function in order to 
+         * interact with the test runner. However, the `SuiteContext` constructor is not 
+         * exposed as part of the API. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.7.0, v16.17.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">SuiteContext {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The absolute path of the test file that created the current suite. If a test file imports 
+             * additional modules that generate suites, the imported suites will return the path of the root test file. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.6.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">filePath: string | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The name of the suite. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">name: string;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Can be used to abort test subtasks when the test has been aborted. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.7.0, v16.17.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">signal: AbortSignal;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">TestOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If a number is provided, then that many tests would run in parallel. 
+             * If truthy, it would run (number of cpu cores - 1) tests in parallel. 
+             * For subtests, it will be `Infinity` tests in parallel. 
+             * If falsy, it would only run one test at a time. 
+             * If unspecified, subtests inherit this value from their parent. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">concurrency?: number | boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If truthy, and the test context is configured to run `only` tests, then this test will be 
+             * run. Otherwise, the test is skipped. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">only?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Allows aborting an in-progress test. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">signal?: AbortSignal | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If truthy, the test is skipped. If a string is provided, that string is displayed in the 
+             * test results as the reason for skipping the test. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">skip?: boolean | string | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A number of milliseconds the test will fail after. If unspecified, subtests inherit this 
+             * value from their parent. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">Infinity</span>
+             <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.7.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">timeout?: number | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If truthy, the test marked as `TODO`. If a string is provided, that string is displayed in 
+             * the test results as the reason why the test is `TODO`. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">todo?: boolean | string | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The number of assertions and subtests expected to be run in the test. 
+             * If the number of assertions run in the test does not match the number 
+             * specified in the plan, the test will fail. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">undefined</span>
+             <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.2.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">plan?: number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* This function creates a hook that runs before executing a suite. 
+         * 
+         * ```js 
+         * describe('tests', async () =&gt; { 
+         *   before(() =&gt; console.log('about to run some test')); 
+         *   it('is a subtest', () =&gt; { 
+         *     assert.ok('some relevant assertion here'); 
+         *   }); 
+         * }); 
+         * ``` 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. If the hook uses callbacks, the callback function is passed as the second argument. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">before</span><span class="s0">(fn?: HookFn, options?: HookOptions): void;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* This function creates a hook that runs after executing a suite. 
+         * 
+         * ```js 
+         * describe('tests', async () =&gt; { 
+         *   after(() =&gt; console.log('finished running tests')); 
+         *   it('is a subtest', () =&gt; { 
+         *     assert.ok('some relevant assertion here'); 
+         *   }); 
+         * }); 
+         * ``` 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. If the hook uses callbacks, the callback function is passed as the second argument. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">after</span><span class="s0">(fn?: HookFn, options?: HookOptions): void;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* This function creates a hook that runs before each test in the current suite. 
+         * 
+         * ```js 
+         * describe('tests', async () =&gt; { 
+         *   beforeEach(() =&gt; console.log('about to run a test')); 
+         *   it('is a subtest', () =&gt; { 
+         *     assert.ok('some relevant assertion here'); 
+         *   }); 
+         * }); 
+         * ``` 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. If the hook uses callbacks, the callback function is passed as the second argument. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">beforeEach</span><span class="s0">(fn?: HookFn, options?: HookOptions): void;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* This function creates a hook that runs after each test in the current suite. 
+         * The `afterEach()` hook is run even if the test fails. 
+         * 
+         * ```js 
+         * describe('tests', async () =&gt; { 
+         *   afterEach(() =&gt; console.log('finished running a test')); 
+         *   it('is a subtest', () =&gt; { 
+         *     assert.ok('some relevant assertion here'); 
+         *   }); 
+         * }); 
+         * ``` 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0, v16.18.0 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">The hook function. If the hook uses callbacks, the callback function is passed as the second argument. 
+         * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Configuration options for the hook. 
+         </span><span class="s0">*/</span>
+        <span class="s2">function </span><span class="s5">afterEach</span><span class="s0">(fn?: HookFn, options?: HookOptions): void;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The hook function. The first argument is the context in which the hook is called. 
+         * If the hook uses callbacks, the callback function is passed as the second argument. 
+         </span><span class="s0">*/</span>
+        <span class="s2">type </span><span class="s0">HookFn = (c: TestContext | SuiteContext, </span><span class="s5">done</span><span class="s0">: (result?: any) </span><span class="s2">=&gt; </span><span class="s0">void) </span><span class="s2">=&gt; </span><span class="s0">any;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The hook function. The first argument is a `TestContext` object. 
+         * If the hook uses callbacks, the callback function is passed as the second argument. 
+         </span><span class="s0">*/</span>
+        <span class="s2">type </span><span class="s0">TestContextHookFn = (t: TestContext, </span><span class="s5">done</span><span class="s0">: (result?: any) </span><span class="s2">=&gt; </span><span class="s0">void) </span><span class="s2">=&gt; </span><span class="s0">any;</span>
+        <span class="s0">/**</span>
+         <span class="s1">* Configuration options for hooks. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v18.8.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">HookOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Allows aborting an in-progress hook. 
+             </span><span class="s0">*/</span>
+            <span class="s0">signal?: AbortSignal | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A number of milliseconds the hook will fail after. If unspecified, subtests inherit this 
+             * value from their parent. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">Infinity</span>
+             <span class="s0">*/</span>
+            <span class="s0">timeout?: number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">MockFunctionOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The number of times that the mock will use the behavior of `implementation`. 
+             * Once the mock function has been called `times` times, 
+             * it will automatically restore the behavior of `original`. 
+             * This value must be an integer greater than zero. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">Infinity</span>
+             <span class="s0">*/</span>
+            <span class="s0">times?: number | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">MockMethodOptions </span><span class="s2">extends </span><span class="s0">MockFunctionOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If `true`, `object[methodName]` is treated as a getter. 
+             * This option cannot be used with the `setter` option. 
+             </span><span class="s0">*/</span>
+            <span class="s0">getter?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If `true`, `object[methodName]` is treated as a setter. 
+             * This option cannot be used with the `getter` option. 
+             </span><span class="s0">*/</span>
+            <span class="s0">setter?: boolean | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s2">type </span><span class="s0">Mock&lt;F </span><span class="s2">extends </span><span class="s0">Function&gt; = F &amp; {</span>
+            <span class="s0">mock: MockFunctionContext&lt;F&gt;;</span>
+        <span class="s0">};</span>
+        <span class="s2">interface </span><span class="s0">MockModuleOptions {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If false, each call to `require()` or `import()` generates a new mock module. 
+             * If true, subsequent calls will return the same module mock, and the mock module is inserted into the CommonJS cache. 
+             * </span><span class="s0">@</span><span class="s2">default </span><span class="s0">false</span>
+             <span class="s0">*/</span>
+            <span class="s0">cache?: boolean | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The value to use as the mocked module's default export. 
+             * 
+             * If this value is not provided, ESM mocks do not include a default export. 
+             * If the mock is a CommonJS or builtin module, this setting is used as the value of `module.exports`. 
+             * If this value is not provided, CJS and builtin mocks use an empty object as the value of `module.exports`. 
+             </span><span class="s0">*/</span>
+            <span class="s0">defaultExport?: any;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An object whose keys and values are used to create the named exports of the mock module. 
+             * 
+             * If the mock is a CommonJS or builtin module, these values are copied onto `module.exports`. 
+             * Therefore, if a mock is created with both named exports and a non-object default export, 
+             * the mock will throw an exception when used as a CJS or builtin module. 
+             </span><span class="s0">*/</span>
+            <span class="s0">namedExports?: object | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The `MockTracker` class is used to manage mocking functionality. The test runner 
+         * module provides a top level `mock` export which is a `MockTracker` instance. 
+         * Each test also provides its own `MockTracker` instance via the test context's `mock` property. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">MockTracker {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a mock function. 
+             * 
+             * The following example creates a mock function that increments a counter by one 
+             * on each invocation. The `times` option is used to modify the mock behavior such 
+             * that the first two invocations add two to the counter instead of one. 
+             * 
+             * ```js 
+             * test('mocks a counting function', (t) =&gt; { 
+             *   let cnt = 0; 
+             * 
+             *   function addOne() { 
+             *     cnt++; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   function addTwo() { 
+             *     cnt += 2; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   const fn = t.mock.fn(addOne, addTwo, { times: 2 }); 
+             * 
+             *   assert.strictEqual(fn(), 2); 
+             *   assert.strictEqual(fn(), 4); 
+             *   assert.strictEqual(fn(), 5); 
+             *   assert.strictEqual(fn(), 6); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">original </span><span class="s1">An optional function to create a mock on. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">implementation </span><span class="s1">An optional function used as the mock implementation for `original`. This is useful for creating mocks that exhibit one behavior for a specified number of calls and 
+             * then restore the behavior of `original`. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Optional configuration options for the mock function. 
+             * </span><span class="s0">@</span><span class="s2">return </span><span class="s1">The mocked function. The mocked function contains a special `mock` property, which is an instance of </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">MockFunctionContext}</span><span class="s1">, and can be used for inspecting and changing the 
+             * behavior of the mocked function. 
+             </span><span class="s0">*/</span>
+            <span class="s5">fn</span><span class="s0">&lt;F </span><span class="s2">extends </span><span class="s0">Function = (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">undefined&gt;(</span>
+                <span class="s0">original?: F,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;F&gt;;</span>
+            <span class="s5">fn</span><span class="s0">&lt;F </span><span class="s2">extends </span><span class="s0">Function = (...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">undefined, Implementation </span><span class="s2">extends </span><span class="s0">Function = F&gt;(</span>
+                <span class="s0">original?: F,</span>
+                <span class="s0">implementation?: Implementation,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;F | Implementation&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to create a mock on an existing object method. The 
+             * following example demonstrates how a mock is created on an existing object 
+             * method. 
+             * 
+             * ```js 
+             * test('spies on an object method', (t) =&gt; { 
+             *   const number = { 
+             *     value: 5, 
+             *     subtract(a) { 
+             *       return this.value - a; 
+             *     }, 
+             *   }; 
+             * 
+             *   t.mock.method(number, 'subtract'); 
+             *   assert.strictEqual(number.subtract.mock.calls.length, 0); 
+             *   assert.strictEqual(number.subtract(3), 2); 
+             *   assert.strictEqual(number.subtract.mock.calls.length, 1); 
+             * 
+             *   const call = number.subtract.mock.calls[0]; 
+             * 
+             *   assert.deepStrictEqual(call.arguments, [3]); 
+             *   assert.strictEqual(call.result, 2); 
+             *   assert.strictEqual(call.error, undefined); 
+             *   assert.strictEqual(call.target, undefined); 
+             *   assert.strictEqual(call.this, number); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">object </span><span class="s1">The object whose method is being mocked. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">methodName </span><span class="s1">The identifier of the method on `object` to mock. If `object[methodName]` is not a function, an error is thrown. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">implementation </span><span class="s1">An optional function used as the mock implementation for `object[methodName]`. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Optional configuration options for the mock method. 
+             * </span><span class="s0">@</span><span class="s2">return </span><span class="s1">The mocked method. The mocked method contains a special `mock` property, which is an instance of </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">MockFunctionContext}</span><span class="s1">, and can be used for inspecting and changing the 
+             * behavior of the mocked method. 
+             </span><span class="s0">*/</span>
+            <span class="s0">method&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends FunctionPropertyNames&lt;MockedObject&gt;,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">] </span><span class="s2">extends </span><span class="s0">Function ? Mock&lt;MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">]</span><span class="s0">&gt;</span>
+                <span class="s0">: never;</span>
+            <span class="s0">method&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends FunctionPropertyNames&lt;MockedObject&gt;,</span>
+                <span class="s0">Implementation extends Function,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">implementation: Implementation,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">] </span><span class="s2">extends </span><span class="s0">Function ? Mock&lt;MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">] </span><span class="s0">| Implementation&gt;</span>
+                <span class="s0">: never;</span>
+            <span class="s5">method</span><span class="s0">&lt;MockedObject </span><span class="s2">extends </span><span class="s0">object&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: keyof MockedObject,</span>
+                <span class="s0">options: MockMethodOptions,</span>
+            <span class="s0">): Mock&lt;Function&gt;;</span>
+            <span class="s5">method</span><span class="s0">&lt;MockedObject </span><span class="s2">extends </span><span class="s0">object&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: keyof MockedObject,</span>
+                <span class="s5">implementation</span><span class="s0">: Function,</span>
+                <span class="s0">options: MockMethodOptions,</span>
+            <span class="s0">): Mock&lt;Function&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is syntax sugar for `MockTracker.method` with `options.getter` set to `true`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.3.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">getter&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends keyof MockedObject,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;() </span><span class="s2">=&gt; </span><span class="s0">MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">]</span><span class="s0">&gt;;</span>
+            <span class="s0">getter&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends keyof MockedObject,</span>
+                <span class="s0">Implementation extends Function,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">implementation?: Implementation,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;</span><span class="s3">(</span><span class="s0">() </span><span class="s2">=&gt; </span><span class="s0">MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">]) </span><span class="s0">| Implementation&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is syntax sugar for `MockTracker.method` with `options.setter` set to `true`. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.3.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s0">setter&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends keyof MockedObject,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;(value: MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void&gt;;</span>
+            <span class="s0">setter&lt;</span>
+                <span class="s0">MockedObject extends object,</span>
+                <span class="s0">MethodName extends keyof MockedObject,</span>
+                <span class="s0">Implementation extends Function,</span>
+            <span class="s0">&gt;(</span>
+                <span class="s0">object: MockedObject,</span>
+                <span class="s0">methodName: MethodName,</span>
+                <span class="s0">implementation?: Implementation,</span>
+                <span class="s0">options?: MockFunctionOptions,</span>
+            <span class="s0">): Mock&lt;</span><span class="s3">(</span><span class="s0">(value: MockedObject</span><span class="s3">[</span><span class="s0">MethodName</span><span class="s3">]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void</span><span class="s3">) </span><span class="s0">| Implementation&gt;;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to mock the exports of ECMAScript modules, CommonJS modules, and Node.js builtin modules. 
+             * Any references to the original module prior to mocking are not impacted. 
+             * 
+             * Only available through the [--experimental-test-module-mocks](https://nodejs.org/api/cli.html#--experimental-test-module-mocks) flag. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             * </span><span class="s0">@</span><span class="s2">experimental</span>
+             <span class="s1">* </span><span class="s0">@</span><span class="s2">param </span><span class="s0">specifier </span><span class="s1">A string identifying the module to mock. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">options </span><span class="s1">Optional configuration options for the mock module. 
+             </span><span class="s0">*/</span>
+            <span class="s5">module</span><span class="s0">(specifier: string | URL, options?: MockModuleOptions): MockModuleContext;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function restores the default behavior of all mocks that were previously 
+             * created by this `MockTracker` and disassociates the mocks from the `MockTracker` instance. Once disassociated, the mocks can still be used, but the `MockTracker` instance can no longer be 
+             * used to reset their behavior or 
+             * otherwise interact with them. 
+             * 
+             * After each test completes, this function is called on the test context's `MockTracker`. If the global `MockTracker` is used extensively, calling this 
+             * function manually is recommended. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">reset</span><span class="s0">(): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function restores the default behavior of all mocks that were previously 
+             * created by this `MockTracker`. Unlike `mock.reset()`, `mock.restoreAll()` does 
+             * not disassociate the mocks from the `MockTracker` instance. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">restoreAll</span><span class="s0">(): void;</span>
+            <span class="s2">readonly </span><span class="s0">timers: MockTimers;</span>
+        <span class="s0">}</span>
+        <span class="s2">const </span><span class="s0">mock: MockTracker;</span>
+        <span class="s2">interface </span><span class="s0">MockFunctionCall&lt;</span>
+            <span class="s0">F </span><span class="s2">extends </span><span class="s0">Function,</span>
+            <span class="s0">ReturnType = F </span><span class="s2">extends </span><span class="s0">(...args: any) </span><span class="s2">=&gt; </span><span class="s0">infer T ? T</span>
+                <span class="s0">: F </span><span class="s2">extends abstract new</span><span class="s0">(...args: any) </span><span class="s2">=&gt; </span><span class="s0">infer T ? T</span>
+                <span class="s0">: unknown,</span>
+            <span class="s0">Args = F </span><span class="s2">extends </span><span class="s0">(...args: infer Y) </span><span class="s2">=&gt; </span><span class="s0">any ? Y</span>
+                <span class="s0">: F </span><span class="s2">extends abstract new</span><span class="s0">(...args: infer Y) </span><span class="s2">=&gt; </span><span class="s0">any ? Y</span>
+                <span class="s0">: unknown</span><span class="s3">[]</span><span class="s0">,</span>
+        <span class="s0">&gt; {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An array of the arguments passed to the mock function. 
+             </span><span class="s0">*/</span>
+            <span class="s0">arguments: Args;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If the mocked function threw then this property contains the thrown value. 
+             </span><span class="s0">*/</span>
+            <span class="s0">error: unknown | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The value returned by the mocked function. 
+             * 
+             * If the mocked function threw, it will be `undefined`. 
+             </span><span class="s0">*/</span>
+            <span class="s0">result: ReturnType | undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* An `Error` object whose stack can be used to determine the callsite of the mocked function invocation. 
+             </span><span class="s0">*/</span>
+            <span class="s0">stack: Error;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* If the mocked function is a constructor, this field contains the class being constructed. 
+             * Otherwise this will be `undefined`. 
+             </span><span class="s0">*/</span>
+            <span class="s0">target: F </span><span class="s2">extends abstract new</span><span class="s0">(...args: any) </span><span class="s2">=&gt; </span><span class="s0">any ? F : undefined;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* The mocked function's `this` value. 
+             </span><span class="s0">*/</span>
+            <span class="s0">this: unknown;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* The `MockFunctionContext` class is used to inspect or manipulate the behavior of 
+         * mocks created via the `MockTracker` APIs. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">MockFunctionContext&lt;F </span><span class="s2">extends </span><span class="s0">Function&gt; {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* A getter that returns a copy of the internal array used to track calls to the 
+             * mock. Each entry in the array is an object with the following properties. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">readonly </span><span class="s0">calls: MockFunctionCall&lt;F&gt;</span><span class="s3">[]</span><span class="s0">;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function returns the number of times that this mock has been invoked. This 
+             * function is more efficient than checking `ctx.calls.length` because `ctx.calls` is a getter that creates a copy of the internal call tracking array. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             * </span><span class="s0">@</span><span class="s2">return </span><span class="s1">The number of times that this mock has been invoked. 
+             </span><span class="s0">*/</span>
+            <span class="s5">callCount</span><span class="s0">(): number;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to change the behavior of an existing mock. 
+             * 
+             * The following example creates a mock function using `t.mock.fn()`, calls the 
+             * mock function, and then changes the mock implementation to a different function. 
+             * 
+             * ```js 
+             * test('changes a mock behavior', (t) =&gt; { 
+             *   let cnt = 0; 
+             * 
+             *   function addOne() { 
+             *     cnt++; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   function addTwo() { 
+             *     cnt += 2; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   const fn = t.mock.fn(addOne); 
+             * 
+             *   assert.strictEqual(fn(), 1); 
+             *   fn.mock.mockImplementation(addTwo); 
+             *   assert.strictEqual(fn(), 3); 
+             *   assert.strictEqual(fn(), 5); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">implementation </span><span class="s1">The function to be used as the mock's new implementation. 
+             </span><span class="s0">*/</span>
+            <span class="s5">mockImplementation</span><span class="s0">(implementation: F): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to change the behavior of an existing mock for a single 
+             * invocation. Once invocation `onCall` has occurred, the mock will revert to 
+             * whatever behavior it would have used had `mockImplementationOnce()` not been 
+             * called. 
+             * 
+             * The following example creates a mock function using `t.mock.fn()`, calls the 
+             * mock function, changes the mock implementation to a different function for the 
+             * next invocation, and then resumes its previous behavior. 
+             * 
+             * ```js 
+             * test('changes a mock behavior once', (t) =&gt; { 
+             *   let cnt = 0; 
+             * 
+             *   function addOne() { 
+             *     cnt++; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   function addTwo() { 
+             *     cnt += 2; 
+             *     return cnt; 
+             *   } 
+             * 
+             *   const fn = t.mock.fn(addOne); 
+             * 
+             *   assert.strictEqual(fn(), 1); 
+             *   fn.mock.mockImplementationOnce(addTwo); 
+             *   assert.strictEqual(fn(), 3); 
+             *   assert.strictEqual(fn(), 4); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">implementation </span><span class="s1">The function to be used as the mock's implementation for the invocation number specified by `onCall`. 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">onCall </span><span class="s1">The invocation number that will use `implementation`. If the specified invocation has already occurred then an exception is thrown. 
+             </span><span class="s0">*/</span>
+            <span class="s5">mockImplementationOnce</span><span class="s0">(implementation: F, onCall?: number): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Resets the call history of the mock function. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.3.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">resetCalls</span><span class="s0">(): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Resets the implementation of the mock function to its original behavior. The 
+             * mock can still be used after calling this function. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.1.0, v18.13.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">restore</span><span class="s0">(): void;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+         * </span><span class="s0">@</span><span class="s2">experimental</span>
+         <span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">MockModuleContext {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Resets the implementation of the mock module. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">restore</span><span class="s0">(): void;</span>
+        <span class="s0">}</span>
+        <span class="s2">interface </span><span class="s0">MockTimersOptions {</span>
+            <span class="s0">apis: ReadonlyArray&lt;&quot;</span><span class="s4">setInterval</span><span class="s0">&quot; | &quot;</span><span class="s4">setTimeout</span><span class="s0">&quot; | &quot;</span><span class="s4">setImmediate</span><span class="s0">&quot; | &quot;</span><span class="s4">Date</span><span class="s0">&quot;&gt;;</span>
+            <span class="s0">now?: number | Date | undefined;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* Mocking timers is a technique commonly used in software testing to simulate and 
+         * control the behavior of timers, such as `setInterval` and `setTimeout`, 
+         * without actually waiting for the specified time intervals. 
+         * 
+         * The MockTimers API also allows for mocking of the `Date` constructor and 
+         * `setImmediate`/`clearImmediate` functions. 
+         * 
+         * The `MockTracker` provides a top-level `timers` export 
+         * which is a `MockTimers` instance. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.4.0 
+         * </span><span class="s0">@</span><span class="s2">experimental</span>
+         <span class="s0">*/</span>
+        <span class="s2">interface </span><span class="s0">MockTimers {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Enables timer mocking for the specified timers. 
+             * 
+             * **Note:** When you enable mocking for a specific timer, its associated 
+             * clear function will also be implicitly mocked. 
+             * 
+             * **Note:** Mocking `Date` will affect the behavior of the mocked timers 
+             * as they use the same internal clock. 
+             * 
+             * Example usage without setting initial time: 
+             * 
+             * ```js 
+             * import { mock } from 'node:test'; 
+             * mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1234 }); 
+             * ``` 
+             * 
+             * The above example enables mocking for the `Date` constructor, `setInterval` timer and 
+             * implicitly mocks the `clearInterval` function. Only the `Date` constructor from `globalThis`, 
+             * `setInterval` and `clearInterval` functions from `node:timers`, `node:timers/promises`, and `globalThis` will be mocked. 
+             * 
+             * Example usage with initial time set 
+             * 
+             * ```js 
+             * import { mock } from 'node:test'; 
+             * mock.timers.enable({ apis: ['Date'], now: 1000 }); 
+             * ``` 
+             * 
+             * Example usage with initial Date object as time set 
+             * 
+             * ```js 
+             * import { mock } from 'node:test'; 
+             * mock.timers.enable({ apis: ['Date'], now: new Date() }); 
+             * ``` 
+             * 
+             * Alternatively, if you call `mock.timers.enable()` without any parameters: 
+             * 
+             * All timers (`'setInterval'`, `'clearInterval'`, `'Date'`, `'setImmediate'`, `'clearImmediate'`, `'setTimeout'`, and `'clearTimeout'`) 
+             * will be mocked. 
+             * 
+             * The `setInterval`, `clearInterval`, `setTimeout`, and `clearTimeout` functions from `node:timers`, `node:timers/promises`, 
+             * and `globalThis` will be mocked. 
+             * The `Date` constructor from `globalThis` will be mocked. 
+             * 
+             * If there is no initial epoch set, the initial date will be based on 0 in the Unix epoch. This is `January 1st, 1970, 00:00:00 UTC`. You can 
+             * set an initial date by passing a now property to the `.enable()` method. This value will be used as the initial date for the mocked Date 
+             * object. It can either be a positive integer, or another Date object. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.4.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">enable</span><span class="s0">(options?: MockTimersOptions): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* You can use the `.setTime()` method to manually move the mocked date to another time. This method only accepts a positive integer. 
+             * Note: This method will execute any mocked timers that are in the past from the new time. 
+             * In the below example we are setting a new time for the mocked date. 
+             * ```js 
+             * import assert from 'node:assert'; 
+             * import { test } from 'node:test'; 
+             * test('sets the time of a date object', (context) =&gt; { 
+             *   // Optionally choose what to mock 
+             *   context.mock.timers.enable({ apis: ['Date'], now: 100 }); 
+             *   assert.strictEqual(Date.now(), 100); 
+             *   // Advance in time will also advance the date 
+             *   context.mock.timers.setTime(1000); 
+             *   context.mock.timers.tick(200); 
+             *   assert.strictEqual(Date.now(), 1200); 
+             * }); 
+             * ``` 
+             </span><span class="s0">*/</span>
+            <span class="s5">setTime</span><span class="s0">(time: number): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function restores the default behavior of all mocks that were previously 
+             * created by this `MockTimers` instance and disassociates the mocks 
+             * from the `MockTracker` instance. 
+             * 
+             * **Note:** After each test completes, this function is called on 
+             * the test context's `MockTracker`. 
+             * 
+             * ```js 
+             * import { mock } from 'node:test'; 
+             * mock.timers.reset(); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.4.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">reset</span><span class="s0">(): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Advances time for all mocked timers. 
+             * 
+             * **Note:** This diverges from how `setTimeout` in Node.js behaves and accepts 
+             * only positive numbers. In Node.js, `setTimeout` with negative numbers is 
+             * only supported for web compatibility reasons. 
+             * 
+             * The following example mocks a `setTimeout` function and 
+             * by using `.tick` advances in 
+             * time triggering all pending timers. 
+             * 
+             * ```js 
+             * import assert from 'node:assert'; 
+             * import { test } from 'node:test'; 
+             * 
+             * test('mocks setTimeout to be executed synchronously without having to actually wait for it', (context) =&gt; { 
+             *   const fn = context.mock.fn(); 
+             * 
+             *   context.mock.timers.enable({ apis: ['setTimeout'] }); 
+             * 
+             *   setTimeout(fn, 9999); 
+             * 
+             *   assert.strictEqual(fn.mock.callCount(), 0); 
+             * 
+             *   // Advance in time 
+             *   context.mock.timers.tick(9999); 
+             * 
+             *   assert.strictEqual(fn.mock.callCount(), 1); 
+             * }); 
+             * ``` 
+             * 
+             * Alternativelly, the `.tick` function can be called many times 
+             * 
+             * ```js 
+             * import assert from 'node:assert'; 
+             * import { test } from 'node:test'; 
+             * 
+             * test('mocks setTimeout to be executed synchronously without having to actually wait for it', (context) =&gt; { 
+             *   const fn = context.mock.fn(); 
+             *   context.mock.timers.enable({ apis: ['setTimeout'] }); 
+             *   const nineSecs = 9000; 
+             *   setTimeout(fn, nineSecs); 
+             * 
+             *   const twoSeconds = 3000; 
+             *   context.mock.timers.tick(twoSeconds); 
+             *   context.mock.timers.tick(twoSeconds); 
+             *   context.mock.timers.tick(twoSeconds); 
+             * 
+             *   assert.strictEqual(fn.mock.callCount(), 1); 
+             * }); 
+             * ``` 
+             * 
+             * Advancing time using `.tick` will also advance the time for any `Date` object 
+             * created after the mock was enabled (if `Date` was also set to be mocked). 
+             * 
+             * ```js 
+             * import assert from 'node:assert'; 
+             * import { test } from 'node:test'; 
+             * 
+             * test('mocks setTimeout to be executed synchronously without having to actually wait for it', (context) =&gt; { 
+             *   const fn = context.mock.fn(); 
+             * 
+             *   context.mock.timers.enable({ apis: ['setTimeout', 'Date'] }); 
+             *   setTimeout(fn, 9999); 
+             * 
+             *   assert.strictEqual(fn.mock.callCount(), 0); 
+             *   assert.strictEqual(Date.now(), 0); 
+             * 
+             *   // Advance in time 
+             *   context.mock.timers.tick(9999); 
+             *   assert.strictEqual(fn.mock.callCount(), 1); 
+             *   assert.strictEqual(Date.now(), 9999); 
+             * }); 
+             * ``` 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.4.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">tick</span><span class="s0">(milliseconds: number): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Triggers all pending mocked timers immediately. If the `Date` object is also 
+             * mocked, it will also advance the `Date` object to the furthest timer's time. 
+             * 
+             * The example below triggers all pending timers immediately, 
+             * causing them to execute without any delay. 
+             * 
+             * ```js 
+             * import assert from 'node:assert'; 
+             * import { test } from 'node:test'; 
+             * 
+             * test('runAll functions following the given order', (context) =&gt; { 
+             *   context.mock.timers.enable({ apis: ['setTimeout', 'Date'] }); 
+             *   const results = []; 
+             *   setTimeout(() =&gt; results.push(1), 9999); 
+             * 
+             *   // Notice that if both timers have the same timeout, 
+             *   // the order of execution is guaranteed 
+             *   setTimeout(() =&gt; results.push(3), 8888); 
+             *   setTimeout(() =&gt; results.push(2), 8888); 
+             * 
+             *   assert.deepStrictEqual(results, []); 
+             * 
+             *   context.mock.timers.runAll(); 
+             *   assert.deepStrictEqual(results, [3, 2, 1]); 
+             *   // The Date object is also advanced to the furthest timer's time 
+             *   assert.strictEqual(Date.now(), 9999); 
+             * }); 
+             * ``` 
+             * 
+             * **Note:** The `runAll()` function is specifically designed for 
+             * triggering timers in the context of timer mocking. 
+             * It does not have any effect on real-time system 
+             * clocks or actual timers outside of the mocking environment. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.4.0 
+             </span><span class="s0">*/</span>
+            <span class="s5">runAll</span><span class="s0">(): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Calls </span><span class="s0">{@</span><span class="s2">link </span><span class="s0">MockTimers.reset()}</span><span class="s1">. 
+             </span><span class="s0">*/</span>
+            <span class="s3">[</span><span class="s0">Symbol.dispose</span><span class="s3">]</span><span class="s0">(): void;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* An object whose methods are used to configure available assertions on the 
+         * `TestContext` objects in the current process. The methods from `node:assert` 
+         * and snapshot testing functions are available by default. 
+         * 
+         * It is possible to apply the same configuration to all files by placing common 
+         * configuration code in a module 
+         * preloaded with `--require` or `--import`. 
+         * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.14.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">namespace </span><span class="s0">assert {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* Defines a new assertion function with the provided name and function. If an 
+             * assertion already exists with the same name, it is overwritten. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.14.0 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">register</span><span class="s0">(name: string, </span><span class="s5">fn</span><span class="s0">: (this: TestContext, ...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">void): void;</span>
+        <span class="s0">}</span>
+        <span class="s0">/**</span>
+         <span class="s1">* </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+         </span><span class="s0">*/</span>
+        <span class="s2">namespace </span><span class="s0">snapshot {</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to customize the default serialization mechanism used by the test runner. 
+             * 
+             * By default, the test runner performs serialization by calling `JSON.stringify(value, null, 2)` on the provided value. 
+             * `JSON.stringify()` does have limitations regarding circular structures and supported data types. 
+             * If a more robust serialization mechanism is required, this function should be used to specify a list of custom serializers. 
+             * 
+             * Serializers are called in order, with the output of the previous serializer passed as input to the next. 
+             * The final result must be a string value. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">serializers </span><span class="s1">An array of synchronous functions used as the default serializers for snapshot tests. 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">setDefaultSnapshotSerializers</span><span class="s0">(serializers: ReadonlyArray&lt;(value: any) </span><span class="s2">=&gt; </span><span class="s0">any&gt;): void;</span>
+            <span class="s0">/**</span>
+             <span class="s1">* This function is used to set a custom resolver for the location of the snapshot file used for snapshot testing. 
+             * By default, the snapshot filename is the same as the entry point filename with `.snapshot` appended. 
+             * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.3.0 
+             * </span><span class="s0">@</span><span class="s2">param </span><span class="s0">fn </span><span class="s1">A function used to compute the location of the snapshot file. 
+             * The function receives the path of the test file as its only argument. If the 
+             * test is not associated with a file (for example in the REPL), the input is 
+             * undefined. `fn()` must return a string specifying the location of the snapshot file. 
+             </span><span class="s0">*/</span>
+            <span class="s2">function </span><span class="s5">setResolveSnapshotPath</span><span class="s0">(</span><span class="s5">fn</span><span class="s0">: (path: string | undefined) </span><span class="s2">=&gt; </span><span class="s0">string): void;</span>
+        <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s2">type </span><span class="s0">FunctionPropertyNames&lt;T&gt; = {</span>
+        <span class="s3">[</span><span class="s0">K in keyof T</span><span class="s3">]</span><span class="s0">: T</span><span class="s3">[</span><span class="s0">K</span><span class="s3">] </span><span class="s2">extends </span><span class="s0">Function ? K : never;</span>
+    <span class="s0">}</span><span class="s3">[</span><span class="s0">keyof T</span><span class="s3">]</span><span class="s0">;</span>
+    <span class="s2">export </span><span class="s0">= test;</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* The `node:test/reporters` module exposes the builtin-reporters for `node:test`. 
+ * To access it: 
+ * 
+ * ```js 
+ * import test from 'node:test/reporters'; 
+ * ``` 
+ * 
+ * This module is only available under the `node:` scheme. The following will not 
+ * work: 
+ * 
+ * ```js 
+ * import test from 'node:test/reporters'; 
+ * ``` 
+ * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v19.9.0 
+ * </span><span class="s0">@</span><span class="s2">see </span><span class="s0">[source](https:</span><span class="s1">//github.com/nodejs/node/blob/v22.x/lib/test/reporters.js) 
+ </span><span class="s0">*/</span>
+<span class="s2">declare module </span><span class="s0">&quot;</span><span class="s4">node:test/reporters</span><span class="s0">&quot; {</span>
+    <span class="s2">import </span><span class="s0">{ Transform, TransformOptions } </span><span class="s2">from </span><span class="s0">&quot;</span><span class="s4">node:stream</span><span class="s0">&quot;;</span>
+    <span class="s2">import </span><span class="s0">{ EventData } </span><span class="s2">from </span><span class="s0">&quot;</span><span class="s4">node:test</span><span class="s0">&quot;;</span>
+
+    <span class="s2">type </span><span class="s0">TestEvent =</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:coverage</span><span class="s0">&quot;; data: EventData.TestCoverage }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:complete</span><span class="s0">&quot;; data: EventData.TestComplete }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:dequeue</span><span class="s0">&quot;; data: EventData.TestDequeue }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:diagnostic</span><span class="s0">&quot;; data: EventData.TestDiagnostic }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:enqueue</span><span class="s0">&quot;; data: EventData.TestEnqueue }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:fail</span><span class="s0">&quot;; data: EventData.TestFail }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:pass</span><span class="s0">&quot;; data: EventData.TestPass }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:plan</span><span class="s0">&quot;; data: EventData.TestPlan }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:start</span><span class="s0">&quot;; data: EventData.TestStart }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:stderr</span><span class="s0">&quot;; data: EventData.TestStderr }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:stdout</span><span class="s0">&quot;; data: EventData.TestStdout }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:summary</span><span class="s0">&quot;; data: EventData.TestSummary }</span>
+        <span class="s0">| { type: &quot;</span><span class="s4">test:watch:drained</span><span class="s0">&quot;; data: undefined };</span>
+    <span class="s2">type </span><span class="s0">TestEventGenerator = AsyncGenerator&lt;TestEvent, void&gt;;</span>
+
+    <span class="s2">interface </span><span class="s0">ReporterConstructorWrapper&lt;T </span><span class="s2">extends new</span><span class="s0">(...args: any</span><span class="s3">[]</span><span class="s0">) </span><span class="s2">=&gt; </span><span class="s0">Transform&gt; {</span>
+        <span class="s0">new(...args: ConstructorParameters&lt;T&gt;): InstanceType&lt;T&gt;;</span>
+        <span class="s0">(...args: ConstructorParameters&lt;T&gt;): InstanceType&lt;T&gt;;</span>
+    <span class="s0">}</span>
+
+    <span class="s0">/**</span>
+     <span class="s1">* The `dot` reporter outputs the test results in a compact format, 
+     * where each passing test is represented by a `.`, 
+     * and each failing test is represented by a `X`. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.0.0 
+     </span><span class="s0">*/</span>
+    <span class="s2">function </span><span class="s5">dot</span><span class="s0">(source: TestEventGenerator): AsyncGenerator&lt;&quot;</span><span class="s6">\n</span><span class="s0">&quot; | &quot;</span><span class="s4">.</span><span class="s0">&quot; | &quot;</span><span class="s4">X</span><span class="s0">&quot;, void&gt;;</span>
+    <span class="s0">/**</span>
+     <span class="s1">* The `tap` reporter outputs the test results in the [TAP](https://testanything.org/) format. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.0.0 
+     </span><span class="s0">*/</span>
+    <span class="s2">function </span><span class="s5">tap</span><span class="s0">(source: TestEventGenerator): AsyncGenerator&lt;string, void&gt;;</span>
+    <span class="s2">class </span><span class="s0">SpecReporter </span><span class="s2">extends </span><span class="s0">Transform {</span>
+        <span class="s2">constructor</span><span class="s0">();</span>
+    <span class="s0">}</span>
+    <span class="s0">/**</span>
+     <span class="s1">* The `spec` reporter outputs the test results in a human-readable format. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v20.0.0 
+     </span><span class="s0">*/</span>
+    <span class="s2">const </span><span class="s0">spec: ReporterConstructorWrapper&lt;typeof SpecReporter&gt;;</span>
+    <span class="s0">/**</span>
+     <span class="s1">* The `junit` reporter outputs test results in a jUnit XML format. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v21.0.0 
+     </span><span class="s0">*/</span>
+    <span class="s2">function </span><span class="s5">junit</span><span class="s0">(source: TestEventGenerator): AsyncGenerator&lt;string, void&gt;;</span>
+    <span class="s2">class </span><span class="s0">LcovReporter </span><span class="s2">extends </span><span class="s0">Transform {</span>
+        <span class="s2">constructor</span><span class="s0">(opts?: Omit&lt;TransformOptions, &quot;</span><span class="s4">writableObjectMode</span><span class="s0">&quot;&gt;);</span>
+    <span class="s0">}</span>
+    <span class="s0">/**</span>
+     <span class="s1">* The `lcov` reporter outputs test coverage when used with the 
+     * [`--experimental-test-coverage`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--experimental-test-coverage) flag. 
+     * </span><span class="s0">@</span><span class="s2">since </span><span class="s1">v22.0.0 
+     </span><span class="s0">*/</span>
+    <span class="s2">const </span><span class="s0">lcov: LcovReporter;</span>
+
+    <span class="s2">export </span><span class="s0">{ dot, junit, lcov, spec, tap, TestEvent };</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<html>
+<head>
+<title>selector.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+selector.js</font>
+</center></td></tr></table>
+<pre><span class="s0">let { list } = require(</span><span class="s1">'postcss'</span><span class="s0">)</span>
+
+<span class="s0">let Browsers = require(</span><span class="s1">'./browsers'</span><span class="s0">)</span>
+<span class="s0">let OldSelector = require(</span><span class="s1">'./old-selector'</span><span class="s0">)</span>
+<span class="s0">let Prefixer = require(</span><span class="s1">'./prefixer'</span><span class="s0">)</span>
+<span class="s0">let utils = require(</span><span class="s1">'./utils'</span><span class="s0">)</span>
+
+<span class="s0">class Selector extends Prefixer {</span>
+  <span class="s0">constructor(name, prefixes, all) {</span>
+    <span class="s0">super(name, prefixes, all)</span>
+    <span class="s2">this</span><span class="s0">.regexpCache = </span><span class="s2">new </span><span class="s0">Map()</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Clone and add prefixes for at-rule 
+   */</span>
+  <span class="s0">add(rule, prefix) {</span>
+    <span class="s0">let prefixeds = </span><span class="s2">this</span><span class="s0">.prefixeds(rule)</span>
+
+    <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.already(rule, prefixeds, prefix)) {</span>
+      <span class="s2">return</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let cloned = </span><span class="s2">this</span><span class="s0">.clone(rule, { selector: prefixeds[</span><span class="s2">this</span><span class="s0">.name][prefix] })</span>
+    <span class="s0">rule.parent.insertBefore(rule, cloned)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Is rule already prefixed before 
+   */</span>
+  <span class="s0">already(rule, prefixeds, prefix) {</span>
+    <span class="s0">let index = rule.parent.index(rule) - </span><span class="s4">1</span>
+
+    <span class="s2">while </span><span class="s0">(index &gt;= </span><span class="s4">0</span><span class="s0">) {</span>
+      <span class="s0">let before = rule.parent.nodes[index]</span>
+
+      <span class="s2">if </span><span class="s0">(before.type !== </span><span class="s1">'rule'</span><span class="s0">) {</span>
+        <span class="s2">return false</span>
+      <span class="s0">}</span>
+
+      <span class="s0">let some = </span><span class="s2">false</span>
+      <span class="s2">for </span><span class="s0">(let key </span><span class="s2">in </span><span class="s0">prefixeds[</span><span class="s2">this</span><span class="s0">.name]) {</span>
+        <span class="s0">let prefixed = prefixeds[</span><span class="s2">this</span><span class="s0">.name][key]</span>
+        <span class="s2">if </span><span class="s0">(before.selector === prefixed) {</span>
+          <span class="s2">if </span><span class="s0">(prefix === key) {</span>
+            <span class="s2">return true</span>
+          <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+            <span class="s0">some = </span><span class="s2">true</span>
+            <span class="s2">break</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s2">if </span><span class="s0">(!some) {</span>
+        <span class="s2">return false</span>
+      <span class="s0">}</span>
+
+      <span class="s0">index -= </span><span class="s4">1</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return false</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Is rule selectors need to be prefixed 
+   */</span>
+  <span class="s0">check(rule) {</span>
+    <span class="s2">if </span><span class="s0">(rule.selector.includes(</span><span class="s2">this</span><span class="s0">.name)) {</span>
+      <span class="s2">return </span><span class="s0">!!rule.selector.match(</span><span class="s2">this</span><span class="s0">.regexp())</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return false</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Return function to fast find prefixed selector 
+   */</span>
+  <span class="s0">old(prefix) {</span>
+    <span class="s2">return new </span><span class="s0">OldSelector(</span><span class="s2">this</span><span class="s0">, prefix)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * All possible prefixes 
+   */</span>
+  <span class="s0">possible() {</span>
+    <span class="s2">return </span><span class="s0">Browsers.prefixes()</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Return prefixed version of selector 
+   */</span>
+  <span class="s0">prefixed(prefix) {</span>
+    <span class="s2">return this</span><span class="s0">.name.replace(/^(\W*)/, `$1${prefix}`)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Return all possible selector prefixes 
+   */</span>
+  <span class="s0">prefixeds(rule) {</span>
+    <span class="s2">if </span><span class="s0">(rule._autoprefixerPrefixeds) {</span>
+      <span class="s2">if </span><span class="s0">(rule._autoprefixerPrefixeds[</span><span class="s2">this</span><span class="s0">.name]) {</span>
+        <span class="s2">return </span><span class="s0">rule._autoprefixerPrefixeds</span>
+      <span class="s0">}</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s0">rule._autoprefixerPrefixeds = {}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">let prefixeds = {}</span>
+    <span class="s2">if </span><span class="s0">(rule.selector.includes(</span><span class="s1">','</span><span class="s0">)) {</span>
+      <span class="s0">let ruleParts = list.comma(rule.selector)</span>
+      <span class="s0">let toProcess = ruleParts.filter(el =&gt; el.includes(</span><span class="s2">this</span><span class="s0">.name))</span>
+
+      <span class="s2">for </span><span class="s0">(let prefix of </span><span class="s2">this</span><span class="s0">.possible()) {</span>
+        <span class="s0">prefixeds[prefix] = toProcess</span>
+          <span class="s0">.map(el =&gt; </span><span class="s2">this</span><span class="s0">.replace(el, prefix))</span>
+          <span class="s0">.join(</span><span class="s1">', '</span><span class="s0">)</span>
+      <span class="s0">}</span>
+    <span class="s0">} </span><span class="s2">else </span><span class="s0">{</span>
+      <span class="s2">for </span><span class="s0">(let prefix of </span><span class="s2">this</span><span class="s0">.possible()) {</span>
+        <span class="s0">prefixeds[prefix] = </span><span class="s2">this</span><span class="s0">.replace(rule.selector, prefix)</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">rule._autoprefixerPrefixeds[</span><span class="s2">this</span><span class="s0">.name] = prefixeds</span>
+    <span class="s2">return </span><span class="s0">rule._autoprefixerPrefixeds</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Lazy loadRegExp for name 
+   */</span>
+  <span class="s0">regexp(prefix) {</span>
+    <span class="s2">if </span><span class="s0">(!</span><span class="s2">this</span><span class="s0">.regexpCache.has(prefix)) {</span>
+      <span class="s0">let name = prefix ? </span><span class="s2">this</span><span class="s0">.prefixed(prefix) : </span><span class="s2">this</span><span class="s0">.name</span>
+      <span class="s2">this</span><span class="s0">.regexpCache.set(</span>
+        <span class="s0">prefix,</span>
+        <span class="s2">new </span><span class="s0">RegExp(`(^|[^:</span><span class="s1">&quot;'=])${utils.escapeRegexp(name)}`, 'gi')</span>
+      <span class="s0">)</span>
+    <span class="s0">}</span>
+
+    <span class="s2">return this</span><span class="s0">.regexpCache.get(prefix)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">/** 
+   * Replace selectors by prefixed one 
+   */</span>
+  <span class="s0">replace(selector, prefix) {</span>
+    <span class="s2">return </span><span class="s0">selector.replace(</span><span class="s2">this</span><span class="s0">.regexp(), `$1${</span><span class="s2">this</span><span class="s0">.prefixed(prefix)}`)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">module.exports = Selector</span>
+</pre>
+</body>
+</html>

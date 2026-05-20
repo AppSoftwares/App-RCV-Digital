@@ -1,0 +1,242 @@
+<html>
+<head>
+<title>DescriptionFileUtils.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #2aacb8;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+DescriptionFileUtils.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const forEachBail = require(</span><span class="s2">&quot;./forEachBail&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonObject} JsonObject */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonValue} JsonValue */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveContext} ResolveContext */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+
+<span class="s0">/** 
+ * @typedef {object} DescriptionFileInfo 
+ * @property {JsonObject=} content content 
+ * @property {string} path path 
+ * @property {string} directory directory 
+ */</span>
+
+<span class="s0">/** 
+ * @callback ErrorFirstCallback 
+ * @param {Error | null=} error 
+ * @param {DescriptionFileInfo=} result 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} Result 
+ * @property {string} path path to description file 
+ * @property {string} directory directory of description file 
+ * @property {JsonObject} content content of description file 
+ */</span>
+
+<span class="s1">const CHAR_SLASH = </span><span class="s3">47</span><span class="s1">;</span>
+<span class="s1">const CHAR_BACKSLASH = </span><span class="s3">92</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * Walk up one directory. Called once per package-root candidate and once per 
+ * `described-resolve` (to find the enclosing description file), so it's on 
+ * the resolver's hot path. 
+ * 
+ * Previous implementation called `lastIndexOf(&quot;/&quot;)` and `lastIndexOf(&quot;\\&quot;)` 
+ * separately and then picked the larger. For any non-trivial directory 
+ * string on POSIX, `lastIndexOf(&quot;\\&quot;)` scans the full string just to return 
+ * -1. A single reverse char-code scan does the same work in one pass. 
+ * 
+ * Any single-character directory is treated as a root — `directory.length 
+ * &lt;= 1` collapses the `&quot;/&quot;`, `&quot;\\&quot;` and `&quot;&quot;` branches into one compare. 
+ * Without the `&quot;\\&quot;` case, `cdUp(&quot;\\&quot;)` (reached from a UNC root or a DOS 
+ * device path like `\\?\…`) would return itself via `slice(0, i || 1)` 
+ * and trap `loadDescriptionFile` in an infinite loop. Once single-char 
+ * roots are filtered up front, the reverse scan always produces a 
+ * strictly shorter string. 
+ * @param {string} directory directory 
+ * @returns {string | null} parent directory or null 
+ */</span>
+<span class="s4">function </span><span class="s1">cdUp(directory) {</span>
+	<span class="s4">if </span><span class="s1">(directory.length &lt;= </span><span class="s3">1</span><span class="s1">) </span><span class="s4">return null</span><span class="s1">;</span>
+	<span class="s4">for </span><span class="s1">(let i = directory.length - </span><span class="s3">1</span><span class="s1">; i &gt;= </span><span class="s3">0</span><span class="s1">; i--) {</span>
+		<span class="s1">const code = directory.charCodeAt(i);</span>
+		<span class="s4">if </span><span class="s1">(code === CHAR_SLASH || code === CHAR_BACKSLASH) {</span>
+			<span class="s4">return </span><span class="s1">directory.slice(</span><span class="s3">0</span><span class="s1">, i || </span><span class="s3">1</span><span class="s1">);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+	<span class="s4">return null</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {Resolver} resolver resolver 
+ * @param {string} directory directory 
+ * @param {string[]} filenames filenames 
+ * @param {DescriptionFileInfo | undefined} oldInfo oldInfo 
+ * @param {ResolveContext} resolveContext resolveContext 
+ * @param {ErrorFirstCallback} callback callback 
+ */</span>
+<span class="s4">function </span><span class="s1">loadDescriptionFile(</span>
+	<span class="s1">resolver,</span>
+	<span class="s1">directory,</span>
+	<span class="s1">filenames,</span>
+	<span class="s1">oldInfo,</span>
+	<span class="s1">resolveContext,</span>
+	<span class="s1">callback,</span>
+<span class="s1">) {</span>
+	<span class="s1">(</span><span class="s4">function </span><span class="s1">findDescriptionFile() {</span>
+		<span class="s4">if </span><span class="s1">(oldInfo &amp;&amp; oldInfo.directory === directory) {</span>
+			<span class="s0">// We already have info for this directory and can reuse it</span>
+			<span class="s4">return </span><span class="s1">callback(</span><span class="s4">null</span><span class="s1">, oldInfo);</span>
+		<span class="s1">}</span>
+		<span class="s1">forEachBail(</span>
+			<span class="s1">filenames,</span>
+			<span class="s0">/** 
+             * @param {string} filename filename 
+             * @param {(err?: null | Error, result?: null | Result) =&gt; void} callback callback 
+             * @returns {void} 
+             */</span>
+			<span class="s1">(filename, callback) =&gt; {</span>
+				<span class="s1">const descriptionFilePath = resolver.join(directory, filename);</span>
+
+				<span class="s0">/** 
+                 * @param {(null | Error)=} err error 
+                 * @param {JsonObject=} resolvedContent content 
+                 * @returns {void} 
+                 */</span>
+				<span class="s4">function </span><span class="s1">onJson(err, resolvedContent) {</span>
+					<span class="s4">if </span><span class="s1">(err) {</span>
+						<span class="s4">if </span><span class="s1">(resolveContext.log) {</span>
+							<span class="s1">resolveContext.log(</span>
+								<span class="s1">`${descriptionFilePath} (directory description file): ${err}`,</span>
+							<span class="s1">);</span>
+						<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+							<span class="s1">err.message = `${descriptionFilePath} (directory description file): ${err}`;</span>
+						<span class="s1">}</span>
+						<span class="s4">return </span><span class="s1">callback(err);</span>
+					<span class="s1">}</span>
+					<span class="s1">callback(</span><span class="s4">null</span><span class="s1">, {</span>
+						<span class="s1">content: </span><span class="s0">/** @type {JsonObject} */ </span><span class="s1">(resolvedContent),</span>
+						<span class="s1">directory,</span>
+						<span class="s1">path: descriptionFilePath,</span>
+					<span class="s1">});</span>
+				<span class="s1">}</span>
+
+				<span class="s4">if </span><span class="s1">(resolver.fileSystem.readJson) {</span>
+					<span class="s1">resolver.fileSystem.readJson(descriptionFilePath, (err, content) =&gt; {</span>
+						<span class="s4">if </span><span class="s1">(err) {</span>
+							<span class="s4">if </span><span class="s1">(</span>
+								<span class="s4">typeof </span><span class="s1">(</span><span class="s0">/** @type {NodeJS.ErrnoException} */ </span><span class="s1">(err).code) !==</span>
+								<span class="s2">&quot;undefined&quot;</span>
+							<span class="s1">) {</span>
+								<span class="s4">if </span><span class="s1">(resolveContext.missingDependencies) {</span>
+									<span class="s1">resolveContext.missingDependencies.add(descriptionFilePath);</span>
+								<span class="s1">}</span>
+								<span class="s4">return </span><span class="s1">callback();</span>
+							<span class="s1">}</span>
+							<span class="s4">if </span><span class="s1">(resolveContext.fileDependencies) {</span>
+								<span class="s1">resolveContext.fileDependencies.add(descriptionFilePath);</span>
+							<span class="s1">}</span>
+							<span class="s4">return </span><span class="s1">onJson(err);</span>
+						<span class="s1">}</span>
+						<span class="s4">if </span><span class="s1">(resolveContext.fileDependencies) {</span>
+							<span class="s1">resolveContext.fileDependencies.add(descriptionFilePath);</span>
+						<span class="s1">}</span>
+						<span class="s1">onJson(</span><span class="s4">null</span><span class="s1">, content);</span>
+					<span class="s1">});</span>
+				<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+					<span class="s1">resolver.fileSystem.readFile(descriptionFilePath, (err, content) =&gt; {</span>
+						<span class="s4">if </span><span class="s1">(err) {</span>
+							<span class="s4">if </span><span class="s1">(resolveContext.missingDependencies) {</span>
+								<span class="s1">resolveContext.missingDependencies.add(descriptionFilePath);</span>
+							<span class="s1">}</span>
+							<span class="s4">return </span><span class="s1">callback();</span>
+						<span class="s1">}</span>
+						<span class="s4">if </span><span class="s1">(resolveContext.fileDependencies) {</span>
+							<span class="s1">resolveContext.fileDependencies.add(descriptionFilePath);</span>
+						<span class="s1">}</span>
+
+						<span class="s0">/** @type {JsonObject | undefined} */</span>
+						<span class="s1">let json;</span>
+
+						<span class="s4">if </span><span class="s1">(content) {</span>
+							<span class="s4">try </span><span class="s1">{</span>
+								<span class="s1">json = JSON.parse(content.toString());</span>
+							<span class="s1">} </span><span class="s4">catch </span><span class="s1">(</span><span class="s0">/** @type {unknown} */ </span><span class="s1">err_) {</span>
+								<span class="s4">return </span><span class="s1">onJson(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(err_));</span>
+							<span class="s1">}</span>
+						<span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+							<span class="s4">return </span><span class="s1">onJson(</span><span class="s4">new </span><span class="s1">Error(</span><span class="s2">&quot;No content in file&quot;</span><span class="s1">));</span>
+						<span class="s1">}</span>
+
+						<span class="s1">onJson(</span><span class="s4">null</span><span class="s1">, json);</span>
+					<span class="s1">});</span>
+				<span class="s1">}</span>
+			<span class="s1">},</span>
+			<span class="s0">/** 
+             * @param {(null | Error)=} err error 
+             * @param {(null | Result)=} result result 
+             * @returns {void} 
+             */</span>
+			<span class="s1">(err, result) =&gt; {</span>
+				<span class="s4">if </span><span class="s1">(err) </span><span class="s4">return </span><span class="s1">callback(err);</span>
+				<span class="s4">if </span><span class="s1">(result) </span><span class="s4">return </span><span class="s1">callback(</span><span class="s4">null</span><span class="s1">, result);</span>
+				<span class="s1">const dir = cdUp(directory);</span>
+				<span class="s4">if </span><span class="s1">(!dir) {</span>
+					<span class="s4">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+				<span class="s1">directory = dir;</span>
+				<span class="s4">return </span><span class="s1">findDescriptionFile();</span>
+			<span class="s1">},</span>
+		<span class="s1">);</span>
+	<span class="s1">})();</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * @param {JsonObject} content content 
+ * @param {string | string[]} field field 
+ * @returns {JsonValue | undefined} field data 
+ */</span>
+<span class="s4">function </span><span class="s1">getField(content, field) {</span>
+	<span class="s4">if </span><span class="s1">(!content) </span><span class="s4">return </span><span class="s1">undefined;</span>
+	<span class="s4">if </span><span class="s1">(Array.isArray(field)) {</span>
+		<span class="s0">/** @type {JsonValue} */</span>
+		<span class="s1">let current = content;</span>
+		<span class="s4">for </span><span class="s1">(let j = </span><span class="s3">0</span><span class="s1">; j &lt; field.length; j++) {</span>
+			<span class="s4">if </span><span class="s1">(current === </span><span class="s4">null </span><span class="s1">|| </span><span class="s4">typeof </span><span class="s1">current !== </span><span class="s2">&quot;object&quot;</span><span class="s1">) {</span>
+				<span class="s1">current = </span><span class="s4">null</span><span class="s1">;</span>
+				<span class="s4">break</span><span class="s1">;</span>
+			<span class="s1">}</span>
+			<span class="s1">current = </span><span class="s0">/** @type {JsonValue} */ </span><span class="s1">(</span>
+				<span class="s0">/** @type {JsonObject} */</span>
+				<span class="s1">(current)[field[j]]</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+		<span class="s4">return </span><span class="s1">current;</span>
+	<span class="s1">}</span>
+	<span class="s4">return </span><span class="s1">content[field];</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports.cdUp = cdUp;</span>
+<span class="s1">module.exports.getField = getField;</span>
+<span class="s1">module.exports.loadDescriptionFile = loadDescriptionFile;</span>
+</pre>
+</body>
+</html>

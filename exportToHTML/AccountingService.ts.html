@@ -1,0 +1,133 @@
+<html>
+<head>
+<title>AccountingService.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8; font-style: italic;}
+.s5 { color: #7a7e85;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+.s8 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+AccountingService.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ Transaction } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../entities/Accounting</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ apiBreaker } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../infrastructure/network/CircuitBreaker</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ securityService } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./SecurityService</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ financialService } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./FinancialService</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ auditService } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./AuditService</span><span class="s2">';</span>
+
+<span class="s0">export class </span><span class="s2">AccountingService {</span>
+  <span class="s0">private readonly </span><span class="s2">IVA_RATE = </span><span class="s4">0.16</span><span class="s2">;</span>
+  <span class="s0">private readonly </span><span class="s2">SURETY_RESERVE_RATE = </span><span class="s4">0.03</span><span class="s2">; // </span><span class="s5">Ejemplo: 3% para fondo de reserva legal/fianza</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Registra contablemente una venta de póliza. 
+   * Divide el monto total en Base Imponible, IVA y Reserva de Fianza. 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s6">recordPolicySale</span><span class="s2">(</span>
+    <span class="s2">invoiceId: string,</span>
+    <span class="s2">userId: string,</span>
+    <span class="s2">totalAmountUsd: number,</span>
+    <span class="s2">bcvRate: number</span>
+  <span class="s2">): Promise&lt;boolean&gt; {</span>
+    <span class="s0">return await </span><span class="s2">apiBreaker.</span><span class="s6">execute</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">netPremiumUsd = totalAmountUsd / </span><span class="s1">(</span><span class="s4">1 </span><span class="s2">+ this.IVA_RATE</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">ivaUsd = totalAmountUsd - netPremiumUsd;</span>
+      <span class="s0">const </span><span class="s2">suretyReserveUsd = netPremiumUsd * this.SURETY_RESERVE_RATE;</span>
+
+      <span class="s0">const </span><span class="s2">transactions: Partial&lt;Transaction&gt;</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[</span>
+        <span class="s2">{</span>
+          <span class="s1">invoice_id</span><span class="s2">: invoiceId,</span>
+          <span class="s1">user_id</span><span class="s2">: userId,</span>
+          <span class="s1">type</span><span class="s2">: '</span><span class="s3">income</span><span class="s2">',</span>
+          <span class="s1">category</span><span class="s2">: '</span><span class="s3">policy_premium</span><span class="s2">',</span>
+          <span class="s1">amount_usd</span><span class="s2">: netPremiumUsd,</span>
+          <span class="s1">amount_ves</span><span class="s2">: netPremiumUsd * bcvRate,</span>
+          <span class="s1">exchange_rate</span><span class="s2">: bcvRate,</span>
+          <span class="s1">description</span><span class="s2">: `</span><span class="s3">Prima neta RCV - Factura </span><span class="s2">${invoiceId}`,</span>
+          <span class="s1">status</span><span class="s2">: '</span><span class="s3">posted</span><span class="s2">'</span>
+        <span class="s2">},</span>
+        <span class="s2">{</span>
+          <span class="s1">invoice_id</span><span class="s2">: invoiceId,</span>
+          <span class="s1">user_id</span><span class="s2">: userId,</span>
+          <span class="s1">type</span><span class="s2">: '</span><span class="s3">income</span><span class="s2">',</span>
+          <span class="s1">category</span><span class="s2">: '</span><span class="s3">tax_iva</span><span class="s2">',</span>
+          <span class="s1">amount_usd</span><span class="s2">: ivaUsd,</span>
+          <span class="s1">amount_ves</span><span class="s2">: ivaUsd * bcvRate,</span>
+          <span class="s1">exchange_rate</span><span class="s2">: bcvRate,</span>
+          <span class="s1">description</span><span class="s2">: `</span><span class="s3">IVA 16% - Factura </span><span class="s2">${invoiceId}`,</span>
+          <span class="s1">status</span><span class="s2">: '</span><span class="s3">posted</span><span class="s2">'</span>
+        <span class="s2">},</span>
+        <span class="s2">{</span>
+          <span class="s1">invoice_id</span><span class="s2">: invoiceId,</span>
+          <span class="s1">user_id</span><span class="s2">: userId,</span>
+          <span class="s1">type</span><span class="s2">: '</span><span class="s3">expense</span><span class="s2">', // </span><span class="s5">Se registra como una obligación/reserva</span>
+          <span class="s1">category</span><span class="s2">: '</span><span class="s3">surety_reserve</span><span class="s2">',</span>
+          <span class="s1">amount_usd</span><span class="s2">: suretyReserveUsd,</span>
+          <span class="s1">amount_ves</span><span class="s2">: suretyReserveUsd * bcvRate,</span>
+          <span class="s1">exchange_rate</span><span class="s2">: bcvRate,</span>
+          <span class="s1">description</span><span class="s2">: `</span><span class="s3">Reserva Legal de Fianza Sudeaseg (3%)</span><span class="s2">`,</span>
+          <span class="s1">status</span><span class="s2">: '</span><span class="s3">posted</span><span class="s2">'</span>
+        <span class="s2">}</span>
+      <span class="s1">]</span><span class="s2">;</span>
+
+      <span class="s2">console.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">[Accounting] Registrando transacciones en el Libro Mayor:</span><span class="s2">&quot;, transactions</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s2">auditService.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">action</span><span class="s2">: '</span><span class="s3">POLICY_SALE_RECORDED</span><span class="s2">',</span>
+        <span class="s1">category</span><span class="s2">: '</span><span class="s3">accounting</span><span class="s2">',</span>
+        <span class="s1">severity</span><span class="s2">: '</span><span class="s3">low</span><span class="s2">',</span>
+        <span class="s1">details</span><span class="s2">: `</span><span class="s3">Venta de póliza registrada: Factura </span><span class="s2">${invoiceId}`,</span>
+        <span class="s1">metadata</span><span class="s2">: { invoiceId, totalAmountUsd }</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s0">return </span><span class="s7">true</span><span class="s2">;</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">async </span><span class="s6">getFiscalSummary</span><span class="s2">(month: string, userRole?: string): Promise&lt;any&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!securityService.</span><span class="s6">hasPermission</span><span class="s1">(</span><span class="s2">userRole, '</span><span class="s3">view_financials</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">Acceso denegado: Permisos insuficientes para ver datos fiscales.</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s5">Lógica para generar el reporte para el SENIAT (Resumen de IVA)</span>
+    <span class="s2">console.</span><span class="s6">log</span><span class="s1">(</span><span class="s2">`</span><span class="s3">[Accounting] Generando reporte fiscal para el periodo: </span><span class="s2">${month}`</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">periodo</span><span class="s2">: month,</span>
+      <span class="s1">iva_a_pagar_ves</span><span class="s2">: </span><span class="s4">15420.50</span><span class="s2">,</span>
+      <span class="s1">ingreso_bruto_ves</span><span class="s2">: </span><span class="s4">96378.12</span><span class="s2">,</span>
+      <span class="s1">reserva_fianza_acumulada_usd</span><span class="s2">: </span><span class="s4">2450.00</span>
+    <span class="s2">};</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* Genera el contenido del archivo TXT para la declaración del SENIAT 
+   * Formato estándar de Libro de Ventas 
+   </span><span class="s2">*/</span>
+  <span class="s6">generateSeniatTxt</span><span class="s2">(transactions: Transaction</span><span class="s1">[]</span><span class="s2">): string {</span>
+    <span class="s0">const </span><span class="s2">header = &quot;</span><span class="s3">RIF_EMISOR;NUM_FACTURA;NUM_CONTROL;FECHA;RIF_CLIENTE;MONTO_TOTAL;BASE_IMPONIBLE;IVA_16</span><span class="s2">&quot;;</span>
+    <span class="s0">const </span><span class="s2">rows = transactions</span>
+      <span class="s2">.</span><span class="s6">filter</span><span class="s1">(</span><span class="s2">t </span><span class="s0">=&gt; </span><span class="s2">t.category === '</span><span class="s3">policy_premium</span><span class="s2">' || t.category === '</span><span class="s3">tax_iva</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">t </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s5">En una implementación real, agruparíamos por invoice_id</span>
+        <span class="s0">return </span><span class="s2">`</span><span class="s3">J503445141;</span><span class="s2">${t.invoice_id}</span><span class="s3">;CTRL-001;</span><span class="s2">${t.created_at}</span><span class="s3">;V12345678;</span><span class="s2">${t.amount_ves.</span><span class="s6">toFixed</span><span class="s1">(</span><span class="s4">2</span><span class="s1">)</span><span class="s2">}</span><span class="s3">;</span><span class="s2">${</span><span class="s1">(</span><span class="s2">t.amount_ves/</span><span class="s4">1.16</span><span class="s1">)</span><span class="s2">.</span><span class="s6">toFixed</span><span class="s1">(</span><span class="s4">2</span><span class="s1">)</span><span class="s2">}</span><span class="s3">;</span><span class="s2">${</span><span class="s1">(</span><span class="s2">t.amount_ves * </span><span class="s4">0.16</span><span class="s1">)</span><span class="s2">.</span><span class="s6">toFixed</span><span class="s1">(</span><span class="s4">2</span><span class="s1">)</span><span class="s2">}`;</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">return </span><span class="s1">[</span><span class="s2">header, ...rows</span><span class="s1">]</span><span class="s2">.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s8">\n</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export const </span><span class="s2">accountingService = new </span><span class="s6">AccountingService</span><span class="s1">()</span><span class="s2">;</span>
+</pre>
+</body>
+</html>

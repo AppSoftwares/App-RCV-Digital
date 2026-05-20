@@ -1,0 +1,203 @@
+<html>
+<head>
+<title>NativeAnimation.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #c77dbb; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+NativeAnimation.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ invariant, millisecondsToSeconds, secondsToMilliseconds, noop } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ setStyle } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../render/dom/style-set.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ supportsScrollTimeline } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/supports/scroll-timeline.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getFinalKeyframe } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./keyframes/get-final.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ WithPromise } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/WithPromise.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ startWaapiAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./waapi/start-waapi-animation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ applyGeneratorOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./waapi/utils/apply-generator.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* NativeAnimation implements AnimationPlaybackControls for the browser's Web Animations API. 
+ </span><span class="s2">*/</span>
+<span class="s0">class </span><span class="s2">NativeAnimation </span><span class="s0">extends </span><span class="s2">WithPromise {</span>
+    <span class="s0">constructor</span><span class="s2">(options) {</span>
+        <span class="s2">super</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.finishedTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.isStopped = </span><span class="s5">false</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s4">* Tracks a manually-set start time that takes precedence over WAAPI's 
+         * dynamic startTime. This is cleared when play() or time setter is called, 
+         * allowing WAAPI to take over timing. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.manualStartTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!options</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ element, name, keyframes, pseudoElement, allowFlatten = </span><span class="s5">false</span><span class="s2">, finalKeyframe, onComplete, } = options;</span>
+        <span class="s2">this.isPseudoElement = </span><span class="s6">Boolean</span><span class="s1">(</span><span class="s2">pseudoElement</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.allowFlatten = allowFlatten;</span>
+        <span class="s2">this.options = options;</span>
+        <span class="s6">invariant</span><span class="s1">(</span><span class="s2">typeof options.type !== &quot;</span><span class="s3">string</span><span class="s2">&quot;, `</span><span class="s3">Mini animate() doesn't support &quot;type&quot; as a string.</span><span class="s2">`, &quot;</span><span class="s3">mini-spring</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">transition = </span><span class="s6">applyGeneratorOptions</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.animation = </span><span class="s6">startWaapiAnimation</span><span class="s1">(</span><span class="s2">element, name, keyframes, transition, pseudoElement</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">transition.autoplay === </span><span class="s5">false</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.animation.</span><span class="s6">pause</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.animation.</span><span class="s6">onfinish </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">this.finishedTime = this.time;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!pseudoElement</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">keyframe = </span><span class="s6">getFinalKeyframe</span><span class="s1">(</span><span class="s2">keyframes, this.options, finalKeyframe, this.speed</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">this.updateMotionValue</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">this.</span><span class="s6">updateMotionValue</span><span class="s1">(</span><span class="s2">keyframe</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s2">/**</span>
+                 <span class="s4">* If we can, we want to commit the final style as set by the user, 
+                 * rather than the computed keyframe value supplied by the animation. 
+                 * We always do this, even when a motion value is present, to prevent 
+                 * a visual flash in Firefox where the WAAPI animation's fill is removed 
+                 * during cancel() before the scheduled render can apply the correct value. 
+                 </span><span class="s2">*/</span>
+                <span class="s6">setStyle</span><span class="s1">(</span><span class="s2">element, name, keyframe</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">this.animation.</span><span class="s6">cancel</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s6">onComplete</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s6">notifyFinished</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s6">play</span><span class="s2">() {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.isStopped</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">this.manualStartTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.animation.</span><span class="s6">play</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">finished</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s6">updateFinished</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s6">pause</span><span class="s2">() {</span>
+        <span class="s2">this.animation.</span><span class="s6">pause</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s6">complete</span><span class="s2">() {</span>
+        <span class="s2">this.animation.</span><span class="s6">finish</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s6">cancel</span><span class="s2">() {</span>
+        <span class="s0">try </span><span class="s2">{</span>
+            <span class="s2">this.animation.</span><span class="s6">cancel</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">catch </span><span class="s1">(</span><span class="s2">e</span><span class="s1">) </span><span class="s2">{ }</span>
+    <span class="s2">}</span>
+    <span class="s6">stop</span><span class="s2">() {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.isStopped</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">this.isStopped = </span><span class="s5">true</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ state } = this;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">state === &quot;</span><span class="s3">idle</span><span class="s2">&quot; || state === &quot;</span><span class="s3">finished</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.updateMotionValue</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s6">updateMotionValue</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s6">commitStyles</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.isPseudoElement</span><span class="s1">)</span>
+            <span class="s2">this.</span><span class="s6">cancel</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* WAAPI doesn't natively have any interruption capabilities. 
+     * 
+     * In this method, we commit styles back to the DOM before cancelling 
+     * the animation. 
+     * 
+     * This is designed to be overridden by NativeAnimationExtended, which 
+     * will create a renderless JS animation and sample it twice to calculate 
+     * its current value, &quot;previous&quot; value, and therefore allow 
+     * Motion to also correctly calculate velocity for any subsequent animation 
+     * while deferring the commit until the next animation frame. 
+     </span><span class="s2">*/</span>
+    <span class="s6">commitStyles</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">element = this.options?.element;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.isPseudoElement &amp;&amp; element?.isConnected</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.animation.</span><span class="s6">commitStyles</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s6">duration</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">duration = this.animation.effect?.</span><span class="s6">getComputedTiming</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">.duration || </span><span class="s7">0</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s6">Number</span><span class="s1">(</span><span class="s2">duration</span><span class="s1">))</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s6">iterationDuration</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">{ delay = </span><span class="s7">0 </span><span class="s2">} = this.options || {};</span>
+        <span class="s0">return </span><span class="s2">this.duration + </span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">delay</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s6">time</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s6">millisecondsToSeconds</span><span class="s1">(</span><span class="s6">Number</span><span class="s1">(</span><span class="s2">this.animation.currentTime</span><span class="s1">) </span><span class="s2">|| </span><span class="s7">0</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">set </span><span class="s6">time</span><span class="s2">(newTime) {</span>
+        <span class="s0">const </span><span class="s2">wasFinished = this.finishedTime !== </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.manualStartTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.finishedTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.animation.currentTime = </span><span class="s6">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">newTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">wasFinished</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.animation.</span><span class="s6">pause</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* The playback speed of the animation. 
+     * 1 = normal speed, 2 = double speed, 0.5 = half speed. 
+     </span><span class="s2">*/</span>
+    <span class="s0">get </span><span class="s6">speed</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.animation.playbackRate;</span>
+    <span class="s2">}</span>
+    <span class="s0">set </span><span class="s6">speed</span><span class="s2">(newSpeed) {</span>
+        <span class="s2">// </span><span class="s4">Allow backwards playback after finishing</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">newSpeed &lt; </span><span class="s7">0</span><span class="s1">)</span>
+            <span class="s2">this.finishedTime = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s2">this.animation.playbackRate = newSpeed;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s6">state</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.finishedTime !== </span><span class="s5">null</span>
+            <span class="s2">? &quot;</span><span class="s3">finished</span><span class="s2">&quot;</span>
+            <span class="s2">: this.animation.playState;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s6">startTime</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.manualStartTime ?? </span><span class="s6">Number</span><span class="s1">(</span><span class="s2">this.animation.startTime</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">set </span><span class="s6">startTime</span><span class="s2">(newStartTime) {</span>
+        <span class="s2">this.manualStartTime = this.animation.startTime = newStartTime;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s4">* Attaches a timeline to the animation, for instance the `ScrollTimeline`. 
+     </span><span class="s2">*/</span>
+    <span class="s6">attachTimeline</span><span class="s2">({ timeline, rangeStart, rangeEnd, observe, }) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.allowFlatten</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.animation.effect?.</span><span class="s6">updateTiming</span><span class="s1">(</span><span class="s2">{ </span><span class="s1">easing</span><span class="s2">: &quot;</span><span class="s3">linear</span><span class="s2">&quot; }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.animation.onfinish = </span><span class="s5">null</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">timeline &amp;&amp; </span><span class="s6">supportsScrollTimeline</span><span class="s1">()) </span><span class="s2">{</span>
+            <span class="s2">this.animation.timeline = timeline;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">rangeStart</span><span class="s1">)</span>
+                <span class="s2">this.animation.rangeStart = rangeStart;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">rangeEnd</span><span class="s1">)</span>
+                <span class="s2">this.animation.rangeEnd = rangeEnd;</span>
+            <span class="s0">return </span><span class="s2">noop;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s6">observe</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ NativeAnimation };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=NativeAnimation.mjs.map</span>
+</pre>
+</body>
+</html>

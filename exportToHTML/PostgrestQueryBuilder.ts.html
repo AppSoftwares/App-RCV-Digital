@@ -1,0 +1,1727 @@
+<html>
+<head>
+<title>PostgrestQueryBuilder.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PostgrestQueryBuilder.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">PostgrestFilterBuilder </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./PostgrestFilterBuilder</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ GetResult } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./select-query-parser/result</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">ClientServerOptions,</span>
+  <span class="s2">Fetch,</span>
+  <span class="s2">GenericSchema,</span>
+  <span class="s2">GenericTable,</span>
+  <span class="s2">GenericView,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types/common/common</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ RejectExcessProperties } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types/types</span><span class="s2">'</span>
+
+<span class="s0">export default class </span><span class="s2">PostgrestQueryBuilder&lt;</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema,</span>
+  <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">GenericTable | GenericView,</span>
+  <span class="s2">RelationName = unknown,</span>
+  <span class="s2">Relationships = Relation </span><span class="s0">extends </span><span class="s2">{ Relationships: infer R } ? R : unknown,</span>
+<span class="s2">&gt; {</span>
+  <span class="s2">url: URL</span>
+  <span class="s2">headers: Headers</span>
+  <span class="s2">schema?: string</span>
+  <span class="s2">signal?: AbortSignal</span>
+  <span class="s2">fetch?: Fetch</span>
+  <span class="s2">urlLengthLimit: number</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Enable or disable automatic retries for transient errors. 
+   * When enabled, idempotent requests (GET/HEAD/OPTIONS) that fail with network 
+   * errors or HTTP 503/520 responses are automatically retried with exponential 
+   * backoff (1s, 2s, 4s, up to 3 attempts). Defaults to `true` when not specified. 
+   </span><span class="s2">*/</span>
+  <span class="s2">retry?: boolean</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Creates a query builder scoped to a Postgres table or view. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">url </span><span class="s4">- The URL for the query 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.headers </span><span class="s4">- Custom headers 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.schema </span><span class="s4">- Postgres schema to use 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.fetch </span><span class="s4">- Custom fetch implementation 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.urlLengthLimit </span><span class="s4">- Maximum URL length before warning 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.retry </span><span class="s4">- Enable automatic retries for transient errors (default: true) 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.from('users').select('*') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { PostgrestQueryBuilder } from '@supabase/postgrest-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const query = new PostgrestQueryBuilder( 
+   </span><span class="s4">*   </span><span class="s1">new URL('https://xyzcompany.supabase.co/rest/v1/users'), 
+   </span><span class="s4">*   </span><span class="s1">{ headers: { apikey: 'your-publishable-key' }, retry: true } 
+   </span><span class="s4">* </span><span class="s1">) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: URL,</span>
+    <span class="s2">{</span>
+      <span class="s2">headers = {},</span>
+      <span class="s2">schema,</span>
+      <span class="s2">fetch,</span>
+      <span class="s2">urlLengthLimit = </span><span class="s5">8000</span><span class="s2">,</span>
+      <span class="s2">retry,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">headers?: HeadersInit</span>
+      <span class="s2">schema?: string</span>
+      <span class="s2">fetch?: Fetch</span>
+      <span class="s2">urlLengthLimit?: number</span>
+      <span class="s2">retry?: boolean</span>
+    <span class="s2">}</span>
+  <span class="s2">) {</span>
+    <span class="s2">this.url = url</span>
+    <span class="s2">this.headers = new </span><span class="s6">Headers</span><span class="s1">(</span><span class="s2">headers</span><span class="s1">)</span>
+    <span class="s2">this.schema = schema</span>
+    <span class="s2">this.fetch = fetch</span>
+    <span class="s2">this.urlLengthLimit = urlLengthLimit</span>
+    <span class="s2">this.retry = retry</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Clone URL and headers to prevent shared state between operations. 
+   </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s6">cloneRequestState</span><span class="s2">(): { url: URL; headers: Headers } {</span>
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">url</span><span class="s2">: new </span><span class="s6">URL</span><span class="s1">(</span><span class="s2">this.url.</span><span class="s6">toString</span><span class="s1">())</span><span class="s2">,</span>
+      <span class="s1">headers</span><span class="s2">: new </span><span class="s6">Headers</span><span class="s1">(</span><span class="s2">this.headers</span><span class="s1">)</span><span class="s2">,</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+       <span class="s4">* Perform a SELECT query on the table or view. 
+       * 
+       * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">columns </span><span class="s4">- The columns to retrieve, separated by commas. Columns can be renamed when returned with `customName:columnName` 
+       * 
+       * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+       * 
+       * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.head </span><span class="s4">- When set to `true`, `data` will not be returned. 
+       * Useful if you only need the count. 
+       * 
+       * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count rows in the table or view. 
+       * 
+       * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+       * hood. 
+       * 
+       * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+       * statistics under the hood. 
+       * 
+       * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+       * numbers. 
+       * 
+       * </span><span class="s2">@</span><span class="s0">remarks</span>
+       <span class="s4">* When using `count` with `.range()` or `.limit()`, the returned `count` is the total number of rows 
+       * that match your filters, not the number of rows in the current page. Use this to build pagination UI. 
+       </span>
+     <span class="s4">* - By default, Supabase projects return a maximum of 1,000 rows. This setting can be changed in your project's [API settings](/dashboard/project/_/settings/api). It's recommended that you keep it low to limit the payload size of accidental or malicious requests. You can use `range()` queries to paginate through your data. 
+     * - `select()` can be combined with [Filters](/docs/reference/javascript/using-filters) 
+     * - `select()` can be combined with [Modifiers](/docs/reference/javascript/using-modifiers) 
+     * - `apikey` is a reserved keyword if you're using the [Supabase Platform](/docs/guides/platform) and [should be avoided as a column name](https://github.com/supabase/supabase/issues/5465). * 
+     * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Getting your data 
+     </span><span class="s4">* </span><span class="s1">```js 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('characters') 
+     </span><span class="s4">*   </span><span class="s1">.select() 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Getting your data 
+     * ```sql 
+     * create table 
+     *   characters (id int8 primary key, name text); 
+     * 
+     * insert into 
+     *   characters (id, name) 
+     * values 
+     *   (1, 'Harry'), 
+     *   (2, 'Frodo'), 
+     *   (3, 'Katniss'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Getting your data 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;id&quot;: 1, 
+     *       &quot;name&quot;: &quot;Harry&quot; 
+     *     }, 
+     *     { 
+     *       &quot;id&quot;: 2, 
+     *       &quot;name&quot;: &quot;Frodo&quot; 
+     *     }, 
+     *     { 
+     *       &quot;id&quot;: 3, 
+     *       &quot;name&quot;: &quot;Katniss&quot; 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Selecting specific columns 
+     </span><span class="s4">* </span><span class="s1">```js 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('characters') 
+     </span><span class="s4">*   </span><span class="s1">.select('name') 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Selecting specific columns 
+     * ```sql 
+     * create table 
+     *   characters (id int8 primary key, name text); 
+     * 
+     * insert into 
+     *   characters (id, name) 
+     * values 
+     *   (1, 'Frodo'), 
+     *   (2, 'Harry'), 
+     *   (3, 'Katniss'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Selecting specific columns 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;name&quot;: &quot;Frodo&quot; 
+     *     }, 
+     *     { 
+     *       &quot;name&quot;: &quot;Harry&quot; 
+     *     }, 
+     *     { 
+     *       &quot;name&quot;: &quot;Katniss&quot; 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Query referenced tables 
+     * If your database has foreign key relationships, you can query related tables too. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query referenced tables 
+     </span><span class="s4">* </span><span class="s1">```js 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('orchestral_sections') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">name, 
+     </span><span class="s4">*     </span><span class="s1">instruments ( 
+     </span><span class="s4">*       </span><span class="s1">name 
+     </span><span class="s4">*     </span><span class="s1">) 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Query referenced tables 
+     * ```sql 
+     * create table 
+     *   orchestral_sections (id int8 primary key, name text); 
+     * create table 
+     *   instruments ( 
+     *     id int8 primary key, 
+     *     section_id int8 not null references orchestral_sections, 
+     *     name text 
+     *   ); 
+     * 
+     * insert into 
+     *   orchestral_sections (id, name) 
+     * values 
+     *   (1, 'strings'), 
+     *   (2, 'woodwinds'); 
+     * insert into 
+     *   instruments (id, section_id, name) 
+     * values 
+     *   (1, 2, 'flute'), 
+     *   (2, 1, 'violin'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Query referenced tables 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;name&quot;: &quot;strings&quot;, 
+     *       &quot;instruments&quot;: [ 
+     *         { 
+     *           &quot;name&quot;: &quot;violin&quot; 
+     *         } 
+     *       ] 
+     *     }, 
+     *     { 
+     *       &quot;name&quot;: &quot;woodwinds&quot;, 
+     *       &quot;instruments&quot;: [ 
+     *         { 
+     *           &quot;name&quot;: &quot;flute&quot; 
+     *         } 
+     *       ] 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Query referenced tables with spaces in their names 
+     * If your table name contains spaces, you must use double quotes in the `select` statement to reference the table. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query referenced tables with spaces in their names 
+     </span><span class="s4">* </span><span class="s1">```js 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('orchestral sections') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">name, 
+     </span><span class="s4">*     </span><span class="s1">&quot;musical instruments&quot; ( 
+     </span><span class="s4">*       </span><span class="s1">name 
+     </span><span class="s4">*     </span><span class="s1">) 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Query referenced tables with spaces in their names 
+     * ```sql 
+     * create table 
+     *   &quot;orchestral sections&quot; (id int8 primary key, name text); 
+     * create table 
+     *   &quot;musical instruments&quot; ( 
+     *     id int8 primary key, 
+     *     section_id int8 not null references &quot;orchestral sections&quot;, 
+     *     name text 
+     *   ); 
+     * 
+     * insert into 
+     *   &quot;orchestral sections&quot; (id, name) 
+     * values 
+     *   (1, 'strings'), 
+     *   (2, 'woodwinds'); 
+     * insert into 
+     *   &quot;musical instruments&quot; (id, section_id, name) 
+     * values 
+     *   (1, 2, 'flute'), 
+     *   (2, 1, 'violin'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Query referenced tables with spaces in their names 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;name&quot;: &quot;strings&quot;, 
+     *       &quot;musical instruments&quot;: [ 
+     *         { 
+     *           &quot;name&quot;: &quot;violin&quot; 
+     *         } 
+     *       ] 
+     *     }, 
+     *     { 
+     *       &quot;name&quot;: &quot;woodwinds&quot;, 
+     *       &quot;musical instruments&quot;: [ 
+     *         { 
+     *           &quot;name&quot;: &quot;flute&quot; 
+     *         } 
+     *       ] 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Query referenced tables through a join table 
+     * If you're in a situation where your tables are **NOT** directly 
+     * related, but instead are joined by a _join table_, you can still use 
+     * the `select()` method to query the related data. The join table needs 
+     * to have the foreign keys as part of its composite primary key. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query referenced tables through a join table 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('users') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">name, 
+     </span><span class="s4">*     </span><span class="s1">teams ( 
+     </span><span class="s4">*       </span><span class="s1">name 
+     </span><span class="s4">*     </span><span class="s1">) 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">*    
+     * </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Query referenced tables through a join table 
+     * ```sql 
+     * create table 
+     *   users ( 
+     *     id int8 primary key, 
+     *     name text 
+     *   ); 
+     * create table 
+     *   teams ( 
+     *     id int8 primary key, 
+     *     name text 
+     *   ); 
+     * -- join table 
+     * create table 
+     *   users_teams ( 
+     *     user_id int8 not null references users, 
+     *     team_id int8 not null references teams, 
+     *     -- both foreign keys must be part of a composite primary key 
+     *     primary key (user_id, team_id) 
+     *   ); 
+     * 
+     * insert into 
+     *   users (id, name) 
+     * values 
+     *   (1, 'Kiran'), 
+     *   (2, 'Evan'); 
+     * insert into 
+     *   teams (id, name) 
+     * values 
+     *   (1, 'Green'), 
+     *   (2, 'Blue'); 
+     * insert into 
+     *   users_teams (user_id, team_id) 
+     * values 
+     *   (1, 1), 
+     *   (1, 2), 
+     *   (2, 2); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Query referenced tables through a join table 
+     * ```json 
+     *   { 
+     *     &quot;data&quot;: [ 
+     *       { 
+     *         &quot;name&quot;: &quot;Kiran&quot;, 
+     *         &quot;teams&quot;: [ 
+     *           { 
+     *             &quot;name&quot;: &quot;Green&quot; 
+     *           }, 
+     *           { 
+     *             &quot;name&quot;: &quot;Blue&quot; 
+     *           } 
+     *         ] 
+     *       }, 
+     *       { 
+     *         &quot;name&quot;: &quot;Evan&quot;, 
+     *         &quot;teams&quot;: [ 
+     *           { 
+     *             &quot;name&quot;: &quot;Blue&quot; 
+     *           } 
+     *         ] 
+     *       } 
+     *     ], 
+     *     &quot;status&quot;: 200, 
+     *     &quot;statusText&quot;: &quot;OK&quot; 
+     *   } 
+     *    
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Query the same referenced table multiple times 
+     * If you need to query the same referenced table twice, use the name of the 
+     * joined column to identify which join to use. You can also give each 
+     * column an alias. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query the same referenced table multiple times 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('messages') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">content, 
+     </span><span class="s4">*     </span><span class="s1">from:sender_id(name), 
+     </span><span class="s4">*     </span><span class="s1">to:receiver_id(name) 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">* 
+     * </span><span class="s1">// To infer types, use the name of the table (in this case `users`) and 
+     </span><span class="s4">* </span><span class="s1">// the name of the foreign key constraint. 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('messages') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">content, 
+     </span><span class="s4">*     </span><span class="s1">from:users!messages_sender_id_fkey(name), 
+     </span><span class="s4">*     </span><span class="s1">to:users!messages_receiver_id_fkey(name) 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Query the same referenced table multiple times 
+     * ```sql 
+     *  create table 
+     *  users (id int8 primary key, name text); 
+     * 
+     *  create table 
+     *    messages ( 
+     *      sender_id int8 not null references users, 
+     *      receiver_id int8 not null references users, 
+     *      content text 
+     *    ); 
+     * 
+     *  insert into 
+     *    users (id, name) 
+     *  values 
+     *    (1, 'Kiran'), 
+     *    (2, 'Evan'); 
+     * 
+     *  insert into 
+     *    messages (sender_id, receiver_id, content) 
+     *  values 
+     *    (1, 2, '👋'); 
+     *  ``` 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Query the same referenced table multiple times 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;content&quot;: &quot;👋&quot;, 
+     *       &quot;from&quot;: { 
+     *         &quot;name&quot;: &quot;Kiran&quot; 
+     *       }, 
+     *       &quot;to&quot;: { 
+     *         &quot;name&quot;: &quot;Evan&quot; 
+     *       } 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Query nested foreign tables through a join table 
+     * You can use the result of a joined table to gather data in 
+     * another foreign table. With multiple references to the same foreign 
+     * table you must specify the column on which to conduct the join. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Query nested foreign tables through a join table 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">*   </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*     </span><span class="s1">.from('games') 
+     </span><span class="s4">*     </span><span class="s1">.select(` 
+     </span><span class="s4">*       </span><span class="s1">game_id:id, 
+     </span><span class="s4">*       </span><span class="s1">away_team:teams!games_away_team_fkey ( 
+     </span><span class="s4">*         </span><span class="s1">users ( 
+     </span><span class="s4">*           </span><span class="s1">id, 
+     </span><span class="s4">*           </span><span class="s1">name 
+     </span><span class="s4">*         </span><span class="s1">) 
+     </span><span class="s4">*       </span><span class="s1">) 
+     </span><span class="s4">*     </span><span class="s1">`) 
+     </span><span class="s4">*    
+     * </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Query nested foreign tables through a join table 
+     * ```sql 
+     * ```sql 
+     * create table 
+     *   users ( 
+     *     id int8 primary key, 
+     *     name text 
+     *   ); 
+     * create table 
+     *   teams ( 
+     *     id int8 primary key, 
+     *     name text 
+     *   ); 
+     * -- join table 
+     * create table 
+     *   users_teams ( 
+     *     user_id int8 not null references users, 
+     *     team_id int8 not null references teams, 
+     * 
+     *     primary key (user_id, team_id) 
+     *   ); 
+     * create table 
+     *   games ( 
+     *     id int8 primary key, 
+     *     home_team int8 not null references teams, 
+     *     away_team int8 not null references teams, 
+     *     name text 
+     *   ); 
+     * 
+     * insert into users (id, name) 
+     * values 
+     *   (1, 'Kiran'), 
+     *   (2, 'Evan'); 
+     * insert into 
+     *   teams (id, name) 
+     * values 
+     *   (1, 'Green'), 
+     *   (2, 'Blue'); 
+     * insert into 
+     *   users_teams (user_id, team_id) 
+     * values 
+     *   (1, 1), 
+     *   (1, 2), 
+     *   (2, 2); 
+     * insert into 
+     *   games (id, home_team, away_team, name) 
+     * values 
+     *   (1, 1, 2, 'Green vs Blue'), 
+     *   (2, 2, 1, 'Blue vs Green'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Query nested foreign tables through a join table 
+     * ```json 
+     *   { 
+     *     &quot;data&quot;: [ 
+     *       { 
+     *         &quot;game_id&quot;: 1, 
+     *         &quot;away_team&quot;: { 
+     *           &quot;users&quot;: [ 
+     *             { 
+     *               &quot;id&quot;: 1, 
+     *               &quot;name&quot;: &quot;Kiran&quot; 
+     *             }, 
+     *             { 
+     *               &quot;id&quot;: 2, 
+     *               &quot;name&quot;: &quot;Evan&quot; 
+     *             } 
+     *           ] 
+     *         } 
+     *       }, 
+     *       { 
+     *         &quot;game_id&quot;: 2, 
+     *         &quot;away_team&quot;: { 
+     *           &quot;users&quot;: [ 
+     *             { 
+     *               &quot;id&quot;: 1, 
+     *               &quot;name&quot;: &quot;Kiran&quot; 
+     *             } 
+     *           ] 
+     *         } 
+     *       } 
+     *     ], 
+     *     &quot;status&quot;: 200, 
+     *     &quot;statusText&quot;: &quot;OK&quot; 
+     *   } 
+     *    
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Filtering through referenced tables 
+     * If the filter on a referenced table's column is not satisfied, the referenced 
+     * table returns `[]` or `null` but the parent table is not filtered out. 
+     * If you want to filter out the parent table rows, use the `!inner` hint 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Filtering through referenced tables 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+     </span><span class="s4">*   </span><span class="s1">.select('name, orchestral_sections(*)') 
+     </span><span class="s4">*   </span><span class="s1">.eq('orchestral_sections.name', 'percussion') 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Filtering through referenced tables 
+     * ```sql 
+     * create table 
+     *   orchestral_sections (id int8 primary key, name text); 
+     * create table 
+     *   instruments ( 
+     *     id int8 primary key, 
+     *     section_id int8 not null references orchestral_sections, 
+     *     name text 
+     *   ); 
+     * 
+     * insert into 
+     *   orchestral_sections (id, name) 
+     * values 
+     *   (1, 'strings'), 
+     *   (2, 'woodwinds'); 
+     * insert into 
+     *   instruments (id, section_id, name) 
+     * values 
+     *   (1, 2, 'flute'), 
+     *   (2, 1, 'violin'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Filtering through referenced tables 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;name&quot;: &quot;flute&quot;, 
+     *       &quot;orchestral_sections&quot;: null 
+     *     }, 
+     *     { 
+     *       &quot;name&quot;: &quot;violin&quot;, 
+     *       &quot;orchestral_sections&quot;: null 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Querying referenced table with count 
+     * You can get the number of rows in a related table by using the 
+     * **count** property. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Querying referenced table with count 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('orchestral_sections') 
+     </span><span class="s4">*   </span><span class="s1">.select(`*, instruments(count)`) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Querying referenced table with count 
+     * ```sql 
+     * create table orchestral_sections ( 
+     *   &quot;id&quot; &quot;uuid&quot; primary key default &quot;extensions&quot;.&quot;uuid_generate_v4&quot;() not null, 
+     *   &quot;name&quot; text 
+     * ); 
+     * 
+     * create table characters ( 
+     *   &quot;id&quot; &quot;uuid&quot; primary key default &quot;extensions&quot;.&quot;uuid_generate_v4&quot;() not null, 
+     *   &quot;name&quot; text, 
+     *   &quot;section_id&quot; &quot;uuid&quot; references public.orchestral_sections on delete cascade 
+     * ); 
+     * 
+     * with section as ( 
+     *   insert into orchestral_sections (name) 
+     *   values ('strings') returning id 
+     * ) 
+     * insert into instruments (name, section_id) values 
+     * ('violin', (select id from section)), 
+     * ('viola', (select id from section)), 
+     * ('cello', (select id from section)), 
+     * ('double bass', (select id from section)); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Querying referenced table with count 
+     * ```json 
+     * [ 
+     *   { 
+     *     &quot;id&quot;: &quot;693694e7-d993-4360-a6d7-6294e325d9b6&quot;, 
+     *     &quot;name&quot;: &quot;strings&quot;, 
+     *     &quot;instruments&quot;: [ 
+     *       { 
+     *         &quot;count&quot;: 4 
+     *       } 
+     *     ] 
+     *   } 
+     * ] 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Querying with count option 
+     * You can get the number of rows by using the 
+     * [count](/docs/reference/javascript/select#parameters) option. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Querying with count option 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { count, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('characters') 
+     </span><span class="s4">*   </span><span class="s1">.select('*', { count: 'exact', head: true }) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Querying with count option 
+     * ```sql 
+     * create table 
+     *   characters (id int8 primary key, name text); 
+     * 
+     * insert into 
+     *   characters (id, name) 
+     * values 
+     *   (1, 'Luke'), 
+     *   (2, 'Leia'), 
+     *   (3, 'Han'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Querying with count option 
+     * ```json 
+     * { 
+     *   &quot;count&quot;: 3, 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Querying JSON data 
+     * You can select and filter data inside of 
+     * [JSON](/docs/guides/database/json) columns. Postgres offers some 
+     * [operators](/docs/guides/database/json#query-the-jsonb-data) for 
+     * querying JSON data. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Querying JSON data 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('users') 
+     </span><span class="s4">*   </span><span class="s1">.select(` 
+     </span><span class="s4">*     </span><span class="s1">id, name, 
+     </span><span class="s4">*     </span><span class="s1">address-&gt;city 
+     </span><span class="s4">*   </span><span class="s1">`) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Querying JSON data 
+     * ```sql 
+     * create table 
+     *   users ( 
+     *     id int8 primary key, 
+     *     name text, 
+     *     address jsonb 
+     *   ); 
+     * 
+     * insert into 
+     *   users (id, name, address) 
+     * values 
+     *   (1, 'Frodo', '{&quot;city&quot;:&quot;Hobbiton&quot;}'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Querying JSON data 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;id&quot;: 1, 
+     *       &quot;name&quot;: &quot;Frodo&quot;, 
+     *       &quot;city&quot;: &quot;Hobbiton&quot; 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Querying referenced table with inner join 
+     * If you don't want to return the referenced table contents, you can leave the parenthesis empty. 
+     * Like `.select('name, orchestral_sections!inner()')`. 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Querying referenced table with inner join 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+     </span><span class="s4">*   </span><span class="s1">.select('name, orchestral_sections!inner(name)') 
+     </span><span class="s4">*   </span><span class="s1">.eq('orchestral_sections.name', 'woodwinds') 
+     </span><span class="s4">*   </span><span class="s1">.limit(1) 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Querying referenced table with inner join 
+     * ```sql 
+     * create table orchestral_sections ( 
+     *   &quot;id&quot; &quot;uuid&quot; primary key default &quot;extensions&quot;.&quot;uuid_generate_v4&quot;() not null, 
+     *   &quot;name&quot; text 
+     * ); 
+     * 
+     * create table instruments ( 
+     *   &quot;id&quot; &quot;uuid&quot; primary key default &quot;extensions&quot;.&quot;uuid_generate_v4&quot;() not null, 
+     *   &quot;name&quot; text, 
+     *   &quot;section_id&quot; &quot;uuid&quot; references public.orchestral_sections on delete cascade 
+     * ); 
+     * 
+     * with section as ( 
+     *   insert into orchestral_sections (name) 
+     *   values ('woodwinds') returning id 
+     * ) 
+     * insert into instruments (name, section_id) values 
+     * ('flute', (select id from section)), 
+     * ('clarinet', (select id from section)), 
+     * ('bassoon', (select id from section)), 
+     * ('piccolo', (select id from section)); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Querying referenced table with inner join 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;name&quot;: &quot;flute&quot;, 
+     *       &quot;orchestral_sections&quot;: {&quot;name&quot;: &quot;woodwinds&quot;} 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Switching schemas per query 
+     * In addition to setting the schema during initialization, you can also switch schemas on a per-query basis. 
+     * Make sure you've set up your [database privileges and API settings](/docs/guides/api/using-custom-schemas). 
+     * 
+     * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Switching schemas per query 
+     </span><span class="s4">* </span><span class="s1">```ts 
+     </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+     </span><span class="s4">*   </span><span class="s1">.schema('myschema') 
+     </span><span class="s4">*   </span><span class="s1">.from('mytable') 
+     </span><span class="s4">*   </span><span class="s1">.select() 
+     </span><span class="s4">* </span><span class="s1">``` 
+     </span><span class="s4">* 
+     * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Switching schemas per query 
+     * ```sql 
+     * create schema myschema; 
+     * 
+     * create table myschema.mytable ( 
+     *   id uuid primary key default gen_random_uuid(), 
+     *   data text 
+     * ); 
+     * 
+     * insert into myschema.mytable (data) values ('mydata'); 
+     * ``` 
+     * 
+     * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Switching schemas per query 
+     * ```json 
+     * { 
+     *   &quot;data&quot;: [ 
+     *     { 
+     *       &quot;id&quot;: &quot;4162e008-27b0-4c0f-82dc-ccaeee9a624d&quot;, 
+     *       &quot;data&quot;: &quot;mydata&quot; 
+     *     } 
+     *   ], 
+     *   &quot;status&quot;: 200, 
+     *   &quot;statusText&quot;: &quot;OK&quot; 
+     * } 
+     * ``` 
+       </span><span class="s2">*/</span>
+  <span class="s2">select&lt;</span>
+    <span class="s2">Query extends string = '</span><span class="s3">*</span><span class="s2">',</span>
+    <span class="s2">ResultOne = GetResult&lt;</span>
+      <span class="s2">Schema,</span>
+      <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+      <span class="s2">RelationName,</span>
+      <span class="s2">Relationships,</span>
+      <span class="s2">Query,</span>
+      <span class="s2">ClientOptions</span>
+    <span class="s2">&gt;,</span>
+  <span class="s2">&gt;(</span>
+    <span class="s2">columns?: Query,</span>
+    <span class="s2">options?: {</span>
+      <span class="s2">head?: boolean</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+    <span class="s2">}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">ResultOne</span><span class="s1">[]</span><span class="s2">,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">'</span><span class="s3">GET</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">{ head = </span><span class="s7">false</span><span class="s2">, count } = options ?? {}</span>
+
+    <span class="s0">const </span><span class="s2">method = head ? '</span><span class="s3">HEAD</span><span class="s2">' : '</span><span class="s3">GET</span><span class="s2">'</span>
+    <span class="s2">// </span><span class="s4">Remove whitespaces except when quoted</span>
+    <span class="s0">let </span><span class="s2">quoted = </span><span class="s7">false</span>
+    <span class="s0">const </span><span class="s2">cleanedColumns = </span><span class="s1">(</span><span class="s2">columns ?? '</span><span class="s3">*</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s6">split</span><span class="s1">(</span><span class="s2">''</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">(c) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">/</span><span class="s7">\s</span><span class="s2">/.</span><span class="s6">test</span><span class="s1">(</span><span class="s2">c</span><span class="s1">) </span><span class="s2">&amp;&amp; !quoted</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s2">''</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">c === '</span><span class="s3">&quot;</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">quoted = !quoted</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">c</span>
+      <span class="s2">}</span><span class="s1">)</span>
+      <span class="s2">.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">''</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">{ url, headers } = this.</span><span class="s6">cloneRequestState</span><span class="s1">()</span>
+    <span class="s2">url.searchParams.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">select</span><span class="s2">', cleanedColumns</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schema,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform an INSERT into the table or view. 
+   * 
+   * By default, inserted rows are not returned. To return it, chain the call 
+   * with `.select()`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">values </span><span class="s4">- The values to insert. Pass an object to insert a single row 
+   * or an array to insert multiple rows. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count inserted rows. 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.defaultToNull </span><span class="s4">- Make missing fields default to `null`. 
+   * Otherwise, use the default value for the column. Only applies for bulk 
+   * inserts. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create a record 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.insert({ id: 1, name: 'Mordor' }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Create a record 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Create a record 
+   * ```json 
+   * { 
+   *   &quot;status&quot;: 201, 
+   *   &quot;statusText&quot;: &quot;Created&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create a record and return it 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.insert({ id: 1, name: 'Mordor' }) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Create a record and return it 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Create a record and return it 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Mordor&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 201, 
+   *   &quot;statusText&quot;: &quot;Created&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Bulk create 
+   * A bulk create operation is handled in a single transaction. 
+   * If any of the inserts fail, none of the rows are inserted. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Bulk create 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.insert([ 
+   </span><span class="s4">*     </span><span class="s1">{ id: 1, name: 'Mordor' }, 
+   </span><span class="s4">*     </span><span class="s1">{ id: 1, name: 'The Shire' }, 
+   </span><span class="s4">*   </span><span class="s1">]) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Bulk create 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Bulk create 
+   * ```json 
+   * { 
+   *   &quot;error&quot;: { 
+   *     &quot;code&quot;: &quot;23505&quot;, 
+   *     &quot;details&quot;: &quot;Key (id)=(1) already exists.&quot;, 
+   *     &quot;hint&quot;: null, 
+   *     &quot;message&quot;: &quot;duplicate key value violates unique constraint \&quot;countries_pkey\&quot;&quot; 
+   *   }, 
+   *   &quot;status&quot;: 409, 
+   *   &quot;statusText&quot;: &quot;Conflict&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s6">insert</span><span class="s2">&lt;Row </span><span class="s0">extends </span><span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never&gt;(</span>
+    <span class="s2">values:</span>
+      <span class="s2">| RejectExcessProperties&lt;</span>
+          <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never,</span>
+          <span class="s2">Row</span>
+        <span class="s2">&gt;</span>
+      <span class="s2">| RejectExcessProperties&lt;</span>
+          <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never,</span>
+          <span class="s2">Row</span>
+        <span class="s2">&gt;</span><span class="s1">[]</span><span class="s2">,</span>
+    <span class="s2">{</span>
+      <span class="s2">count,</span>
+      <span class="s2">defaultToNull = </span><span class="s7">true</span><span class="s2">,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+      <span class="s2">defaultToNull?: boolean</span>
+    <span class="s2">} = {}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">null,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">'</span><span class="s3">POST</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">method = '</span><span class="s3">POST</span><span class="s2">'</span>
+    <span class="s0">const </span><span class="s2">{ url, headers } = this.</span><span class="s6">cloneRequestState</span><span class="s1">()</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!defaultToNull</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">missing=default</span><span class="s2">`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s6">isArray</span><span class="s1">(</span><span class="s2">values</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">columns = values.</span><span class="s6">reduce</span><span class="s1">(</span><span class="s2">(acc, x) </span><span class="s0">=&gt; </span><span class="s2">acc.</span><span class="s6">concat</span><span class="s1">(</span><span class="s2">Object.</span><span class="s6">keys</span><span class="s1">(</span><span class="s2">x</span><span class="s1">))</span><span class="s2">, </span><span class="s1">[] </span><span class="s0">as </span><span class="s2">string</span><span class="s1">[])</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">columns.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">uniqueColumns = </span><span class="s1">[</span><span class="s2">...new </span><span class="s6">Set</span><span class="s1">(</span><span class="s2">columns</span><span class="s1">)]</span><span class="s2">.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">(column) </span><span class="s0">=&gt; </span><span class="s2">`</span><span class="s3">&quot;</span><span class="s2">${column}</span><span class="s3">&quot;</span><span class="s2">`</span><span class="s1">)</span>
+        <span class="s2">url.searchParams.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">columns</span><span class="s2">', uniqueColumns.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">))</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schema,</span>
+      <span class="s1">body</span><span class="s2">: values,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch ?? fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform an UPSERT on the table or view. Depending on the column(s) passed 
+   * to `onConflict`, `.upsert()` allows you to perform the equivalent of 
+   * `.insert()` if a row with the corresponding `onConflict` columns doesn't 
+   * exist, or if it does exist, perform an alternative action depending on 
+   * `ignoreDuplicates`. 
+   * 
+   * By default, upserted rows are not returned. To return it, chain the call 
+   * with `.select()`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">values </span><span class="s4">- The values to upsert with. Pass an object to upsert a 
+   * single row or an array to upsert multiple rows. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.onConflict </span><span class="s4">- Comma-separated UNIQUE column(s) to specify how 
+   * duplicate rows are determined. Two rows are duplicates if all the 
+   * `onConflict` columns are equal. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.ignoreDuplicates </span><span class="s4">- If `true`, duplicate rows are ignored. If 
+   * `false`, duplicate rows are merged with existing rows. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count upserted rows. 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.defaultToNull </span><span class="s4">- Make missing fields default to `null`. 
+   * Otherwise, use the default value for the column. This only applies when 
+   * inserting new rows, not when merging with existing rows under 
+   * `ignoreDuplicates: false`. This also only applies when doing bulk upserts. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upsert a single row using a unique key 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">// Upserting a single row, overwriting based on the 'username' unique column 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('users') 
+   </span><span class="s4">*   </span><span class="s1">.upsert({ username: 'supabot' }, { onConflict: 'username' }) 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Example response: 
+   </span><span class="s4">* </span><span class="s1">// { 
+   </span><span class="s4">* </span><span class="s1">//   data: [ 
+   </span><span class="s4">* </span><span class="s1">//     { id: 4, message: 'bar', username: 'supabot' } 
+   </span><span class="s4">* </span><span class="s1">//   ], 
+   </span><span class="s4">* </span><span class="s1">//   error: null 
+   </span><span class="s4">* </span><span class="s1">// } 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upsert with conflict resolution and exact row counting 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">// Upserting and returning exact count 
+   </span><span class="s4">* </span><span class="s1">const { data, error, count } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('users') 
+   </span><span class="s4">*   </span><span class="s1">.upsert( 
+   </span><span class="s4">*     </span><span class="s1">{ 
+   </span><span class="s4">*       </span><span class="s1">id: 3, 
+   </span><span class="s4">*       </span><span class="s1">message: 'foo', 
+   </span><span class="s4">*       </span><span class="s1">username: 'supabot' 
+   </span><span class="s4">*     </span><span class="s1">}, 
+   </span><span class="s4">*     </span><span class="s1">{ 
+   </span><span class="s4">*       </span><span class="s1">onConflict: 'username', 
+   </span><span class="s4">*       </span><span class="s1">count: 'exact' 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">) 
+   </span><span class="s4">* 
+   * </span><span class="s1">// Example response: 
+   </span><span class="s4">* </span><span class="s1">// { 
+   </span><span class="s4">* </span><span class="s1">//   data: [ 
+   </span><span class="s4">* </span><span class="s1">//     { 
+   </span><span class="s4">* </span><span class="s1">//       id: 42, 
+   </span><span class="s4">* </span><span class="s1">//       handle: &quot;saoirse&quot;, 
+   </span><span class="s4">* </span><span class="s1">//       display_name: &quot;Saoirse&quot; 
+   </span><span class="s4">* </span><span class="s1">//     } 
+   </span><span class="s4">* </span><span class="s1">//   ], 
+   </span><span class="s4">* </span><span class="s1">//   count: 1, 
+   </span><span class="s4">* </span><span class="s1">//   error: null 
+   </span><span class="s4">* </span><span class="s1">// } 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - Primary keys must be included in `values` to use upsert. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upsert your data 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+   </span><span class="s4">*   </span><span class="s1">.upsert({ id: 1, name: 'piano' }) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Upsert your data 
+   * ```sql 
+   * create table 
+   *   instruments (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   instruments (id, name) 
+   * values 
+   *   (1, 'harpsichord'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Upsert your data 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;piano&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 201, 
+   *   &quot;statusText&quot;: &quot;Created&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Bulk Upsert your data 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+   </span><span class="s4">*   </span><span class="s1">.upsert([ 
+   </span><span class="s4">*     </span><span class="s1">{ id: 1, name: 'piano' }, 
+   </span><span class="s4">*     </span><span class="s1">{ id: 2, name: 'harp' }, 
+   </span><span class="s4">*   </span><span class="s1">]) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Bulk Upsert your data 
+   * ```sql 
+   * create table 
+   *   instruments (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   instruments (id, name) 
+   * values 
+   *   (1, 'harpsichord'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Bulk Upsert your data 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;piano&quot; 
+   *     }, 
+   *     { 
+   *       &quot;id&quot;: 2, 
+   *       &quot;name&quot;: &quot;harp&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 201, 
+   *   &quot;statusText&quot;: &quot;Created&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Upserting into tables with constraints 
+   * In the following query, `upsert()` implicitly uses the `id` 
+   * (primary key) column to determine conflicts. If there is no existing 
+   * row with the same `id`, `upsert()` inserts a new row, which 
+   * will fail in this case as there is already a row with `handle` `&quot;saoirse&quot;`. 
+   * Using the `onConflict` option, you can instruct `upsert()` to use 
+   * another column with a unique constraint to determine conflicts. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upserting into tables with constraints 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('users') 
+   </span><span class="s4">*   </span><span class="s1">.upsert({ id: 42, handle: 'saoirse', display_name: 'Saoirse' }) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Upserting into tables with constraints 
+   * ```sql 
+   * create table 
+   *   users ( 
+   *     id int8 generated by default as identity primary key, 
+   *     handle text not null unique, 
+   *     display_name text 
+   *   ); 
+   * 
+   * insert into 
+   *   users (id, handle, display_name) 
+   * values 
+   *   (1, 'saoirse', null); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Upserting into tables with constraints 
+   * ```json 
+   * { 
+   *   &quot;error&quot;: { 
+   *     &quot;code&quot;: &quot;23505&quot;, 
+   *     &quot;details&quot;: &quot;Key (handle)=(saoirse) already exists.&quot;, 
+   *     &quot;hint&quot;: null, 
+   *     &quot;message&quot;: &quot;duplicate key value violates unique constraint \&quot;users_handle_key\&quot;&quot; 
+   *   }, 
+   *   &quot;status&quot;: 409, 
+   *   &quot;statusText&quot;: &quot;Conflict&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+
+  <span class="s6">upsert</span><span class="s2">&lt;Row </span><span class="s0">extends </span><span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never&gt;(</span>
+    <span class="s2">values:</span>
+      <span class="s2">| RejectExcessProperties&lt;</span>
+          <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never,</span>
+          <span class="s2">Row</span>
+        <span class="s2">&gt;</span>
+      <span class="s2">| RejectExcessProperties&lt;</span>
+          <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Insert: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Insert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never,</span>
+          <span class="s2">Row</span>
+        <span class="s2">&gt;</span><span class="s1">[]</span><span class="s2">,</span>
+    <span class="s2">{</span>
+      <span class="s2">onConflict,</span>
+      <span class="s2">ignoreDuplicates = </span><span class="s7">false</span><span class="s2">,</span>
+      <span class="s2">count,</span>
+      <span class="s2">defaultToNull = </span><span class="s7">true</span><span class="s2">,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">onConflict?: string</span>
+      <span class="s2">ignoreDuplicates?: boolean</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+      <span class="s2">defaultToNull?: boolean</span>
+    <span class="s2">} = {}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">null,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">'</span><span class="s3">POST</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">method = '</span><span class="s3">POST</span><span class="s2">'</span>
+    <span class="s0">const </span><span class="s2">{ url, headers } = this.</span><span class="s6">cloneRequestState</span><span class="s1">()</span>
+
+    <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">resolution=</span><span class="s2">${ignoreDuplicates ? '</span><span class="s3">ignore</span><span class="s2">' : '</span><span class="s3">merge</span><span class="s2">'}</span><span class="s3">-duplicates</span><span class="s2">`</span><span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">onConflict !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">url.searchParams.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">on_conflict</span><span class="s2">', onConflict</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!defaultToNull</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', '</span><span class="s3">missing=default</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">Array.</span><span class="s6">isArray</span><span class="s1">(</span><span class="s2">values</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">columns = values.</span><span class="s6">reduce</span><span class="s1">(</span><span class="s2">(acc, x) </span><span class="s0">=&gt; </span><span class="s2">acc.</span><span class="s6">concat</span><span class="s1">(</span><span class="s2">Object.</span><span class="s6">keys</span><span class="s1">(</span><span class="s2">x</span><span class="s1">))</span><span class="s2">, </span><span class="s1">[] </span><span class="s0">as </span><span class="s2">string</span><span class="s1">[])</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">columns.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">uniqueColumns = </span><span class="s1">[</span><span class="s2">...new </span><span class="s6">Set</span><span class="s1">(</span><span class="s2">columns</span><span class="s1">)]</span><span class="s2">.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">(column) </span><span class="s0">=&gt; </span><span class="s2">`</span><span class="s3">&quot;</span><span class="s2">${column}</span><span class="s3">&quot;</span><span class="s2">`</span><span class="s1">)</span>
+        <span class="s2">url.searchParams.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">columns</span><span class="s2">', uniqueColumns.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">))</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schema,</span>
+      <span class="s1">body</span><span class="s2">: values,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch ?? fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform an UPDATE on the table or view. 
+   * 
+   * By default, updated rows are not returned. To return it, chain the call 
+   * with `.select()` after filters. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">values </span><span class="s4">- The values to update with 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count updated rows. 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - `update()` should always be combined with [Filters](/docs/reference/javascript/using-filters) to target the item(s) you wish to update. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Updating your data 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+   </span><span class="s4">*   </span><span class="s1">.update({ name: 'piano' }) 
+   </span><span class="s4">*   </span><span class="s1">.eq('id', 1) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Updating your data 
+   * ```sql 
+   * create table 
+   *   instruments (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   instruments (id, name) 
+   * values 
+   *   (1, 'harpsichord'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Updating your data 
+   * ```json 
+   * { 
+   *   &quot;status&quot;: 204, 
+   *   &quot;statusText&quot;: &quot;No Content&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Update a record and return it 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('instruments') 
+   </span><span class="s4">*   </span><span class="s1">.update({ name: 'piano' }) 
+   </span><span class="s4">*   </span><span class="s1">.eq('id', 1) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Update a record and return it 
+   * ```sql 
+   * create table 
+   *   instruments (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   instruments (id, name) 
+   * values 
+   *   (1, 'harpsichord'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Update a record and return it 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;piano&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Updating JSON data 
+   * Postgres offers some 
+   * [operators](/docs/guides/database/json#query-the-jsonb-data) for 
+   * working with JSON data. Currently, it is only possible to update the entire JSON document. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Updating JSON data 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('users') 
+   </span><span class="s4">*   </span><span class="s1">.update({ 
+   </span><span class="s4">*     </span><span class="s1">address: { 
+   </span><span class="s4">*       </span><span class="s1">street: 'Melrose Place', 
+   </span><span class="s4">*       </span><span class="s1">postcode: 90210 
+   </span><span class="s4">*     </span><span class="s1">} 
+   </span><span class="s4">*   </span><span class="s1">}) 
+   </span><span class="s4">*   </span><span class="s1">.eq('address-&gt;postcode', 90210) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Updating JSON data 
+   * ```sql 
+   * create table 
+   *   users ( 
+   *     id int8 primary key, 
+   *     name text, 
+   *     address jsonb 
+   *   ); 
+   * 
+   * insert into 
+   *   users (id, name, address) 
+   * values 
+   *   (1, 'Michael', '{ &quot;postcode&quot;: 90210 }'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Updating JSON data 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Michael&quot;, 
+   *       &quot;address&quot;: { 
+   *         &quot;street&quot;: &quot;Melrose Place&quot;, 
+   *         &quot;postcode&quot;: 90210 
+   *       } 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s6">update</span><span class="s2">&lt;Row </span><span class="s0">extends </span><span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Update: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Update</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never&gt;(</span>
+    <span class="s2">values: RejectExcessProperties&lt;</span>
+      <span class="s2">Relation </span><span class="s0">extends </span><span class="s2">{ Update: unknown } ? Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Update</span><span class="s2">'</span><span class="s1">] </span><span class="s2">: never,</span>
+      <span class="s2">Row</span>
+    <span class="s2">&gt;,</span>
+    <span class="s2">{</span>
+      <span class="s2">count,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+    <span class="s2">} = {}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">null,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">'</span><span class="s3">PATCH</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">method = '</span><span class="s3">PATCH</span><span class="s2">'</span>
+    <span class="s0">const </span><span class="s2">{ url, headers } = this.</span><span class="s6">cloneRequestState</span><span class="s1">()</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schema,</span>
+      <span class="s1">body</span><span class="s2">: values,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch ?? fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform a DELETE on the table or view. 
+   * 
+   * By default, deleted rows are not returned. To return it, chain the call 
+   * with `.select()` after filters. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count deleted rows. 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - `delete()` should always be combined with [filters](/docs/reference/javascript/using-filters) to target the item(s) you wish to delete. 
+   * - If you use `delete()` with filters and you have 
+   *   [RLS](/docs/learn/auth-deep-dive/auth-row-level-security) enabled, only 
+   *   rows visible through `SELECT` policies are deleted. Note that by default 
+   *   no rows are visible, so you need at least one `SELECT`/`ALL` policy that 
+   *   makes the rows visible. 
+   * - When using `delete().in()`, specify an array of values to target multiple rows with a single query. This is particularly useful for batch deleting entries that share common criteria, such as deleting users by their IDs. Ensure that the array you provide accurately represents all records you intend to delete to avoid unintended data removal. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete a single record 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const response = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.delete() 
+   </span><span class="s4">*   </span><span class="s1">.eq('id', 1) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Delete a single record 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'Mordor'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Delete a single record 
+   * ```json 
+   * { 
+   *   &quot;status&quot;: 204, 
+   *   &quot;statusText&quot;: &quot;No Content&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete a record and return it 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.delete() 
+   </span><span class="s4">*   </span><span class="s1">.eq('id', 1) 
+   </span><span class="s4">*   </span><span class="s1">.select() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Delete a record and return it 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'Mordor'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Delete a record and return it 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     { 
+   *       &quot;id&quot;: 1, 
+   *       &quot;name&quot;: &quot;Mordor&quot; 
+   *     } 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete multiple records 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const response = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.from('countries') 
+   </span><span class="s4">*   </span><span class="s1">.delete() 
+   </span><span class="s4">*   </span><span class="s1">.in('id', [1, 2, 3]) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Delete multiple records 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'Rohan'), (2, 'The Shire'), (3, 'Mordor'); 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Delete multiple records 
+   * ```json 
+   * { 
+   *   &quot;status&quot;: 204, 
+   *   &quot;statusText&quot;: &quot;No Content&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s6">delete</span><span class="s2">({</span>
+    <span class="s2">count,</span>
+  <span class="s2">}: {</span>
+    <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+  <span class="s2">} = {}): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">Relation</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">null,</span>
+    <span class="s2">RelationName,</span>
+    <span class="s2">Relationships,</span>
+    <span class="s2">'</span><span class="s3">DELETE</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">method = '</span><span class="s3">DELETE</span><span class="s2">'</span>
+    <span class="s0">const </span><span class="s2">{ url, headers } = this.</span><span class="s6">cloneRequestState</span><span class="s1">()</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schema,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch ?? fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

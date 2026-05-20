@@ -1,0 +1,229 @@
+<html>
+<head>
+<title>presence.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+presence.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * @import Channel from &quot;./channel&quot; 
+ * @import { PresenceEvents, PresenceOnJoin, PresenceOnLeave, PresenceOnSync, PresenceState, PresenceDiff, PresenceOptions } from &quot;./types&quot; 
+ */</span>
+<span class="s1">export </span><span class="s2">default </span><span class="s1">class Presence {</span>
+
+  <span class="s0">/** 
+   * Initializes the Presence 
+   * @param {Channel} channel - The Channel 
+   * @param {PresenceOptions} [opts] - The options, for example `{events: {state: &quot;state&quot;, diff: &quot;diff&quot;}}` 
+   */</span>
+  <span class="s1">constructor(channel, opts = {}){</span>
+    <span class="s1">let events = opts.events || </span><span class="s0">/** @type {PresenceEvents} */ </span><span class="s1">({state: </span><span class="s3">&quot;presence_state&quot;</span><span class="s1">, diff: </span><span class="s3">&quot;presence_diff&quot;</span><span class="s1">})</span>
+    <span class="s0">/** @type{Record&lt;string, PresenceState&gt;} */</span>
+    <span class="s2">this</span><span class="s1">.state = {}</span>
+    <span class="s0">/** @type{PresenceDiff[]} */</span>
+    <span class="s2">this</span><span class="s1">.pendingDiffs = []</span>
+    <span class="s0">/** @type{Channel} */</span>
+    <span class="s2">this</span><span class="s1">.channel = channel</span>
+    <span class="s0">/** @type{?number} */</span>
+    <span class="s2">this</span><span class="s1">.joinRef = </span><span class="s2">null</span>
+    <span class="s0">/** @type{({ onJoin: PresenceOnJoin; onLeave: PresenceOnLeave; onSync: PresenceOnSync })} */</span>
+    <span class="s2">this</span><span class="s1">.caller = {</span>
+      <span class="s1">onJoin: </span><span class="s2">function </span><span class="s1">(){ },</span>
+      <span class="s1">onLeave: </span><span class="s2">function </span><span class="s1">(){ },</span>
+      <span class="s1">onSync: </span><span class="s2">function </span><span class="s1">(){ }</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.channel.on(events.state, newState =&gt; {</span>
+      <span class="s1">let {onJoin, onLeave, onSync} = </span><span class="s2">this</span><span class="s1">.caller</span>
+
+      <span class="s2">this</span><span class="s1">.joinRef = </span><span class="s2">this</span><span class="s1">.channel.joinRef()</span>
+      <span class="s2">this</span><span class="s1">.state = Presence.syncState(</span><span class="s2">this</span><span class="s1">.state, newState, onJoin, onLeave)</span>
+
+      <span class="s2">this</span><span class="s1">.pendingDiffs.forEach(diff =&gt; {</span>
+        <span class="s2">this</span><span class="s1">.state = Presence.syncDiff(</span><span class="s2">this</span><span class="s1">.state, diff, onJoin, onLeave)</span>
+      <span class="s1">})</span>
+      <span class="s2">this</span><span class="s1">.pendingDiffs = []</span>
+      <span class="s1">onSync()</span>
+    <span class="s1">})</span>
+
+    <span class="s2">this</span><span class="s1">.channel.on(events.diff, diff =&gt; {</span>
+      <span class="s1">let {onJoin, onLeave, onSync} = </span><span class="s2">this</span><span class="s1">.caller</span>
+
+      <span class="s2">if</span><span class="s1">(</span><span class="s2">this</span><span class="s1">.inPendingSyncState()){</span>
+        <span class="s2">this</span><span class="s1">.pendingDiffs.push(diff)</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">this</span><span class="s1">.state = Presence.syncDiff(</span><span class="s2">this</span><span class="s1">.state, diff, onJoin, onLeave)</span>
+        <span class="s1">onSync()</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * @param {PresenceOnJoin} callback 
+   */</span>
+  <span class="s1">onJoin(callback){ </span><span class="s2">this</span><span class="s1">.caller.onJoin = callback }</span>
+
+  <span class="s0">/** 
+   * @param {PresenceOnLeave} callback 
+   */</span>
+  <span class="s1">onLeave(callback){ </span><span class="s2">this</span><span class="s1">.caller.onLeave = callback }</span>
+
+  <span class="s0">/** 
+   * @param {PresenceOnSync} callback 
+   */</span>
+  <span class="s1">onSync(callback){ </span><span class="s2">this</span><span class="s1">.caller.onSync = callback }</span>
+
+  <span class="s0">/** 
+   * Returns the array of presences, with selected metadata. 
+   * 
+   * @template [T=PresenceState] 
+   * @param {((key: string, obj: PresenceState) =&gt; T)} [by] 
+   * 
+   * @returns {T[]} 
+   */</span>
+  <span class="s1">list(by){ </span><span class="s2">return </span><span class="s1">Presence.list(</span><span class="s2">this</span><span class="s1">.state, by) }</span>
+
+  <span class="s1">inPendingSyncState(){</span>
+    <span class="s2">return </span><span class="s1">!</span><span class="s2">this</span><span class="s1">.joinRef || (</span><span class="s2">this</span><span class="s1">.joinRef !== </span><span class="s2">this</span><span class="s1">.channel.joinRef())</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// lower-level public static API</span>
+
+  <span class="s0">/** 
+   * Used to sync the list of presences on the server 
+   * with the client's state. An optional `onJoin` and `onLeave` callback can 
+   * be provided to react to changes in the client's local presences across 
+   * disconnects and reconnects with the server. 
+   * 
+   * @param {Record&lt;string, PresenceState&gt;} currentState 
+   * @param {Record&lt;string, PresenceState&gt;} newState 
+   * @param {PresenceOnJoin} onJoin 
+   * @param {PresenceOnLeave} onLeave 
+   * 
+   * @returns {Record&lt;string, PresenceState&gt;} 
+   */</span>
+  <span class="s1">static syncState(currentState, newState, onJoin, onLeave){</span>
+    <span class="s1">let state = </span><span class="s2">this</span><span class="s1">.clone(currentState)</span>
+    <span class="s1">let joins = {}</span>
+    <span class="s1">let leaves = {}</span>
+
+    <span class="s2">this</span><span class="s1">.map(state, (key, presence) =&gt; {</span>
+      <span class="s2">if</span><span class="s1">(!newState[key]){</span>
+        <span class="s1">leaves[key] = presence</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+    <span class="s2">this</span><span class="s1">.map(newState, (key, newPresence) =&gt; {</span>
+      <span class="s1">let currentPresence = state[key]</span>
+      <span class="s2">if</span><span class="s1">(currentPresence){</span>
+        <span class="s1">let newRefs = newPresence.metas.map(m =&gt; m.phx_ref)</span>
+        <span class="s1">let curRefs = currentPresence.metas.map(m =&gt; m.phx_ref)</span>
+        <span class="s1">let joinedMetas = newPresence.metas.filter(m =&gt; curRefs.indexOf(m.phx_ref) &lt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">let leftMetas = currentPresence.metas.filter(m =&gt; newRefs.indexOf(m.phx_ref) &lt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s2">if</span><span class="s1">(joinedMetas.length &gt; </span><span class="s4">0</span><span class="s1">){</span>
+          <span class="s1">joins[key] = newPresence</span>
+          <span class="s1">joins[key].metas = joinedMetas</span>
+        <span class="s1">}</span>
+        <span class="s2">if</span><span class="s1">(leftMetas.length &gt; </span><span class="s4">0</span><span class="s1">){</span>
+          <span class="s1">leaves[key] = </span><span class="s2">this</span><span class="s1">.clone(currentPresence)</span>
+          <span class="s1">leaves[key].metas = leftMetas</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">joins[key] = newPresence</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+    <span class="s2">return this</span><span class="s1">.syncDiff(state, {joins: joins, leaves: leaves}, onJoin, onLeave)</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * 
+   * Used to sync a diff of presence join and leave 
+   * events from the server, as they happen. Like `syncState`, `syncDiff` 
+   * accepts optional `onJoin` and `onLeave` callbacks to react to a user 
+   * joining or leaving from a device. 
+   * 
+   * @param {Record&lt;string, PresenceState&gt;} state 
+   * @param {PresenceDiff} diff 
+   * @param {PresenceOnJoin} onJoin 
+   * @param {PresenceOnLeave} onLeave 
+   * 
+   * @returns {Record&lt;string, PresenceState&gt;} 
+   */</span>
+  <span class="s1">static syncDiff(state, diff, onJoin, onLeave){</span>
+    <span class="s1">let {joins, leaves} = </span><span class="s2">this</span><span class="s1">.clone(diff)</span>
+    <span class="s2">if</span><span class="s1">(!onJoin){ onJoin = </span><span class="s2">function </span><span class="s1">(){ } }</span>
+    <span class="s2">if</span><span class="s1">(!onLeave){ onLeave = </span><span class="s2">function </span><span class="s1">(){ } }</span>
+
+    <span class="s2">this</span><span class="s1">.map(joins, (key, newPresence) =&gt; {</span>
+      <span class="s1">let currentPresence = state[key]</span>
+      <span class="s1">state[key] = </span><span class="s2">this</span><span class="s1">.clone(newPresence)</span>
+      <span class="s2">if</span><span class="s1">(currentPresence){</span>
+        <span class="s1">let joinedRefs = state[key].metas.map(m =&gt; m.phx_ref)</span>
+        <span class="s1">let curMetas = currentPresence.metas.filter(m =&gt; joinedRefs.indexOf(m.phx_ref) &lt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">state[key].metas.unshift(...curMetas)</span>
+      <span class="s1">}</span>
+      <span class="s1">onJoin(key, currentPresence, newPresence)</span>
+    <span class="s1">})</span>
+    <span class="s2">this</span><span class="s1">.map(leaves, (key, leftPresence) =&gt; {</span>
+      <span class="s1">let currentPresence = state[key]</span>
+      <span class="s2">if</span><span class="s1">(!currentPresence){ </span><span class="s2">return </span><span class="s1">}</span>
+      <span class="s1">let refsToRemove = leftPresence.metas.map(m =&gt; m.phx_ref)</span>
+      <span class="s1">currentPresence.metas = currentPresence.metas.filter(p =&gt; {</span>
+        <span class="s2">return </span><span class="s1">refsToRemove.indexOf(p.phx_ref) &lt; </span><span class="s4">0</span>
+      <span class="s1">})</span>
+      <span class="s1">onLeave(key, currentPresence, leftPresence)</span>
+      <span class="s2">if</span><span class="s1">(currentPresence.metas.length === </span><span class="s4">0</span><span class="s1">){</span>
+        <span class="s2">delete </span><span class="s1">state[key]</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+    <span class="s2">return </span><span class="s1">state</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+   * Returns the array of presences, with selected metadata. 
+   * 
+   * @template [T=PresenceState] 
+   * @param {Record&lt;string, PresenceState&gt;} presences 
+   * @param {((key: string, obj: PresenceState) =&gt; T)} [chooser] 
+   * 
+   * @returns {T[]} 
+   */</span>
+  <span class="s1">static list(presences, chooser){</span>
+    <span class="s2">if</span><span class="s1">(!chooser){ chooser = </span><span class="s2">function </span><span class="s1">(key, pres){ </span><span class="s2">return </span><span class="s1">pres } }</span>
+
+    <span class="s2">return this</span><span class="s1">.map(presences, (key, presence) =&gt; {</span>
+      <span class="s2">return </span><span class="s1">chooser(key, presence)</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s0">// private</span>
+
+  <span class="s0">/** 
+  * @template T 
+  * @param {Record&lt;string, PresenceState&gt;} obj 
+  * @param {(key: string, obj: PresenceState) =&gt; T} func 
+  */</span>
+  <span class="s1">static map(obj, func){</span>
+    <span class="s2">return </span><span class="s1">Object.getOwnPropertyNames(obj).map(key =&gt; func(key, obj[key]))</span>
+  <span class="s1">}</span>
+
+  <span class="s0">/** 
+  * @template T 
+  * @param {T} obj 
+  * @returns {T} 
+  */</span>
+  <span class="s1">static clone(obj){ </span><span class="s2">return </span><span class="s1">JSON.parse(JSON.stringify(obj)) }</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,273 @@
+<html>
+<head>
+<title>visitors.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+visitors.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.environmentVisitor = environmentVisitor;</span>
+<span class="s1">exports.explode = explode$1;</span>
+<span class="s1">exports.isExplodedVisitor = isExplodedVisitor;</span>
+<span class="s1">exports.merge = merge;</span>
+<span class="s1">exports.verify = verify$1;</span>
+<span class="s2">var </span><span class="s1">virtualTypes = require(</span><span class="s0">&quot;./path/lib/virtual-types.js&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">virtualTypesValidators = require(</span><span class="s0">&quot;./path/lib/virtual-types-validator.js&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_t = require(</span><span class="s0">&quot;@babel/types&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_context = require(</span><span class="s0">&quot;./path/context.js&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+  <span class="s1">DEPRECATED_KEYS,</span>
+  <span class="s1">DEPRECATED_ALIASES,</span>
+  <span class="s1">FLIPPED_ALIAS_KEYS,</span>
+  <span class="s1">TYPES,</span>
+  <span class="s1">__internal__deprecationWarning: deprecationWarning</span>
+<span class="s1">} = _t;</span>
+<span class="s2">function </span><span class="s1">isVirtualType(type) {</span>
+  <span class="s2">return </span><span class="s1">type </span><span class="s2">in </span><span class="s1">virtualTypes;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">isExplodedVisitor(visitor) {</span>
+  <span class="s2">return </span><span class="s1">visitor == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: visitor._exploded;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">explode$1(visitor) {</span>
+  <span class="s2">if </span><span class="s1">(isExplodedVisitor(visitor)) </span><span class="s2">return </span><span class="s1">visitor;</span>
+  <span class="s1">visitor._exploded = </span><span class="s2">true</span><span class="s1">;</span>
+  <span class="s2">for </span><span class="s1">(const nodeType of Object.keys(visitor)) {</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">const parts = nodeType.split(</span><span class="s0">&quot;|&quot;</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(parts.length === </span><span class="s3">1</span><span class="s1">) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">const fns = visitor[nodeType];</span>
+    <span class="s2">delete </span><span class="s1">visitor[nodeType];</span>
+    <span class="s2">for </span><span class="s1">(const part of parts) {</span>
+      <span class="s1">visitor[part] = fns;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s1">verify$1(visitor);</span>
+  <span class="s2">delete </span><span class="s1">visitor.__esModule;</span>
+  <span class="s1">ensureEntranceObjects(visitor);</span>
+  <span class="s1">ensureCallbackArrays(visitor);</span>
+  <span class="s2">for </span><span class="s1">(const nodeType of Object.keys(visitor)) {</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!isVirtualType(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">const fns = visitor[nodeType];</span>
+    <span class="s2">for </span><span class="s1">(const type of Object.keys(fns)) {</span>
+      <span class="s1">fns[type] = wrapCheck(nodeType, fns[type]);</span>
+    <span class="s1">}</span>
+    <span class="s2">delete </span><span class="s1">visitor[nodeType];</span>
+    <span class="s1">const types = virtualTypes[nodeType];</span>
+    <span class="s2">if </span><span class="s1">(types !== </span><span class="s2">null</span><span class="s1">) {</span>
+      <span class="s2">for </span><span class="s1">(const type of types) {</span>
+        <span class="s2">var </span><span class="s1">_visitor$type;</span>
+        <span class="s1">(_visitor$type = visitor[type]) != </span><span class="s2">null </span><span class="s1">? _visitor$type : visitor[type] = {};</span>
+        <span class="s1">mergePair(visitor[type], fns);</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">mergePair(visitor, fns);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">for </span><span class="s1">(const nodeType of Object.keys(visitor)) {</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">let aliases = FLIPPED_ALIAS_KEYS[nodeType];</span>
+    <span class="s2">if </span><span class="s1">(nodeType </span><span class="s2">in </span><span class="s1">DEPRECATED_KEYS) {</span>
+      <span class="s1">const deprecatedKey = DEPRECATED_KEYS[nodeType];</span>
+      <span class="s1">deprecationWarning(nodeType, deprecatedKey, </span><span class="s0">&quot;Visitor &quot;</span><span class="s1">);</span>
+      <span class="s1">aliases = [deprecatedKey];</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(nodeType </span><span class="s2">in </span><span class="s1">DEPRECATED_ALIASES) {</span>
+      <span class="s1">const deprecatedAlias = DEPRECATED_ALIASES[nodeType];</span>
+      <span class="s1">deprecationWarning(nodeType, deprecatedAlias, </span><span class="s0">&quot;Visitor &quot;</span><span class="s1">);</span>
+      <span class="s1">aliases = FLIPPED_ALIAS_KEYS[deprecatedAlias];</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(!aliases) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">const fns = visitor[nodeType];</span>
+    <span class="s2">delete </span><span class="s1">visitor[nodeType];</span>
+    <span class="s2">for </span><span class="s1">(const alias of aliases) {</span>
+      <span class="s1">const existing = visitor[alias];</span>
+      <span class="s2">if </span><span class="s1">(existing) {</span>
+        <span class="s1">mergePair(existing, fns);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">visitor[alias] = Object.assign({}, fns);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">for </span><span class="s1">(const nodeType of Object.keys(visitor)) {</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">ensureCallbackArrays(visitor[nodeType]);</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">visitor;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">verify$1(visitor) {</span>
+  <span class="s2">if </span><span class="s1">(visitor._verified) </span><span class="s2">return</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">visitor === </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;You passed `traverse()` a function when it expected a visitor object, &quot; </span><span class="s1">+ </span><span class="s0">&quot;are you sure you didn't mean `{ enter: Function }`?&quot;</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s2">for </span><span class="s1">(const nodeType of Object.keys(visitor)) {</span>
+    <span class="s2">if </span><span class="s1">(nodeType === </span><span class="s0">&quot;enter&quot; </span><span class="s1">|| nodeType === </span><span class="s0">&quot;exit&quot;</span><span class="s1">) {</span>
+      <span class="s1">validateVisitorMethods(nodeType, visitor[nodeType]);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(nodeType)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!TYPES.includes(nodeType)) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(`You gave us a visitor </span><span class="s2">for </span><span class="s1">the node type ${nodeType} but it</span><span class="s0">'s not a valid type in @babel/traverse ${&quot;7.29.0&quot;}`);</span>
+    <span class="s1">}</span>
+    <span class="s1">const visitors = visitor[nodeType];</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">visitors === </span><span class="s0">&quot;object&quot;</span><span class="s1">) {</span>
+      <span class="s2">for </span><span class="s1">(const visitorKey of Object.keys(visitors)) {</span>
+        <span class="s2">if </span><span class="s1">(visitorKey === </span><span class="s0">&quot;enter&quot; </span><span class="s1">|| visitorKey === </span><span class="s0">&quot;exit&quot;</span><span class="s1">) {</span>
+          <span class="s1">validateVisitorMethods(`${nodeType}.${visitorKey}`, visitors[visitorKey]);</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;You passed `traverse()` a visitor object with the property &quot; </span><span class="s1">+ `${nodeType} that has the invalid property ${visitorKey}`);</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s1">visitor._verified = </span><span class="s2">true</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">validateVisitorMethods(path, val) {</span>
+  <span class="s1">const fns = [].concat(val);</span>
+  <span class="s2">for </span><span class="s1">(const fn of fns) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">fn !== </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+      <span class="s2">throw new </span><span class="s1">TypeError(`Non-function found defined </span><span class="s2">in </span><span class="s1">${path} </span><span class="s2">with </span><span class="s1">type ${</span><span class="s2">typeof </span><span class="s1">fn}`);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">merge(visitors, states = [], wrapper) {</span>
+  <span class="s1">const mergedVisitor = {</span>
+    <span class="s1">_verified: </span><span class="s2">true</span><span class="s1">,</span>
+    <span class="s1">_exploded: </span><span class="s2">true</span>
+  <span class="s1">};</span>
+  <span class="s1">Object.defineProperty(mergedVisitor, </span><span class="s0">&quot;_exploded&quot;</span><span class="s1">, {</span>
+    <span class="s1">enumerable: </span><span class="s2">false</span>
+  <span class="s1">});</span>
+  <span class="s1">Object.defineProperty(mergedVisitor, </span><span class="s0">&quot;_verified&quot;</span><span class="s1">, {</span>
+    <span class="s1">enumerable: </span><span class="s2">false</span>
+  <span class="s1">});</span>
+  <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; visitors.length; i++) {</span>
+    <span class="s1">const visitor = explode$1(visitors[i]);</span>
+    <span class="s1">const state = states[i];</span>
+    <span class="s1">let topVisitor = visitor;</span>
+    <span class="s2">if </span><span class="s1">(state || wrapper) {</span>
+      <span class="s1">topVisitor = wrapWithStateOrWrapper(topVisitor, state, wrapper);</span>
+    <span class="s1">}</span>
+    <span class="s1">mergePair(mergedVisitor, topVisitor);</span>
+    <span class="s2">for </span><span class="s1">(const key of Object.keys(visitor)) {</span>
+      <span class="s2">if </span><span class="s1">(shouldIgnoreKey(key)) </span><span class="s2">continue</span><span class="s1">;</span>
+      <span class="s1">let typeVisitor = visitor[key];</span>
+      <span class="s2">if </span><span class="s1">(state || wrapper) {</span>
+        <span class="s1">typeVisitor = wrapWithStateOrWrapper(typeVisitor, state, wrapper);</span>
+      <span class="s1">}</span>
+      <span class="s1">const nodeVisitor = mergedVisitor[key] || (mergedVisitor[key] = {});</span>
+      <span class="s1">mergePair(nodeVisitor, typeVisitor);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">mergedVisitor;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">wrapWithStateOrWrapper(oldVisitor, state, wrapper) {</span>
+  <span class="s1">const newVisitor = {};</span>
+  <span class="s2">for </span><span class="s1">(const phase of [</span><span class="s0">&quot;enter&quot;</span><span class="s1">, </span><span class="s0">&quot;exit&quot;</span><span class="s1">]) {</span>
+    <span class="s1">let fns = oldVisitor[phase];</span>
+    <span class="s2">if </span><span class="s1">(!Array.isArray(fns)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">fns = fns.map(</span><span class="s2">function </span><span class="s1">(fn) {</span>
+      <span class="s1">let newFn = fn;</span>
+      <span class="s2">if </span><span class="s1">(state) {</span>
+        <span class="s1">newFn = </span><span class="s2">function </span><span class="s1">(path) {</span>
+          <span class="s1">fn.call(state, path, state);</span>
+        <span class="s1">};</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(wrapper) {</span>
+        <span class="s1">newFn = wrapper(state == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: state.key, phase, newFn);</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(newFn !== fn) {</span>
+        <span class="s1">newFn.toString = () =&gt; fn.toString();</span>
+      <span class="s1">}</span>
+      <span class="s2">return </span><span class="s1">newFn;</span>
+    <span class="s1">});</span>
+    <span class="s1">newVisitor[phase] = fns;</span>
+  <span class="s1">}</span>
+  <span class="s2">return </span><span class="s1">newVisitor;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">ensureEntranceObjects(obj) {</span>
+  <span class="s2">for </span><span class="s1">(const key of Object.keys(obj)) {</span>
+    <span class="s2">if </span><span class="s1">(shouldIgnoreKey(key)) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">const fns = obj[key];</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">fns === </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+      <span class="s1">obj[key] = {</span>
+        <span class="s1">enter: fns</span>
+      <span class="s1">};</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">ensureCallbackArrays(obj) {</span>
+  <span class="s2">if </span><span class="s1">(obj.enter &amp;&amp; !Array.isArray(obj.enter)) obj.enter = [obj.enter];</span>
+  <span class="s2">if </span><span class="s1">(obj.exit &amp;&amp; !Array.isArray(obj.exit)) obj.exit = [obj.exit];</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">wrapCheck(nodeType, fn) {</span>
+  <span class="s1">const fnKey = `is${nodeType}`;</span>
+  <span class="s1">const validator = virtualTypesValidators[fnKey];</span>
+  <span class="s1">const newFn = </span><span class="s2">function </span><span class="s1">(path) {</span>
+    <span class="s2">if </span><span class="s1">(validator.call(path)) {</span>
+      <span class="s2">return </span><span class="s1">fn.apply(</span><span class="s2">this</span><span class="s1">, arguments);</span>
+    <span class="s1">}</span>
+  <span class="s1">};</span>
+  <span class="s1">newFn.toString = () =&gt; fn.toString();</span>
+  <span class="s2">return </span><span class="s1">newFn;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">shouldIgnoreKey(key) {</span>
+  <span class="s2">if </span><span class="s1">(key.startsWith(</span><span class="s0">&quot;_&quot;</span><span class="s1">)) </span><span class="s2">return true</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(key === </span><span class="s0">&quot;enter&quot; </span><span class="s1">|| key === </span><span class="s0">&quot;exit&quot; </span><span class="s1">|| key === </span><span class="s0">&quot;shouldSkip&quot;</span><span class="s1">) </span><span class="s2">return true</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(key === </span><span class="s0">&quot;denylist&quot; </span><span class="s1">|| key === </span><span class="s0">&quot;noScope&quot; </span><span class="s1">|| key === </span><span class="s0">&quot;skipKeys&quot;</span><span class="s1">) {</span>
+    <span class="s2">return true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(key === </span><span class="s0">&quot;blacklist&quot;</span><span class="s1">) {</span>
+    <span class="s2">return true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">return false</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">mergePair(dest, src) {</span>
+  <span class="s2">for </span><span class="s1">(const phase of [</span><span class="s0">&quot;enter&quot;</span><span class="s1">, </span><span class="s0">&quot;exit&quot;</span><span class="s1">]) {</span>
+    <span class="s2">if </span><span class="s1">(!src[phase]) </span><span class="s2">continue</span><span class="s1">;</span>
+    <span class="s1">dest[phase] = [].concat(dest[phase] || [], src[phase]);</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">const _environmentVisitor = {</span>
+  <span class="s1">FunctionParent(path) {</span>
+    <span class="s2">if </span><span class="s1">(path.isArrowFunctionExpression()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">path.skip();</span>
+    <span class="s2">if </span><span class="s1">(path.isMethod()) {</span>
+      <span class="s2">if </span><span class="s1">(!path.requeueComputedKeyAndDecorators) {</span>
+        <span class="s1">_context.requeueComputedKeyAndDecorators.call(path);</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">path.requeueComputedKeyAndDecorators();</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">},</span>
+  <span class="s1">Property(path) {</span>
+    <span class="s2">if </span><span class="s1">(path.isObjectProperty()) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">path.skip();</span>
+    <span class="s2">if </span><span class="s1">(!path.requeueComputedKeyAndDecorators) {</span>
+      <span class="s1">_context.requeueComputedKeyAndDecorators.call(path);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">path.requeueComputedKeyAndDecorators();</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+<span class="s1">};</span>
+<span class="s2">function </span><span class="s1">environmentVisitor(visitor) {</span>
+  <span class="s2">return </span><span class="s1">merge([_environmentVisitor, visitor]);</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=visitors.js.map</span>
+</pre>
+</body>
+</html>

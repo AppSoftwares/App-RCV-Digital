@@ -1,0 +1,112 @@
+<html>
+<head>
+<title>inertia.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+inertia.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ spring } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./spring.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getGeneratorVelocity } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/velocity.mjs</span><span class="s2">';</span>
+
+<span class="s0">function </span><span class="s4">inertia</span><span class="s2">({ keyframes, velocity = </span><span class="s5">0.0</span><span class="s2">, power = </span><span class="s5">0.8</span><span class="s2">, timeConstant = </span><span class="s5">325</span><span class="s2">, bounceDamping = </span><span class="s5">10</span><span class="s2">, bounceStiffness = </span><span class="s5">500</span><span class="s2">, modifyTarget, min, max, restDelta = </span><span class="s5">0.5</span><span class="s2">, restSpeed, }) {</span>
+    <span class="s0">const </span><span class="s2">origin = keyframes</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">state = {</span>
+        <span class="s1">done</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+        <span class="s1">value</span><span class="s2">: origin,</span>
+    <span class="s2">};</span>
+    <span class="s0">const </span><span class="s4">isOutOfBounds </span><span class="s2">= (v) </span><span class="s0">=&gt; </span><span class="s1">(</span><span class="s2">min !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; v &lt; min</span><span class="s1">) </span><span class="s2">|| </span><span class="s1">(</span><span class="s2">max !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; v &gt; max</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s4">nearestBoundary </span><span class="s2">= (v) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">min === </span><span class="s6">undefined</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">max;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">max === </span><span class="s6">undefined</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">min;</span>
+        <span class="s0">return </span><span class="s2">Math.</span><span class="s4">abs</span><span class="s1">(</span><span class="s2">min - v</span><span class="s1">) </span><span class="s2">&lt; Math.</span><span class="s4">abs</span><span class="s1">(</span><span class="s2">max - v</span><span class="s1">) </span><span class="s2">? min : max;</span>
+    <span class="s2">};</span>
+    <span class="s0">let </span><span class="s2">amplitude = power * velocity;</span>
+    <span class="s0">const </span><span class="s2">ideal = origin + amplitude;</span>
+    <span class="s0">const </span><span class="s2">target = modifyTarget === </span><span class="s6">undefined </span><span class="s2">? ideal : </span><span class="s4">modifyTarget</span><span class="s1">(</span><span class="s2">ideal</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s7">* If the target has changed we need to re-calculate the amplitude, otherwise 
+     * the animation will start from the wrong position. 
+     </span><span class="s2">*/</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">target !== ideal</span><span class="s1">)</span>
+        <span class="s2">amplitude = target - origin;</span>
+    <span class="s0">const </span><span class="s4">calcDelta </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">-amplitude * Math.</span><span class="s4">exp</span><span class="s1">(</span><span class="s2">-t / timeConstant</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s4">calcLatest </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">target + </span><span class="s4">calcDelta</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s4">applyFriction </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">delta = </span><span class="s4">calcDelta</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">latest = </span><span class="s4">calcLatest</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">state.done = Math.</span><span class="s4">abs</span><span class="s1">(</span><span class="s2">delta</span><span class="s1">) </span><span class="s2">&lt;= restDelta;</span>
+        <span class="s2">state.value = state.done ? target : latest;</span>
+    <span class="s2">};</span>
+    <span class="s2">/**</span>
+     <span class="s7">* Ideally this would resolve for t in a stateless way, we could 
+     * do that by always precalculating the animation but as we know 
+     * this will be done anyway we can assume that spring will 
+     * be discovered during that. 
+     </span><span class="s2">*/</span>
+    <span class="s0">let </span><span class="s2">timeReachedBoundary;</span>
+    <span class="s0">let </span><span class="s2">spring$1;</span>
+    <span class="s0">const </span><span class="s4">checkCatchBoundary </span><span class="s2">= (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s4">isOutOfBounds</span><span class="s1">(</span><span class="s2">state.value</span><span class="s1">))</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">timeReachedBoundary = t;</span>
+        <span class="s2">spring$1 = </span><span class="s4">spring</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s1">keyframes</span><span class="s2">: </span><span class="s1">[</span><span class="s2">state.value, </span><span class="s4">nearestBoundary</span><span class="s1">(</span><span class="s2">state.value</span><span class="s1">)]</span><span class="s2">,</span>
+            <span class="s1">velocity</span><span class="s2">: </span><span class="s4">getGeneratorVelocity</span><span class="s1">(</span><span class="s2">calcLatest, t, state.value</span><span class="s1">)</span><span class="s2">, // </span><span class="s7">TODO: This should be passing * 1000</span>
+            <span class="s1">damping</span><span class="s2">: bounceDamping,</span>
+            <span class="s1">stiffness</span><span class="s2">: bounceStiffness,</span>
+            <span class="s2">restDelta,</span>
+            <span class="s2">restSpeed,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">};</span>
+    <span class="s4">checkCatchBoundary</span><span class="s1">(</span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">{</span>
+        <span class="s1">calculatedDuration</span><span class="s2">: </span><span class="s6">null</span><span class="s2">,</span>
+        <span class="s4">next</span><span class="s2">: (t) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">/**</span>
+             <span class="s7">* We need to resolve the friction to figure out if we need a 
+             * spring but we don't want to do this twice per frame. So here 
+             * we flag if we updated for this frame and later if we did 
+             * we can skip doing it again. 
+             </span><span class="s2">*/</span>
+            <span class="s0">let </span><span class="s2">hasUpdatedFrame = </span><span class="s6">false</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!spring$1 &amp;&amp; timeReachedBoundary === </span><span class="s6">undefined</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">hasUpdatedFrame = </span><span class="s6">true</span><span class="s2">;</span>
+                <span class="s4">applyFriction</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s4">checkCatchBoundary</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s7">* If we have a spring and the provided t is beyond the moment the friction 
+             * animation crossed the min/max boundary, use the spring. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">timeReachedBoundary !== </span><span class="s6">undefined </span><span class="s2">&amp;&amp; t &gt;= timeReachedBoundary</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">return </span><span class="s2">spring$1.</span><span class="s4">next</span><span class="s1">(</span><span class="s2">t - timeReachedBoundary</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">else </span><span class="s2">{</span>
+                <span class="s2">!hasUpdatedFrame &amp;&amp; </span><span class="s4">applyFriction</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">return </span><span class="s2">state;</span>
+            <span class="s2">}</span>
+        <span class="s2">},</span>
+    <span class="s2">};</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ inertia };</span>
+<span class="s2">//</span><span class="s7"># sourceMappingURL=inertia.mjs.map</span>
+</pre>
+</body>
+</html>

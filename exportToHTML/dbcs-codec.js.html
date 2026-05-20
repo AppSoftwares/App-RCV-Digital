@@ -1,0 +1,576 @@
+<html>
+<head>
+<title>dbcs-codec.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+dbcs-codec.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s0">&quot;safer-buffer&quot;</span><span class="s1">).Buffer;</span>
+
+<span class="s3">// Multibyte codec. In this scheme, a character is represented by 1 or more bytes.</span>
+<span class="s3">// Our codec supports UTF-16 surrogates, extensions for GB18030 and unicode sequences.</span>
+<span class="s3">// To save memory and loading time, we read table files only when requested.</span>
+
+<span class="s1">exports._dbcs = DBCSCodec;</span>
+
+<span class="s2">var </span><span class="s1">UNASSIGNED = -</span><span class="s4">1</span><span class="s1">,</span>
+    <span class="s1">GB18030_CODE = -</span><span class="s4">2</span><span class="s1">,</span>
+    <span class="s1">SEQ_START  = -</span><span class="s4">10</span><span class="s1">,</span>
+    <span class="s1">NODE_START = -</span><span class="s4">1000</span><span class="s1">,</span>
+    <span class="s1">UNASSIGNED_NODE = </span><span class="s2">new </span><span class="s1">Array(</span><span class="s4">0</span><span class="s1">x100),</span>
+    <span class="s1">DEF_CHAR = -</span><span class="s4">1</span><span class="s1">;</span>
+
+<span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s4">0</span><span class="s1">x100; i++)</span>
+    <span class="s1">UNASSIGNED_NODE[i] = UNASSIGNED;</span>
+
+
+<span class="s3">// Class DBCSCodec reads and initializes mapping tables.</span>
+<span class="s2">function </span><span class="s1">DBCSCodec(codecOptions, iconv) {</span>
+    <span class="s2">this</span><span class="s1">.encodingName = codecOptions.encodingName;</span>
+    <span class="s2">if </span><span class="s1">(!codecOptions)</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;DBCS codec is called without the data.&quot;</span><span class="s1">)</span>
+    <span class="s2">if </span><span class="s1">(!codecOptions.table)</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Encoding '&quot; </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.encodingName + </span><span class="s0">&quot;' has no data.&quot;</span><span class="s1">);</span>
+
+    <span class="s3">// Load tables.</span>
+    <span class="s2">var </span><span class="s1">mappingTable = codecOptions.table();</span>
+
+
+    <span class="s3">// Decode tables: MBCS -&gt; Unicode.</span>
+
+    <span class="s3">// decodeTables is a trie, encoded as an array of arrays of integers. Internal arrays are trie nodes and all have len = 256.</span>
+    <span class="s3">// Trie root is decodeTables[0].</span>
+    <span class="s3">// Values: &gt;=  0 -&gt; unicode character code. can be &gt; 0xFFFF</span>
+    <span class="s3">//         == UNASSIGNED -&gt; unknown/unassigned sequence.</span>
+    <span class="s3">//         == GB18030_CODE -&gt; this is the end of a GB18030 4-byte sequence.</span>
+    <span class="s3">//         &lt;= NODE_START -&gt; index of the next node in our trie to process next byte.</span>
+    <span class="s3">//         &lt;= SEQ_START  -&gt; index of the start of a character code sequence, in decodeTableSeq.</span>
+    <span class="s2">this</span><span class="s1">.decodeTables = [];</span>
+    <span class="s2">this</span><span class="s1">.decodeTables[</span><span class="s4">0</span><span class="s1">] = UNASSIGNED_NODE.slice(</span><span class="s4">0</span><span class="s1">); </span><span class="s3">// Create root node.</span>
+
+    <span class="s3">// Sometimes a MBCS char corresponds to a sequence of unicode chars. We store them as arrays of integers here. </span>
+    <span class="s2">this</span><span class="s1">.decodeTableSeq = [];</span>
+
+    <span class="s3">// Actual mapping tables consist of chunks. Use them to fill up decode tables.</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; mappingTable.length; i++)</span>
+        <span class="s2">this</span><span class="s1">._addDecodeChunk(mappingTable[i]);</span>
+
+    <span class="s2">this</span><span class="s1">.defaultCharUnicode = iconv.defaultCharUnicode;</span>
+
+    
+    <span class="s3">// Encode tables: Unicode -&gt; DBCS.</span>
+
+    <span class="s3">// `encodeTable` is array mapping from unicode char to encoded char. All its values are integers for performance.</span>
+    <span class="s3">// Because it can be sparse, it is represented as array of buckets by 256 chars each. Bucket can be null.</span>
+    <span class="s3">// Values: &gt;=  0 -&gt; it is a normal char. Write the value (if &lt;=256 then 1 byte, if &lt;=65536 then 2 bytes, etc.).</span>
+    <span class="s3">//         == UNASSIGNED -&gt; no conversion found. Output a default char.</span>
+    <span class="s3">//         &lt;= SEQ_START  -&gt; it's an index in encodeTableSeq, see below. The character starts a sequence.</span>
+    <span class="s2">this</span><span class="s1">.encodeTable = [];</span>
+    
+    <span class="s3">// `encodeTableSeq` is used when a sequence of unicode characters is encoded as a single code. We use a tree of</span>
+    <span class="s3">// objects where keys correspond to characters in sequence and leafs are the encoded dbcs values. A special DEF_CHAR key</span>
+    <span class="s3">// means end of sequence (needed when one sequence is a strict subsequence of another).</span>
+    <span class="s3">// Objects are kept separately from encodeTable to increase performance.</span>
+    <span class="s2">this</span><span class="s1">.encodeTableSeq = [];</span>
+
+    <span class="s3">// Some chars can be decoded, but need not be encoded.</span>
+    <span class="s2">var </span><span class="s1">skipEncodeChars = {};</span>
+    <span class="s2">if </span><span class="s1">(codecOptions.encodeSkipVals)</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; codecOptions.encodeSkipVals.length; i++) {</span>
+            <span class="s2">var </span><span class="s1">val = codecOptions.encodeSkipVals[i];</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">val === </span><span class="s0">'number'</span><span class="s1">)</span>
+                <span class="s1">skipEncodeChars[val] = </span><span class="s2">true</span><span class="s1">;</span>
+            <span class="s2">else</span>
+                <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">j = val.from; j &lt;= val.to; j++)</span>
+                    <span class="s1">skipEncodeChars[j] = </span><span class="s2">true</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        
+    <span class="s3">// Use decode trie to recursively fill out encode tables.</span>
+    <span class="s2">this</span><span class="s1">._fillEncodeTable(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">, skipEncodeChars);</span>
+
+    <span class="s3">// Add more encoding pairs when needed.</span>
+    <span class="s2">if </span><span class="s1">(codecOptions.encodeAdd) {</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">uChar </span><span class="s2">in </span><span class="s1">codecOptions.encodeAdd)</span>
+            <span class="s2">if </span><span class="s1">(Object.prototype.hasOwnProperty.call(codecOptions.encodeAdd, uChar))</span>
+                <span class="s2">this</span><span class="s1">._setEncodeChar(uChar.charCodeAt(</span><span class="s4">0</span><span class="s1">), codecOptions.encodeAdd[uChar]);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.defCharSB  = </span><span class="s2">this</span><span class="s1">.encodeTable[</span><span class="s4">0</span><span class="s1">][iconv.defaultCharSingleByte.charCodeAt(</span><span class="s4">0</span><span class="s1">)];</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.defCharSB === UNASSIGNED) </span><span class="s2">this</span><span class="s1">.defCharSB = </span><span class="s2">this</span><span class="s1">.encodeTable[</span><span class="s4">0</span><span class="s1">][</span><span class="s0">'?'</span><span class="s1">];</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.defCharSB === UNASSIGNED) </span><span class="s2">this</span><span class="s1">.defCharSB = </span><span class="s0">&quot;?&quot;</span><span class="s1">.charCodeAt(</span><span class="s4">0</span><span class="s1">);</span>
+
+
+    <span class="s3">// Load &amp; create GB18030 tables when needed.</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">codecOptions.gb18030 === </span><span class="s0">'function'</span><span class="s1">) {</span>
+        <span class="s2">this</span><span class="s1">.gb18030 = codecOptions.gb18030(); </span><span class="s3">// Load GB18030 ranges.</span>
+
+        <span class="s3">// Add GB18030 decode tables.</span>
+        <span class="s2">var </span><span class="s1">thirdByteNodeIdx = </span><span class="s2">this</span><span class="s1">.decodeTables.length;</span>
+        <span class="s2">var </span><span class="s1">thirdByteNode = </span><span class="s2">this</span><span class="s1">.decodeTables[thirdByteNodeIdx] = UNASSIGNED_NODE.slice(</span><span class="s4">0</span><span class="s1">);</span>
+
+        <span class="s2">var </span><span class="s1">fourthByteNodeIdx = </span><span class="s2">this</span><span class="s1">.decodeTables.length;</span>
+        <span class="s2">var </span><span class="s1">fourthByteNode = </span><span class="s2">this</span><span class="s1">.decodeTables[fourthByteNodeIdx] = UNASSIGNED_NODE.slice(</span><span class="s4">0</span><span class="s1">);</span>
+
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">x81; i &lt;= </span><span class="s4">0</span><span class="s1">xFE; i++) {</span>
+            <span class="s2">var </span><span class="s1">secondByteNodeIdx = NODE_START - </span><span class="s2">this</span><span class="s1">.decodeTables[</span><span class="s4">0</span><span class="s1">][i];</span>
+            <span class="s2">var </span><span class="s1">secondByteNode = </span><span class="s2">this</span><span class="s1">.decodeTables[secondByteNodeIdx];</span>
+            <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">j = </span><span class="s4">0</span><span class="s1">x30; j &lt;= </span><span class="s4">0</span><span class="s1">x39; j++)</span>
+                <span class="s1">secondByteNode[j] = NODE_START - thirdByteNodeIdx;</span>
+        <span class="s1">}</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">x81; i &lt;= </span><span class="s4">0</span><span class="s1">xFE; i++)</span>
+            <span class="s1">thirdByteNode[i] = NODE_START - fourthByteNodeIdx;</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">x30; i &lt;= </span><span class="s4">0</span><span class="s1">x39; i++)</span>
+            <span class="s1">fourthByteNode[i] = GB18030_CODE</span>
+    <span class="s1">}        </span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSCodec.prototype.encoder = DBCSEncoder;</span>
+<span class="s1">DBCSCodec.prototype.decoder = DBCSDecoder;</span>
+
+<span class="s3">// Decoder helpers</span>
+<span class="s1">DBCSCodec.prototype._getDecodeTrieNode = </span><span class="s2">function</span><span class="s1">(addr) {</span>
+    <span class="s2">var </span><span class="s1">bytes = [];</span>
+    <span class="s2">for </span><span class="s1">(; addr &gt; </span><span class="s4">0</span><span class="s1">; addr &gt;&gt;= </span><span class="s4">8</span><span class="s1">)</span>
+        <span class="s1">bytes.push(addr &amp; </span><span class="s4">0</span><span class="s1">xFF);</span>
+    <span class="s2">if </span><span class="s1">(bytes.length == </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s1">bytes.push(</span><span class="s4">0</span><span class="s1">);</span>
+
+    <span class="s2">var </span><span class="s1">node = </span><span class="s2">this</span><span class="s1">.decodeTables[</span><span class="s4">0</span><span class="s1">];</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = bytes.length-1; i &gt; </span><span class="s4">0</span><span class="s1">; i--) { </span><span class="s3">// Traverse nodes deeper into the trie.</span>
+        <span class="s2">var </span><span class="s1">val = node[bytes[i]];</span>
+
+        <span class="s2">if </span><span class="s1">(val == UNASSIGNED) { </span><span class="s3">// Create new node.</span>
+            <span class="s1">node[bytes[i]] = NODE_START - </span><span class="s2">this</span><span class="s1">.decodeTables.length;</span>
+            <span class="s2">this</span><span class="s1">.decodeTables.push(node = UNASSIGNED_NODE.slice(</span><span class="s4">0</span><span class="s1">));</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(val &lt;= NODE_START) { </span><span class="s3">// Existing node.</span>
+            <span class="s1">node = </span><span class="s2">this</span><span class="s1">.decodeTables[NODE_START - val];</span>
+        <span class="s1">}</span>
+        <span class="s2">else</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Overwrite byte in &quot; </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.encodingName + </span><span class="s0">&quot;, addr: &quot; </span><span class="s1">+ addr.toString(</span><span class="s4">16</span><span class="s1">));</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">node;</span>
+<span class="s1">}</span>
+
+
+<span class="s1">DBCSCodec.prototype._addDecodeChunk = </span><span class="s2">function</span><span class="s1">(chunk) {</span>
+    <span class="s3">// First element of chunk is the hex mbcs code where we start.</span>
+    <span class="s2">var </span><span class="s1">curAddr = parseInt(chunk[</span><span class="s4">0</span><span class="s1">], </span><span class="s4">16</span><span class="s1">);</span>
+
+    <span class="s3">// Choose the decoding node where we'll write our chars.</span>
+    <span class="s2">var </span><span class="s1">writeTable = </span><span class="s2">this</span><span class="s1">._getDecodeTrieNode(curAddr);</span>
+    <span class="s1">curAddr = curAddr &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+
+    <span class="s3">// Write all other elements of the chunk to the table.</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">k = </span><span class="s4">1</span><span class="s1">; k &lt; chunk.length; k++) {</span>
+        <span class="s2">var </span><span class="s1">part = chunk[k];</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">part === </span><span class="s0">&quot;string&quot;</span><span class="s1">) { </span><span class="s3">// String, write as-is.</span>
+            <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">l = </span><span class="s4">0</span><span class="s1">; l &lt; part.length;) {</span>
+                <span class="s2">var </span><span class="s1">code = part.charCodeAt(l++);</span>
+                <span class="s2">if </span><span class="s1">(</span><span class="s4">0</span><span class="s1">xD800 &lt;= code &amp;&amp; code &lt; </span><span class="s4">0</span><span class="s1">xDC00) { </span><span class="s3">// Decode surrogate</span>
+                    <span class="s2">var </span><span class="s1">codeTrail = part.charCodeAt(l++);</span>
+                    <span class="s2">if </span><span class="s1">(</span><span class="s4">0</span><span class="s1">xDC00 &lt;= codeTrail &amp;&amp; codeTrail &lt; </span><span class="s4">0</span><span class="s1">xE000)</span>
+                        <span class="s1">writeTable[curAddr++] = </span><span class="s4">0</span><span class="s1">x10000 + (code - </span><span class="s4">0</span><span class="s1">xD800) * </span><span class="s4">0</span><span class="s1">x400 + (codeTrail - </span><span class="s4">0</span><span class="s1">xDC00);</span>
+                    <span class="s2">else</span>
+                        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Incorrect surrogate pair in &quot;  </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.encodingName + </span><span class="s0">&quot; at chunk &quot; </span><span class="s1">+ chunk[</span><span class="s4">0</span><span class="s1">]);</span>
+                <span class="s1">}</span>
+                <span class="s2">else if </span><span class="s1">(</span><span class="s4">0</span><span class="s1">x0FF0 &lt; code &amp;&amp; code &lt;= </span><span class="s4">0</span><span class="s1">x0FFF) { </span><span class="s3">// Character sequence (our own encoding used)</span>
+                    <span class="s2">var </span><span class="s1">len = </span><span class="s4">0</span><span class="s1">xFFF - code + </span><span class="s4">2</span><span class="s1">;</span>
+                    <span class="s2">var </span><span class="s1">seq = [];</span>
+                    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">m = </span><span class="s4">0</span><span class="s1">; m &lt; len; m++)</span>
+                        <span class="s1">seq.push(part.charCodeAt(l++)); </span><span class="s3">// Simple variation: don't support surrogates or subsequences in seq.</span>
+
+                    <span class="s1">writeTable[curAddr++] = SEQ_START - </span><span class="s2">this</span><span class="s1">.decodeTableSeq.length;</span>
+                    <span class="s2">this</span><span class="s1">.decodeTableSeq.push(seq);</span>
+                <span class="s1">}</span>
+                <span class="s2">else</span>
+                    <span class="s1">writeTable[curAddr++] = code; </span><span class="s3">// Basic char</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span>
+        <span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">part === </span><span class="s0">&quot;number&quot;</span><span class="s1">) { </span><span class="s3">// Integer, meaning increasing sequence starting with prev character.</span>
+            <span class="s2">var </span><span class="s1">charCode = writeTable[curAddr - </span><span class="s4">1</span><span class="s1">] + </span><span class="s4">1</span><span class="s1">;</span>
+            <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">l = </span><span class="s4">0</span><span class="s1">; l &lt; part; l++)</span>
+                <span class="s1">writeTable[curAddr++] = charCode++;</span>
+        <span class="s1">}</span>
+        <span class="s2">else</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Incorrect type '&quot; </span><span class="s1">+ </span><span class="s2">typeof </span><span class="s1">part + </span><span class="s0">&quot;' given in &quot;  </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.encodingName + </span><span class="s0">&quot; at chunk &quot; </span><span class="s1">+ chunk[</span><span class="s4">0</span><span class="s1">]);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(curAddr &gt; </span><span class="s4">0</span><span class="s1">xFF)</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Incorrect chunk in &quot;  </span><span class="s1">+ </span><span class="s2">this</span><span class="s1">.encodingName + </span><span class="s0">&quot; at addr &quot; </span><span class="s1">+ chunk[</span><span class="s4">0</span><span class="s1">] + </span><span class="s0">&quot;: too long&quot; </span><span class="s1">+ curAddr);</span>
+<span class="s1">}</span>
+
+<span class="s3">// Encoder helpers</span>
+<span class="s1">DBCSCodec.prototype._getEncodeBucket = </span><span class="s2">function</span><span class="s1">(uCode) {</span>
+    <span class="s2">var </span><span class="s1">high = uCode &gt;&gt; </span><span class="s4">8</span><span class="s1">; </span><span class="s3">// This could be &gt; 0xFF because of astral characters.</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.encodeTable[high] === undefined)</span>
+        <span class="s2">this</span><span class="s1">.encodeTable[high] = UNASSIGNED_NODE.slice(</span><span class="s4">0</span><span class="s1">); </span><span class="s3">// Create bucket on demand.</span>
+    <span class="s2">return this</span><span class="s1">.encodeTable[high];</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSCodec.prototype._setEncodeChar = </span><span class="s2">function</span><span class="s1">(uCode, dbcsCode) {</span>
+    <span class="s2">var </span><span class="s1">bucket = </span><span class="s2">this</span><span class="s1">._getEncodeBucket(uCode);</span>
+    <span class="s2">var </span><span class="s1">low = uCode &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+    <span class="s2">if </span><span class="s1">(bucket[low] &lt;= SEQ_START)</span>
+        <span class="s2">this</span><span class="s1">.encodeTableSeq[SEQ_START-bucket[low]][DEF_CHAR] = dbcsCode; </span><span class="s3">// There's already a sequence, set a single-char subsequence of it.</span>
+    <span class="s2">else if </span><span class="s1">(bucket[low] == UNASSIGNED)</span>
+        <span class="s1">bucket[low] = dbcsCode;</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSCodec.prototype._setEncodeSequence = </span><span class="s2">function</span><span class="s1">(seq, dbcsCode) {</span>
+    
+    <span class="s3">// Get the root of character tree according to first character of the sequence.</span>
+    <span class="s2">var </span><span class="s1">uCode = seq[</span><span class="s4">0</span><span class="s1">];</span>
+    <span class="s2">var </span><span class="s1">bucket = </span><span class="s2">this</span><span class="s1">._getEncodeBucket(uCode);</span>
+    <span class="s2">var </span><span class="s1">low = uCode &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+
+    <span class="s2">var </span><span class="s1">node;</span>
+    <span class="s2">if </span><span class="s1">(bucket[low] &lt;= SEQ_START) {</span>
+        <span class="s3">// There's already a sequence with  - use it.</span>
+        <span class="s1">node = </span><span class="s2">this</span><span class="s1">.encodeTableSeq[SEQ_START-bucket[low]];</span>
+    <span class="s1">}</span>
+    <span class="s2">else </span><span class="s1">{</span>
+        <span class="s3">// There was no sequence object - allocate a new one.</span>
+        <span class="s1">node = {};</span>
+        <span class="s2">if </span><span class="s1">(bucket[low] !== UNASSIGNED) node[DEF_CHAR] = bucket[low]; </span><span class="s3">// If a char was set before - make it a single-char subsequence.</span>
+        <span class="s1">bucket[low] = SEQ_START - </span><span class="s2">this</span><span class="s1">.encodeTableSeq.length;</span>
+        <span class="s2">this</span><span class="s1">.encodeTableSeq.push(node);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">// Traverse the character tree, allocating new nodes as needed.</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">j = </span><span class="s4">1</span><span class="s1">; j &lt; seq.length-1; j++) {</span>
+        <span class="s2">var </span><span class="s1">oldVal = node[uCode];</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">oldVal === </span><span class="s0">'object'</span><span class="s1">)</span>
+            <span class="s1">node = oldVal;</span>
+        <span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">node = node[uCode] = {}</span>
+            <span class="s2">if </span><span class="s1">(oldVal !== undefined)</span>
+                <span class="s1">node[DEF_CHAR] = oldVal</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s3">// Set the leaf to given dbcsCode.</span>
+    <span class="s1">uCode = seq[seq.length-1];</span>
+    <span class="s1">node[uCode] = dbcsCode;</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSCodec.prototype._fillEncodeTable = </span><span class="s2">function</span><span class="s1">(nodeIdx, prefix, skipEncodeChars) {</span>
+    <span class="s2">var </span><span class="s1">node = </span><span class="s2">this</span><span class="s1">.decodeTables[nodeIdx];</span>
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s4">0</span><span class="s1">x100; i++) {</span>
+        <span class="s2">var </span><span class="s1">uCode = node[i];</span>
+        <span class="s2">var </span><span class="s1">mbCode = prefix + i;</span>
+        <span class="s2">if </span><span class="s1">(skipEncodeChars[mbCode])</span>
+            <span class="s2">continue</span><span class="s1">;</span>
+
+        <span class="s2">if </span><span class="s1">(uCode &gt;= </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s2">this</span><span class="s1">._setEncodeChar(uCode, mbCode);</span>
+        <span class="s2">else if </span><span class="s1">(uCode &lt;= NODE_START)</span>
+            <span class="s2">this</span><span class="s1">._fillEncodeTable(NODE_START - uCode, mbCode &lt;&lt; </span><span class="s4">8</span><span class="s1">, skipEncodeChars);</span>
+        <span class="s2">else if </span><span class="s1">(uCode &lt;= SEQ_START)</span>
+            <span class="s2">this</span><span class="s1">._setEncodeSequence(</span><span class="s2">this</span><span class="s1">.decodeTableSeq[SEQ_START - uCode], mbCode);</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+
+
+
+<span class="s3">// == Encoder ==================================================================</span>
+
+<span class="s2">function </span><span class="s1">DBCSEncoder(options, codec) {</span>
+    <span class="s3">// Encoder state</span>
+    <span class="s2">this</span><span class="s1">.leadSurrogate = -</span><span class="s4">1</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.seqObj = undefined;</span>
+    
+    <span class="s3">// Static data</span>
+    <span class="s2">this</span><span class="s1">.encodeTable = codec.encodeTable;</span>
+    <span class="s2">this</span><span class="s1">.encodeTableSeq = codec.encodeTableSeq;</span>
+    <span class="s2">this</span><span class="s1">.defaultCharSingleByte = codec.defCharSB;</span>
+    <span class="s2">this</span><span class="s1">.gb18030 = codec.gb18030;</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSEncoder.prototype.write = </span><span class="s2">function</span><span class="s1">(str) {</span>
+    <span class="s2">var </span><span class="s1">newBuf = Buffer.alloc(str.length * (</span><span class="s2">this</span><span class="s1">.gb18030 ? </span><span class="s4">4 </span><span class="s1">: </span><span class="s4">3</span><span class="s1">)),</span>
+        <span class="s1">leadSurrogate = </span><span class="s2">this</span><span class="s1">.leadSurrogate,</span>
+        <span class="s1">seqObj = </span><span class="s2">this</span><span class="s1">.seqObj, nextChar = -</span><span class="s4">1</span><span class="s1">,</span>
+        <span class="s1">i = </span><span class="s4">0</span><span class="s1">, j = </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s2">while </span><span class="s1">(</span><span class="s2">true</span><span class="s1">) {</span>
+        <span class="s3">// 0. Get next character.</span>
+        <span class="s2">if </span><span class="s1">(nextChar === -</span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s2">if </span><span class="s1">(i == str.length) </span><span class="s2">break</span><span class="s1">;</span>
+            <span class="s2">var </span><span class="s1">uCode = str.charCodeAt(i++);</span>
+        <span class="s1">}</span>
+        <span class="s2">else </span><span class="s1">{</span>
+            <span class="s2">var </span><span class="s1">uCode = nextChar;</span>
+            <span class="s1">nextChar = -</span><span class="s4">1</span><span class="s1">;    </span>
+        <span class="s1">}</span>
+
+        <span class="s3">// 1. Handle surrogates.</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s4">0</span><span class="s1">xD800 &lt;= uCode &amp;&amp; uCode &lt; </span><span class="s4">0</span><span class="s1">xE000) { </span><span class="s3">// Char is one of surrogates.</span>
+            <span class="s2">if </span><span class="s1">(uCode &lt; </span><span class="s4">0</span><span class="s1">xDC00) { </span><span class="s3">// We've got lead surrogate.</span>
+                <span class="s2">if </span><span class="s1">(leadSurrogate === -</span><span class="s4">1</span><span class="s1">) {</span>
+                    <span class="s1">leadSurrogate = uCode;</span>
+                    <span class="s2">continue</span><span class="s1">;</span>
+                <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                    <span class="s1">leadSurrogate = uCode;</span>
+                    <span class="s3">// Double lead surrogate found.</span>
+                    <span class="s1">uCode = UNASSIGNED;</span>
+                <span class="s1">}</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{ </span><span class="s3">// We've got trail surrogate.</span>
+                <span class="s2">if </span><span class="s1">(leadSurrogate !== -</span><span class="s4">1</span><span class="s1">) {</span>
+                    <span class="s1">uCode = </span><span class="s4">0</span><span class="s1">x10000 + (leadSurrogate - </span><span class="s4">0</span><span class="s1">xD800) * </span><span class="s4">0</span><span class="s1">x400 + (uCode - </span><span class="s4">0</span><span class="s1">xDC00);</span>
+                    <span class="s1">leadSurrogate = -</span><span class="s4">1</span><span class="s1">;</span>
+                <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                    <span class="s3">// Incomplete surrogate pair - only trail surrogate found.</span>
+                    <span class="s1">uCode = UNASSIGNED;</span>
+                <span class="s1">}</span>
+                
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(leadSurrogate !== -</span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s3">// Incomplete surrogate pair - only lead surrogate found.</span>
+            <span class="s1">nextChar = uCode; uCode = UNASSIGNED; </span><span class="s3">// Write an error, then current char.</span>
+            <span class="s1">leadSurrogate = -</span><span class="s4">1</span><span class="s1">;</span>
+        <span class="s1">}</span>
+
+        <span class="s3">// 2. Convert uCode character.</span>
+        <span class="s2">var </span><span class="s1">dbcsCode = UNASSIGNED;</span>
+        <span class="s2">if </span><span class="s1">(seqObj !== undefined &amp;&amp; uCode != UNASSIGNED) { </span><span class="s3">// We are in the middle of the sequence</span>
+            <span class="s2">var </span><span class="s1">resCode = seqObj[uCode];</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">resCode === </span><span class="s0">'object'</span><span class="s1">) { </span><span class="s3">// Sequence continues.</span>
+                <span class="s1">seqObj = resCode;</span>
+                <span class="s2">continue</span><span class="s1">;</span>
+
+            <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">resCode == </span><span class="s0">'number'</span><span class="s1">) { </span><span class="s3">// Sequence finished. Write it.</span>
+                <span class="s1">dbcsCode = resCode;</span>
+
+            <span class="s1">} </span><span class="s2">else if </span><span class="s1">(resCode == undefined) { </span><span class="s3">// Current character is not part of the sequence.</span>
+
+                <span class="s3">// Try default character for this sequence</span>
+                <span class="s1">resCode = seqObj[DEF_CHAR];</span>
+                <span class="s2">if </span><span class="s1">(resCode !== undefined) {</span>
+                    <span class="s1">dbcsCode = resCode; </span><span class="s3">// Found. Write it.</span>
+                    <span class="s1">nextChar = uCode; </span><span class="s3">// Current character will be written too in the next iteration.</span>
+
+                <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                    <span class="s3">// TODO: What if we have no default? (resCode == undefined)</span>
+                    <span class="s3">// Then, we should write first char of the sequence as-is and try the rest recursively.</span>
+                    <span class="s3">// Didn't do it for now because no encoding has this situation yet.</span>
+                    <span class="s3">// Currently, just skip the sequence and write current char.</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s1">seqObj = undefined;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(uCode &gt;= </span><span class="s4">0</span><span class="s1">) {  </span><span class="s3">// Regular character</span>
+            <span class="s2">var </span><span class="s1">subtable = </span><span class="s2">this</span><span class="s1">.encodeTable[uCode &gt;&gt; </span><span class="s4">8</span><span class="s1">];</span>
+            <span class="s2">if </span><span class="s1">(subtable !== undefined)</span>
+                <span class="s1">dbcsCode = subtable[uCode &amp; </span><span class="s4">0</span><span class="s1">xFF];</span>
+            
+            <span class="s2">if </span><span class="s1">(dbcsCode &lt;= SEQ_START) { </span><span class="s3">// Sequence start</span>
+                <span class="s1">seqObj = </span><span class="s2">this</span><span class="s1">.encodeTableSeq[SEQ_START-dbcsCode];</span>
+                <span class="s2">continue</span><span class="s1">;</span>
+            <span class="s1">}</span>
+
+            <span class="s2">if </span><span class="s1">(dbcsCode == UNASSIGNED &amp;&amp; </span><span class="s2">this</span><span class="s1">.gb18030) {</span>
+                <span class="s3">// Use GB18030 algorithm to find character(s) to write.</span>
+                <span class="s2">var </span><span class="s1">idx = findIdx(</span><span class="s2">this</span><span class="s1">.gb18030.uChars, uCode);</span>
+                <span class="s2">if </span><span class="s1">(idx != -</span><span class="s4">1</span><span class="s1">) {</span>
+                    <span class="s2">var </span><span class="s1">dbcsCode = </span><span class="s2">this</span><span class="s1">.gb18030.gbChars[idx] + (uCode - </span><span class="s2">this</span><span class="s1">.gb18030.uChars[idx]);</span>
+                    <span class="s1">newBuf[j++] = </span><span class="s4">0</span><span class="s1">x81 + Math.floor(dbcsCode / </span><span class="s4">12600</span><span class="s1">); dbcsCode = dbcsCode % </span><span class="s4">12600</span><span class="s1">;</span>
+                    <span class="s1">newBuf[j++] = </span><span class="s4">0</span><span class="s1">x30 + Math.floor(dbcsCode / </span><span class="s4">1260</span><span class="s1">); dbcsCode = dbcsCode % </span><span class="s4">1260</span><span class="s1">;</span>
+                    <span class="s1">newBuf[j++] = </span><span class="s4">0</span><span class="s1">x81 + Math.floor(dbcsCode / </span><span class="s4">10</span><span class="s1">); dbcsCode = dbcsCode % </span><span class="s4">10</span><span class="s1">;</span>
+                    <span class="s1">newBuf[j++] = </span><span class="s4">0</span><span class="s1">x30 + dbcsCode;</span>
+                    <span class="s2">continue</span><span class="s1">;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+
+        <span class="s3">// 3. Write dbcsCode character.</span>
+        <span class="s2">if </span><span class="s1">(dbcsCode === UNASSIGNED)</span>
+            <span class="s1">dbcsCode = </span><span class="s2">this</span><span class="s1">.defaultCharSingleByte;</span>
+        
+        <span class="s2">if </span><span class="s1">(dbcsCode &lt; </span><span class="s4">0</span><span class="s1">x100) {</span>
+            <span class="s1">newBuf[j++] = dbcsCode;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(dbcsCode &lt; </span><span class="s4">0</span><span class="s1">x10000) {</span>
+            <span class="s1">newBuf[j++] = dbcsCode &gt;&gt; </span><span class="s4">8</span><span class="s1">;   </span><span class="s3">// high byte</span>
+            <span class="s1">newBuf[j++] = dbcsCode &amp; </span><span class="s4">0</span><span class="s1">xFF; </span><span class="s3">// low byte</span>
+        <span class="s1">}</span>
+        <span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">newBuf[j++] = dbcsCode &gt;&gt; </span><span class="s4">16</span><span class="s1">;</span>
+            <span class="s1">newBuf[j++] = (dbcsCode &gt;&gt; </span><span class="s4">8</span><span class="s1">) &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+            <span class="s1">newBuf[j++] = dbcsCode &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.seqObj = seqObj;</span>
+    <span class="s2">this</span><span class="s1">.leadSurrogate = leadSurrogate;</span>
+    <span class="s2">return </span><span class="s1">newBuf.slice(</span><span class="s4">0</span><span class="s1">, j);</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSEncoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.leadSurrogate === -</span><span class="s4">1 </span><span class="s1">&amp;&amp; </span><span class="s2">this</span><span class="s1">.seqObj === undefined)</span>
+        <span class="s2">return</span><span class="s1">; </span><span class="s3">// All clean. Most often case.</span>
+
+    <span class="s2">var </span><span class="s1">newBuf = Buffer.alloc(</span><span class="s4">10</span><span class="s1">), j = </span><span class="s4">0</span><span class="s1">;</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.seqObj) { </span><span class="s3">// We're in the sequence.</span>
+        <span class="s2">var </span><span class="s1">dbcsCode = </span><span class="s2">this</span><span class="s1">.seqObj[DEF_CHAR];</span>
+        <span class="s2">if </span><span class="s1">(dbcsCode !== undefined) { </span><span class="s3">// Write beginning of the sequence.</span>
+            <span class="s2">if </span><span class="s1">(dbcsCode &lt; </span><span class="s4">0</span><span class="s1">x100) {</span>
+                <span class="s1">newBuf[j++] = dbcsCode;</span>
+            <span class="s1">}</span>
+            <span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">newBuf[j++] = dbcsCode &gt;&gt; </span><span class="s4">8</span><span class="s1">;   </span><span class="s3">// high byte</span>
+                <span class="s1">newBuf[j++] = dbcsCode &amp; </span><span class="s4">0</span><span class="s1">xFF; </span><span class="s3">// low byte</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s3">// See todo above.</span>
+        <span class="s1">}</span>
+        <span class="s2">this</span><span class="s1">.seqObj = undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.leadSurrogate !== -</span><span class="s4">1</span><span class="s1">) {</span>
+        <span class="s3">// Incomplete surrogate pair - only lead surrogate found.</span>
+        <span class="s1">newBuf[j++] = </span><span class="s2">this</span><span class="s1">.defaultCharSingleByte;</span>
+        <span class="s2">this</span><span class="s1">.leadSurrogate = -</span><span class="s4">1</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    
+    <span class="s2">return </span><span class="s1">newBuf.slice(</span><span class="s4">0</span><span class="s1">, j);</span>
+<span class="s1">}</span>
+
+<span class="s3">// Export for testing</span>
+<span class="s1">DBCSEncoder.prototype.findIdx = findIdx;</span>
+
+
+<span class="s3">// == Decoder ==================================================================</span>
+
+<span class="s2">function </span><span class="s1">DBCSDecoder(options, codec) {</span>
+    <span class="s3">// Decoder state</span>
+    <span class="s2">this</span><span class="s1">.nodeIdx = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">this</span><span class="s1">.prevBuf = Buffer.alloc(</span><span class="s4">0</span><span class="s1">);</span>
+
+    <span class="s3">// Static data</span>
+    <span class="s2">this</span><span class="s1">.decodeTables = codec.decodeTables;</span>
+    <span class="s2">this</span><span class="s1">.decodeTableSeq = codec.decodeTableSeq;</span>
+    <span class="s2">this</span><span class="s1">.defaultCharUnicode = codec.defaultCharUnicode;</span>
+    <span class="s2">this</span><span class="s1">.gb18030 = codec.gb18030;</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSDecoder.prototype.write = </span><span class="s2">function</span><span class="s1">(buf) {</span>
+    <span class="s2">var </span><span class="s1">newBuf = Buffer.alloc(buf.length*</span><span class="s4">2</span><span class="s1">),</span>
+        <span class="s1">nodeIdx = </span><span class="s2">this</span><span class="s1">.nodeIdx, </span>
+        <span class="s1">prevBuf = </span><span class="s2">this</span><span class="s1">.prevBuf, prevBufOffset = </span><span class="s2">this</span><span class="s1">.prevBuf.length,</span>
+        <span class="s1">seqStart = -</span><span class="s2">this</span><span class="s1">.prevBuf.length, </span><span class="s3">// idx of the start of current parsed sequence.</span>
+        <span class="s1">uCode;</span>
+
+    <span class="s2">if </span><span class="s1">(prevBufOffset &gt; </span><span class="s4">0</span><span class="s1">) </span><span class="s3">// Make prev buf overlap a little to make it easier to slice later.</span>
+        <span class="s1">prevBuf = Buffer.concat([prevBuf, buf.slice(</span><span class="s4">0</span><span class="s1">, </span><span class="s4">10</span><span class="s1">)]);</span>
+    
+    <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">, j = </span><span class="s4">0</span><span class="s1">; i &lt; buf.length; i++) {</span>
+        <span class="s2">var </span><span class="s1">curByte = (i &gt;= </span><span class="s4">0</span><span class="s1">) ? buf[i] : prevBuf[i + prevBufOffset];</span>
+
+        <span class="s3">// Lookup in current trie node.</span>
+        <span class="s2">var </span><span class="s1">uCode = </span><span class="s2">this</span><span class="s1">.decodeTables[nodeIdx][curByte];</span>
+
+        <span class="s2">if </span><span class="s1">(uCode &gt;= </span><span class="s4">0</span><span class="s1">) { </span>
+            <span class="s3">// Normal character, just use it.</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(uCode === UNASSIGNED) { </span><span class="s3">// Unknown char.</span>
+            <span class="s3">// TODO: Callback with seq.</span>
+            <span class="s3">//var curSeq = (seqStart &gt;= 0) ? buf.slice(seqStart, i+1) : prevBuf.slice(seqStart + prevBufOffset, i+1 + prevBufOffset);</span>
+            <span class="s1">i = seqStart; </span><span class="s3">// Try to parse again, after skipping first byte of the sequence ('i' will be incremented by 'for' cycle).</span>
+            <span class="s1">uCode = </span><span class="s2">this</span><span class="s1">.defaultCharUnicode.charCodeAt(</span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(uCode === GB18030_CODE) {</span>
+            <span class="s2">var </span><span class="s1">curSeq = (seqStart &gt;= </span><span class="s4">0</span><span class="s1">) ? buf.slice(seqStart, i+</span><span class="s4">1</span><span class="s1">) : prevBuf.slice(seqStart + prevBufOffset, i+</span><span class="s4">1 </span><span class="s1">+ prevBufOffset);</span>
+            <span class="s2">var </span><span class="s1">ptr = (curSeq[</span><span class="s4">0</span><span class="s1">]-</span><span class="s4">0</span><span class="s1">x81)*</span><span class="s4">12600 </span><span class="s1">+ (curSeq[</span><span class="s4">1</span><span class="s1">]-</span><span class="s4">0</span><span class="s1">x30)*</span><span class="s4">1260 </span><span class="s1">+ (curSeq[</span><span class="s4">2</span><span class="s1">]-</span><span class="s4">0</span><span class="s1">x81)*</span><span class="s4">10 </span><span class="s1">+ (curSeq[</span><span class="s4">3</span><span class="s1">]-</span><span class="s4">0</span><span class="s1">x30);</span>
+            <span class="s2">var </span><span class="s1">idx = findIdx(</span><span class="s2">this</span><span class="s1">.gb18030.gbChars, ptr);</span>
+            <span class="s1">uCode = </span><span class="s2">this</span><span class="s1">.gb18030.uChars[idx] + ptr - </span><span class="s2">this</span><span class="s1">.gb18030.gbChars[idx];</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(uCode &lt;= NODE_START) { </span><span class="s3">// Go to next trie node.</span>
+            <span class="s1">nodeIdx = NODE_START - uCode;</span>
+            <span class="s2">continue</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s2">else if </span><span class="s1">(uCode &lt;= SEQ_START) { </span><span class="s3">// Output a sequence of chars.</span>
+            <span class="s2">var </span><span class="s1">seq = </span><span class="s2">this</span><span class="s1">.decodeTableSeq[SEQ_START - uCode];</span>
+            <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">k = </span><span class="s4">0</span><span class="s1">; k &lt; seq.length - </span><span class="s4">1</span><span class="s1">; k++) {</span>
+                <span class="s1">uCode = seq[k];</span>
+                <span class="s1">newBuf[j++] = uCode &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+                <span class="s1">newBuf[j++] = uCode &gt;&gt; </span><span class="s4">8</span><span class="s1">;</span>
+            <span class="s1">}</span>
+            <span class="s1">uCode = seq[seq.length-1];</span>
+        <span class="s1">}</span>
+        <span class="s2">else</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;iconv-lite internal error: invalid decoding table value &quot; </span><span class="s1">+ uCode + </span><span class="s0">&quot; at &quot; </span><span class="s1">+ nodeIdx + </span><span class="s0">&quot;/&quot; </span><span class="s1">+ curByte);</span>
+
+        <span class="s3">// Write the character to buffer, handling higher planes using surrogate pair.</span>
+        <span class="s2">if </span><span class="s1">(uCode &gt; </span><span class="s4">0</span><span class="s1">xFFFF) { </span>
+            <span class="s1">uCode -= </span><span class="s4">0</span><span class="s1">x10000;</span>
+            <span class="s2">var </span><span class="s1">uCodeLead = </span><span class="s4">0</span><span class="s1">xD800 + Math.floor(uCode / </span><span class="s4">0</span><span class="s1">x400);</span>
+            <span class="s1">newBuf[j++] = uCodeLead &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+            <span class="s1">newBuf[j++] = uCodeLead &gt;&gt; </span><span class="s4">8</span><span class="s1">;</span>
+
+            <span class="s1">uCode = </span><span class="s4">0</span><span class="s1">xDC00 + uCode % </span><span class="s4">0</span><span class="s1">x400;</span>
+        <span class="s1">}</span>
+        <span class="s1">newBuf[j++] = uCode &amp; </span><span class="s4">0</span><span class="s1">xFF;</span>
+        <span class="s1">newBuf[j++] = uCode &gt;&gt; </span><span class="s4">8</span><span class="s1">;</span>
+
+        <span class="s3">// Reset trie node.</span>
+        <span class="s1">nodeIdx = </span><span class="s4">0</span><span class="s1">; seqStart = i+</span><span class="s4">1</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.nodeIdx = nodeIdx;</span>
+    <span class="s2">this</span><span class="s1">.prevBuf = (seqStart &gt;= </span><span class="s4">0</span><span class="s1">) ? buf.slice(seqStart) : prevBuf.slice(seqStart + prevBufOffset);</span>
+    <span class="s2">return </span><span class="s1">newBuf.slice(</span><span class="s4">0</span><span class="s1">, j).toString(</span><span class="s0">'ucs2'</span><span class="s1">);</span>
+<span class="s1">}</span>
+
+<span class="s1">DBCSDecoder.prototype.end = </span><span class="s2">function</span><span class="s1">() {</span>
+    <span class="s2">var </span><span class="s1">ret = </span><span class="s0">''</span><span class="s1">;</span>
+
+    <span class="s3">// Try to parse all remaining chars.</span>
+    <span class="s2">while </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.prevBuf.length &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+        <span class="s3">// Skip 1 character in the buffer.</span>
+        <span class="s1">ret += </span><span class="s2">this</span><span class="s1">.defaultCharUnicode;</span>
+        <span class="s2">var </span><span class="s1">buf = </span><span class="s2">this</span><span class="s1">.prevBuf.slice(</span><span class="s4">1</span><span class="s1">);</span>
+
+        <span class="s3">// Parse remaining as usual.</span>
+        <span class="s2">this</span><span class="s1">.prevBuf = Buffer.alloc(</span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s2">this</span><span class="s1">.nodeIdx = </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(buf.length &gt; </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s1">ret += </span><span class="s2">this</span><span class="s1">.write(buf);</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.nodeIdx = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s2">return </span><span class="s1">ret;</span>
+<span class="s1">}</span>
+
+<span class="s3">// Binary search for GB18030. Returns largest i such that table[i] &lt;= val.</span>
+<span class="s2">function </span><span class="s1">findIdx(table, val) {</span>
+    <span class="s2">if </span><span class="s1">(table[</span><span class="s4">0</span><span class="s1">] &gt; val)</span>
+        <span class="s2">return </span><span class="s1">-</span><span class="s4">1</span><span class="s1">;</span>
+
+    <span class="s2">var </span><span class="s1">l = </span><span class="s4">0</span><span class="s1">, r = table.length;</span>
+    <span class="s2">while </span><span class="s1">(l &lt; r-1) { </span><span class="s3">// always table[l] &lt;= val &lt; table[r]</span>
+        <span class="s2">var </span><span class="s1">mid = l + Math.floor((r-l+</span><span class="s4">1</span><span class="s1">)/</span><span class="s4">2</span><span class="s1">);</span>
+        <span class="s2">if </span><span class="s1">(table[mid] &lt;= val)</span>
+            <span class="s1">l = mid;</span>
+        <span class="s2">else</span>
+            <span class="s1">r = mid;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">l;</span>
+<span class="s1">}</span>
+
+</pre>
+</body>
+</html>

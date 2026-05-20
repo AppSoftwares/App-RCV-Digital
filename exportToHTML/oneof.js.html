@@ -1,0 +1,243 @@
+<html>
+<head>
+<title>oneof.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+oneof.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = OneOf;</span>
+
+<span class="s2">// extends ReflectionObject</span>
+<span class="s3">var </span><span class="s1">ReflectionObject = require(</span><span class="s0">&quot;./object&quot;</span><span class="s1">);</span>
+<span class="s1">((OneOf.prototype = Object.create(ReflectionObject.prototype)).constructor = OneOf).className = </span><span class="s0">&quot;OneOf&quot;</span><span class="s1">;</span>
+
+<span class="s3">var </span><span class="s1">Field = require(</span><span class="s0">&quot;./field&quot;</span><span class="s1">),</span>
+    <span class="s1">util  = require(</span><span class="s0">&quot;./util&quot;</span><span class="s1">);</span>
+
+<span class="s2">/** 
+ * Constructs a new oneof instance. 
+ * @classdesc Reflected oneof. 
+ * @extends ReflectionObject 
+ * @constructor 
+ * @param {string} name Oneof name 
+ * @param {string[]|Object.&lt;string,*&gt;} [fieldNames] Field names 
+ * @param {Object.&lt;string,*&gt;} [options] Declared options 
+ * @param {string} [comment] Comment associated with this field 
+ */</span>
+<span class="s3">function </span><span class="s1">OneOf(name, fieldNames, options, comment) {</span>
+    <span class="s3">if </span><span class="s1">(!Array.isArray(fieldNames)) {</span>
+        <span class="s1">options = fieldNames;</span>
+        <span class="s1">fieldNames = undefined;</span>
+    <span class="s1">}</span>
+    <span class="s1">ReflectionObject.call(</span><span class="s3">this</span><span class="s1">, name, options);</span>
+
+    <span class="s2">/* istanbul ignore if */</span>
+    <span class="s3">if </span><span class="s1">(!(fieldNames === undefined || Array.isArray(fieldNames)))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;fieldNames must be an Array&quot;</span><span class="s1">);</span>
+
+    <span class="s2">/** 
+     * Field names that belong to this oneof. 
+     * @type {string[]} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.oneof = fieldNames || []; </span><span class="s2">// toJSON, marker</span>
+
+    <span class="s2">/** 
+     * Fields that belong to this oneof as an array for iteration. 
+     * @type {Field[]} 
+     * @readonly 
+     */</span>
+    <span class="s3">this</span><span class="s1">.fieldsArray = []; </span><span class="s2">// declared readonly for conformance, possibly not yet added to parent</span>
+
+    <span class="s2">/** 
+     * Comment for this field. 
+     * @type {string|null} 
+     */</span>
+    <span class="s3">this</span><span class="s1">.comment = comment;</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Oneof descriptor. 
+ * @interface IOneOf 
+ * @property {Array.&lt;string&gt;} oneof Oneof field names 
+ * @property {Object.&lt;string,*&gt;} [options] Oneof options 
+ */</span>
+
+<span class="s2">/** 
+ * Constructs a oneof from a oneof descriptor. 
+ * @param {string} name Oneof name 
+ * @param {IOneOf} json Oneof descriptor 
+ * @returns {OneOf} Created oneof 
+ * @throws {TypeError} If arguments are invalid 
+ */</span>
+<span class="s1">OneOf.fromJSON = </span><span class="s3">function </span><span class="s1">fromJSON(name, json) {</span>
+    <span class="s3">return new </span><span class="s1">OneOf(name, json.oneof, json.options, json.comment);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Converts this oneof to a oneof descriptor. 
+ * @param {IToJSONOptions} [toJSONOptions] JSON conversion options 
+ * @returns {IOneOf} Oneof descriptor 
+ */</span>
+<span class="s1">OneOf.prototype.toJSON = </span><span class="s3">function </span><span class="s1">toJSON(toJSONOptions) {</span>
+    <span class="s3">var </span><span class="s1">keepComments = toJSONOptions ? Boolean(toJSONOptions.keepComments) : </span><span class="s3">false</span><span class="s1">;</span>
+    <span class="s3">return </span><span class="s1">util.toObject([</span>
+        <span class="s0">&quot;options&quot; </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.options,</span>
+        <span class="s0">&quot;oneof&quot;   </span><span class="s1">, </span><span class="s3">this</span><span class="s1">.oneof,</span>
+        <span class="s0">&quot;comment&quot; </span><span class="s1">, keepComments ? </span><span class="s3">this</span><span class="s1">.comment : undefined</span>
+    <span class="s1">]);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Adds the fields of the specified oneof to the parent if not already done so. 
+ * @param {OneOf} oneof The oneof 
+ * @returns {undefined} 
+ * @inner 
+ * @ignore 
+ */</span>
+<span class="s3">function </span><span class="s1">addFieldsToParent(oneof) {</span>
+    <span class="s3">if </span><span class="s1">(oneof.parent)</span>
+        <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; oneof.fieldsArray.length; ++i)</span>
+            <span class="s3">if </span><span class="s1">(!oneof.fieldsArray[i].parent)</span>
+                <span class="s1">oneof.parent.add(oneof.fieldsArray[i]);</span>
+<span class="s1">}</span>
+
+<span class="s2">/** 
+ * Adds a field to this oneof and removes it from its current parent, if any. 
+ * @param {Field} field Field to add 
+ * @returns {OneOf} `this` 
+ */</span>
+<span class="s1">OneOf.prototype.add = </span><span class="s3">function </span><span class="s1">add(field) {</span>
+
+    <span class="s2">/* istanbul ignore if */</span>
+    <span class="s3">if </span><span class="s1">(!(field </span><span class="s3">instanceof </span><span class="s1">Field))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;field must be a Field&quot;</span><span class="s1">);</span>
+
+    <span class="s3">if </span><span class="s1">(field.parent &amp;&amp; field.parent !== </span><span class="s3">this</span><span class="s1">.parent)</span>
+        <span class="s1">field.parent.remove(field);</span>
+    <span class="s3">this</span><span class="s1">.oneof.push(field.name);</span>
+    <span class="s3">this</span><span class="s1">.fieldsArray.push(field);</span>
+    <span class="s1">field.partOf = </span><span class="s3">this</span><span class="s1">; </span><span class="s2">// field.parent remains null</span>
+    <span class="s1">addFieldsToParent(</span><span class="s3">this</span><span class="s1">);</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Removes a field from this oneof and puts it back to the oneof's parent. 
+ * @param {Field} field Field to remove 
+ * @returns {OneOf} `this` 
+ */</span>
+<span class="s1">OneOf.prototype.remove = </span><span class="s3">function </span><span class="s1">remove(field) {</span>
+
+    <span class="s2">/* istanbul ignore if */</span>
+    <span class="s3">if </span><span class="s1">(!(field </span><span class="s3">instanceof </span><span class="s1">Field))</span>
+        <span class="s3">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;field must be a Field&quot;</span><span class="s1">);</span>
+
+    <span class="s3">var </span><span class="s1">index = </span><span class="s3">this</span><span class="s1">.fieldsArray.indexOf(field);</span>
+
+    <span class="s2">/* istanbul ignore if */</span>
+    <span class="s3">if </span><span class="s1">(index &lt; </span><span class="s4">0</span><span class="s1">)</span>
+        <span class="s3">throw </span><span class="s1">Error(field + </span><span class="s0">&quot; is not a member of &quot; </span><span class="s1">+ </span><span class="s3">this</span><span class="s1">);</span>
+
+    <span class="s3">this</span><span class="s1">.fieldsArray.splice(index, </span><span class="s4">1</span><span class="s1">);</span>
+    <span class="s1">index = </span><span class="s3">this</span><span class="s1">.oneof.indexOf(field.name);</span>
+
+    <span class="s2">/* istanbul ignore else */</span>
+    <span class="s3">if </span><span class="s1">(index &gt; -</span><span class="s4">1</span><span class="s1">) </span><span class="s2">// theoretical</span>
+        <span class="s3">this</span><span class="s1">.oneof.splice(index, </span><span class="s4">1</span><span class="s1">);</span>
+
+    <span class="s1">field.partOf = </span><span class="s3">null</span><span class="s1">;</span>
+    <span class="s3">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">OneOf.prototype.onAdd = </span><span class="s3">function </span><span class="s1">onAdd(parent) {</span>
+    <span class="s1">ReflectionObject.prototype.onAdd.call(</span><span class="s3">this</span><span class="s1">, parent);</span>
+    <span class="s3">var </span><span class="s1">self = </span><span class="s3">this</span><span class="s1">;</span>
+    <span class="s2">// Collect present fields</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; </span><span class="s3">this</span><span class="s1">.oneof.length; ++i) {</span>
+        <span class="s3">var </span><span class="s1">field = parent.get(</span><span class="s3">this</span><span class="s1">.oneof[i]);</span>
+        <span class="s3">if </span><span class="s1">(field &amp;&amp; !field.partOf) {</span>
+            <span class="s1">field.partOf = self;</span>
+            <span class="s1">self.fieldsArray.push(field);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">// Add not yet present fields</span>
+    <span class="s1">addFieldsToParent(</span><span class="s3">this</span><span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * @override 
+ */</span>
+<span class="s1">OneOf.prototype.onRemove = </span><span class="s3">function </span><span class="s1">onRemove(parent) {</span>
+    <span class="s3">for </span><span class="s1">(</span><span class="s3">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">, field; i &lt; </span><span class="s3">this</span><span class="s1">.fieldsArray.length; ++i)</span>
+        <span class="s3">if </span><span class="s1">((field = </span><span class="s3">this</span><span class="s1">.fieldsArray[i]).parent)</span>
+            <span class="s1">field.parent.remove(field);</span>
+    <span class="s1">ReflectionObject.prototype.onRemove.call(</span><span class="s3">this</span><span class="s1">, parent);</span>
+<span class="s1">};</span>
+
+<span class="s2">/** 
+ * Determines whether this field corresponds to a synthetic oneof created for 
+ * a proto3 optional field.  No behavioral logic should depend on this, but it 
+ * can be relevant for reflection. 
+ * @name OneOf#isProto3Optional 
+ * @type {boolean} 
+ * @readonly 
+ */</span>
+<span class="s1">Object.defineProperty(OneOf.prototype, </span><span class="s0">&quot;isProto3Optional&quot;</span><span class="s1">, {</span>
+    <span class="s1">get: </span><span class="s3">function</span><span class="s1">() {</span>
+        <span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.fieldsArray == </span><span class="s3">null </span><span class="s1">|| </span><span class="s3">this</span><span class="s1">.fieldsArray.length !== </span><span class="s4">1</span><span class="s1">) {</span>
+            <span class="s3">return false</span><span class="s1">;</span>
+        <span class="s1">}</span>
+
+        <span class="s3">var </span><span class="s1">field = </span><span class="s3">this</span><span class="s1">.fieldsArray[</span><span class="s4">0</span><span class="s1">];</span>
+        <span class="s3">return </span><span class="s1">field.options != </span><span class="s3">null </span><span class="s1">&amp;&amp; field.options[</span><span class="s0">&quot;proto3_optional&quot;</span><span class="s1">] === </span><span class="s3">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s2">/** 
+ * Decorator function as returned by {@link OneOf.d} (TypeScript). 
+ * @typedef OneOfDecorator 
+ * @type {function} 
+ * @param {Object} prototype Target prototype 
+ * @param {string} oneofName OneOf name 
+ * @returns {undefined} 
+ */</span>
+
+<span class="s2">/** 
+ * OneOf decorator (TypeScript). 
+ * @function 
+ * @param {...string} fieldNames Field names 
+ * @returns {OneOfDecorator} Decorator function 
+ * @template T extends string 
+ */</span>
+<span class="s1">OneOf.d = </span><span class="s3">function </span><span class="s1">decorateOneOf() {</span>
+    <span class="s3">var </span><span class="s1">fieldNames = </span><span class="s3">new </span><span class="s1">Array(arguments.length),</span>
+        <span class="s1">index = </span><span class="s4">0</span><span class="s1">;</span>
+    <span class="s3">while </span><span class="s1">(index &lt; arguments.length)</span>
+        <span class="s1">fieldNames[index] = arguments[index++];</span>
+    <span class="s3">return function </span><span class="s1">oneOfDecorator(prototype, oneofName) {</span>
+        <span class="s1">util.decorateType(prototype.constructor)</span>
+            <span class="s1">.add(</span><span class="s3">new </span><span class="s1">OneOf(oneofName, fieldNames));</span>
+        <span class="s1">Object.defineProperty(prototype, oneofName, {</span>
+            <span class="s1">get: util.oneOfGetter(fieldNames),</span>
+            <span class="s1">set: util.oneOfSetter(fieldNames)</span>
+        <span class="s1">});</span>
+    <span class="s1">};</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

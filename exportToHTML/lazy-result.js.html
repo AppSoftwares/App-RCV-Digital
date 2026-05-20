@@ -1,0 +1,584 @@
+<html>
+<head>
+<title>lazy-result.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+lazy-result.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span>
+
+<span class="s1">let Container = require(</span><span class="s0">'./container'</span><span class="s1">)</span>
+<span class="s1">let Document = require(</span><span class="s0">'./document'</span><span class="s1">)</span>
+<span class="s1">let MapGenerator = require(</span><span class="s0">'./map-generator'</span><span class="s1">)</span>
+<span class="s1">let parse = require(</span><span class="s0">'./parse'</span><span class="s1">)</span>
+<span class="s1">let Result = require(</span><span class="s0">'./result'</span><span class="s1">)</span>
+<span class="s1">let Root = require(</span><span class="s0">'./root'</span><span class="s1">)</span>
+<span class="s1">let stringify = require(</span><span class="s0">'./stringify'</span><span class="s1">)</span>
+<span class="s1">let { isClean, my } = require(</span><span class="s0">'./symbols'</span><span class="s1">)</span>
+<span class="s1">let warnOnce = require(</span><span class="s0">'./warn-once'</span><span class="s1">)</span>
+
+<span class="s1">const TYPE_TO_CLASS_NAME = {</span>
+  <span class="s1">atrule: </span><span class="s0">'AtRule'</span><span class="s1">,</span>
+  <span class="s1">comment: </span><span class="s0">'Comment'</span><span class="s1">,</span>
+  <span class="s1">decl: </span><span class="s0">'Declaration'</span><span class="s1">,</span>
+  <span class="s1">document: </span><span class="s0">'Document'</span><span class="s1">,</span>
+  <span class="s1">root: </span><span class="s0">'Root'</span><span class="s1">,</span>
+  <span class="s1">rule: </span><span class="s0">'Rule'</span>
+<span class="s1">}</span>
+
+<span class="s1">const PLUGIN_PROPS = {</span>
+  <span class="s1">AtRule: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">AtRuleExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Comment: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">CommentExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Declaration: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">DeclarationExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Document: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">DocumentExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Once: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">OnceExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">postcssPlugin: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">prepare: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Root: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">RootExit: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">Rule: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">RuleExit: </span><span class="s2">true</span>
+<span class="s1">}</span>
+
+<span class="s1">const NOT_VISITORS = {</span>
+  <span class="s1">Once: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">postcssPlugin: </span><span class="s2">true</span><span class="s1">,</span>
+  <span class="s1">prepare: </span><span class="s2">true</span>
+<span class="s1">}</span>
+
+<span class="s1">const CHILDREN = </span><span class="s3">0</span>
+
+<span class="s2">function </span><span class="s1">isPromise(obj) {</span>
+  <span class="s2">return typeof </span><span class="s1">obj === </span><span class="s0">'object' </span><span class="s1">&amp;&amp; </span><span class="s2">typeof </span><span class="s1">obj.then === </span><span class="s0">'function'</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">getEvents(node) {</span>
+  <span class="s1">let key = </span><span class="s2">false</span>
+  <span class="s1">let type = TYPE_TO_CLASS_NAME[node.type]</span>
+  <span class="s2">if </span><span class="s1">(node.type === </span><span class="s0">'decl'</span><span class="s1">) {</span>
+    <span class="s1">key = node.prop.toLowerCase()</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(node.type === </span><span class="s0">'atrule'</span><span class="s1">) {</span>
+    <span class="s1">key = node.name.toLowerCase()</span>
+  <span class="s1">}</span>
+
+  <span class="s2">if </span><span class="s1">(key &amp;&amp; node.append) {</span>
+    <span class="s2">return </span><span class="s1">[</span>
+      <span class="s1">type,</span>
+      <span class="s1">type + </span><span class="s0">'-' </span><span class="s1">+ key,</span>
+      <span class="s1">CHILDREN,</span>
+      <span class="s1">type + </span><span class="s0">'Exit'</span><span class="s1">,</span>
+      <span class="s1">type + </span><span class="s0">'Exit-' </span><span class="s1">+ key</span>
+    <span class="s1">]</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(key) {</span>
+    <span class="s2">return </span><span class="s1">[type, type + </span><span class="s0">'-' </span><span class="s1">+ key, type + </span><span class="s0">'Exit'</span><span class="s1">, type + </span><span class="s0">'Exit-' </span><span class="s1">+ key]</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(node.append) {</span>
+    <span class="s2">return </span><span class="s1">[type, CHILDREN, type + </span><span class="s0">'Exit'</span><span class="s1">]</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s2">return </span><span class="s1">[type, type + </span><span class="s0">'Exit'</span><span class="s1">]</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">toStack(node) {</span>
+  <span class="s1">let events</span>
+  <span class="s2">if </span><span class="s1">(node.type === </span><span class="s0">'document'</span><span class="s1">) {</span>
+    <span class="s1">events = [</span><span class="s0">'Document'</span><span class="s1">, CHILDREN, </span><span class="s0">'DocumentExit'</span><span class="s1">]</span>
+  <span class="s1">} </span><span class="s2">else if </span><span class="s1">(node.type === </span><span class="s0">'root'</span><span class="s1">) {</span>
+    <span class="s1">events = [</span><span class="s0">'Root'</span><span class="s1">, CHILDREN, </span><span class="s0">'RootExit'</span><span class="s1">]</span>
+  <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+    <span class="s1">events = getEvents(node)</span>
+  <span class="s1">}</span>
+
+  <span class="s2">return </span><span class="s1">{</span>
+    <span class="s1">eventIndex: </span><span class="s3">0</span><span class="s1">,</span>
+    <span class="s1">events,</span>
+    <span class="s1">iterator: </span><span class="s3">0</span><span class="s1">,</span>
+    <span class="s1">node,</span>
+    <span class="s1">visitorIndex: </span><span class="s3">0</span><span class="s1">,</span>
+    <span class="s1">visitors: []</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">cleanMarks(node) {</span>
+  <span class="s1">node[isClean] = </span><span class="s2">false</span>
+  <span class="s2">if </span><span class="s1">(node.nodes) node.nodes.forEach(i =&gt; cleanMarks(i))</span>
+  <span class="s2">return </span><span class="s1">node</span>
+<span class="s1">}</span>
+
+<span class="s1">let postcss = {}</span>
+
+<span class="s1">class LazyResult {</span>
+  <span class="s1">get content() {</span>
+    <span class="s2">return this</span><span class="s1">.stringify().content</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get css() {</span>
+    <span class="s2">return this</span><span class="s1">.stringify().css</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get map() {</span>
+    <span class="s2">return this</span><span class="s1">.stringify().map</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get messages() {</span>
+    <span class="s2">return this</span><span class="s1">.sync().messages</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get opts() {</span>
+    <span class="s2">return this</span><span class="s1">.result.opts</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get processor() {</span>
+    <span class="s2">return this</span><span class="s1">.result.processor</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get root() {</span>
+    <span class="s2">return this</span><span class="s1">.sync().root</span>
+  <span class="s1">}</span>
+
+  <span class="s1">get [Symbol.toStringTag]() {</span>
+    <span class="s2">return </span><span class="s0">'LazyResult'</span>
+  <span class="s1">}</span>
+
+  <span class="s1">constructor(processor, css, opts) {</span>
+    <span class="s2">this</span><span class="s1">.stringified = </span><span class="s2">false</span>
+    <span class="s2">this</span><span class="s1">.processed = </span><span class="s2">false</span>
+
+    <span class="s1">let root</span>
+    <span class="s2">if </span><span class="s1">(</span>
+      <span class="s2">typeof </span><span class="s1">css === </span><span class="s0">'object' </span><span class="s1">&amp;&amp;</span>
+      <span class="s1">css !== </span><span class="s2">null </span><span class="s1">&amp;&amp;</span>
+      <span class="s1">(css.type === </span><span class="s0">'root' </span><span class="s1">|| css.type === </span><span class="s0">'document'</span><span class="s1">)</span>
+    <span class="s1">) {</span>
+      <span class="s1">root = cleanMarks(css)</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(css </span><span class="s2">instanceof </span><span class="s1">LazyResult || css </span><span class="s2">instanceof </span><span class="s1">Result) {</span>
+      <span class="s1">root = cleanMarks(css.root)</span>
+      <span class="s2">if </span><span class="s1">(css.map) {</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">opts.map === </span><span class="s0">'undefined'</span><span class="s1">) opts.map = {}</span>
+        <span class="s2">if </span><span class="s1">(!opts.map.inline) opts.map.inline = </span><span class="s2">false</span>
+        <span class="s1">opts.map.prev = css.map</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">let parser = parse</span>
+      <span class="s2">if </span><span class="s1">(opts.syntax) parser = opts.syntax.parse</span>
+      <span class="s2">if </span><span class="s1">(opts.parser) parser = opts.parser</span>
+      <span class="s2">if </span><span class="s1">(parser.parse) parser = parser.parse</span>
+
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">root = parser(css, opts)</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(error) {</span>
+        <span class="s2">this</span><span class="s1">.processed = </span><span class="s2">true</span>
+        <span class="s2">this</span><span class="s1">.error = error</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(root &amp;&amp; !root[my]) {</span>
+        <span class="s4">/* c8 ignore next 2 */</span>
+        <span class="s1">Container.rebuild(root)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.result = </span><span class="s2">new </span><span class="s1">Result(processor, root, opts)</span>
+    <span class="s2">this</span><span class="s1">.helpers = { ...postcss, postcss, result: </span><span class="s2">this</span><span class="s1">.result }</span>
+    <span class="s2">this</span><span class="s1">.plugins = </span><span class="s2">this</span><span class="s1">.processor.plugins.map(plugin =&gt; {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin === </span><span class="s0">'object' </span><span class="s1">&amp;&amp; plugin.prepare) {</span>
+        <span class="s2">return </span><span class="s1">{ ...plugin, ...plugin.prepare(</span><span class="s2">this</span><span class="s1">.result) }</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s2">return </span><span class="s1">plugin</span>
+      <span class="s1">}</span>
+    <span class="s1">})</span>
+  <span class="s1">}</span>
+
+  <span class="s1">async() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.error) </span><span class="s2">return </span><span class="s1">Promise.reject(</span><span class="s2">this</span><span class="s1">.error)</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.processed) </span><span class="s2">return </span><span class="s1">Promise.resolve(</span><span class="s2">this</span><span class="s1">.result)</span>
+    <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.processing) {</span>
+      <span class="s2">this</span><span class="s1">.processing = </span><span class="s2">this</span><span class="s1">.runAsync()</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.processing</span>
+  <span class="s1">}</span>
+
+  <span class="s2">catch</span><span class="s1">(onRejected) {</span>
+    <span class="s2">return this</span><span class="s1">.async().</span><span class="s2">catch</span><span class="s1">(onRejected)</span>
+  <span class="s1">}</span>
+
+  <span class="s2">finally</span><span class="s1">(onFinally) {</span>
+    <span class="s2">return this</span><span class="s1">.async().then(onFinally, onFinally)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">getAsyncError() {</span>
+    <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">'Use process(css).then(cb) to work with async plugins'</span><span class="s1">)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">handleError(error, node) {</span>
+    <span class="s1">let plugin = </span><span class="s2">this</span><span class="s1">.result.lastPlugin</span>
+    <span class="s2">try </span><span class="s1">{</span>
+      <span class="s2">if </span><span class="s1">(node) node.addToError(error)</span>
+      <span class="s2">this</span><span class="s1">.error = error</span>
+      <span class="s2">if </span><span class="s1">(error.name === </span><span class="s0">'CssSyntaxError' </span><span class="s1">&amp;&amp; !error.plugin) {</span>
+        <span class="s1">error.plugin = plugin.postcssPlugin</span>
+        <span class="s1">error.setMessage()</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(plugin.postcssVersion) {</span>
+        <span class="s2">if </span><span class="s1">(process.env.NODE_ENV !== </span><span class="s0">'production'</span><span class="s1">) {</span>
+          <span class="s1">let pluginName = plugin.postcssPlugin</span>
+          <span class="s1">let pluginVer = plugin.postcssVersion</span>
+          <span class="s1">let runtimeVer = </span><span class="s2">this</span><span class="s1">.result.processor.version</span>
+          <span class="s1">let a = pluginVer.split(</span><span class="s0">'.'</span><span class="s1">)</span>
+          <span class="s1">let b = runtimeVer.split(</span><span class="s0">'.'</span><span class="s1">)</span>
+
+          <span class="s2">if </span><span class="s1">(a[</span><span class="s3">0</span><span class="s1">] !== b[</span><span class="s3">0</span><span class="s1">] || parseInt(a[</span><span class="s3">1</span><span class="s1">]) &gt; parseInt(b[</span><span class="s3">1</span><span class="s1">])) {</span>
+            <span class="s4">// eslint-disable-next-line no-console</span>
+            <span class="s1">console.error(</span>
+              <span class="s0">'Unknown error from PostCSS plugin. Your current PostCSS ' </span><span class="s1">+</span>
+                <span class="s0">'version is ' </span><span class="s1">+</span>
+                <span class="s1">runtimeVer +</span>
+                <span class="s0">', but ' </span><span class="s1">+</span>
+                <span class="s1">pluginName +</span>
+                <span class="s0">' uses ' </span><span class="s1">+</span>
+                <span class="s1">pluginVer +</span>
+                <span class="s0">'. Perhaps this is the source of the error below.'</span>
+            <span class="s1">)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+      <span class="s4">/* c8 ignore next 3 */</span>
+      <span class="s4">// eslint-disable-next-line no-console</span>
+      <span class="s2">if </span><span class="s1">(console &amp;&amp; console.error) console.error(err)</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">error</span>
+  <span class="s1">}</span>
+
+  <span class="s1">prepareVisitors() {</span>
+    <span class="s2">this</span><span class="s1">.listeners = {}</span>
+    <span class="s1">let add = (plugin, type, cb) =&gt; {</span>
+      <span class="s2">if </span><span class="s1">(!</span><span class="s2">this</span><span class="s1">.listeners[type]) </span><span class="s2">this</span><span class="s1">.listeners[type] = []</span>
+      <span class="s2">this</span><span class="s1">.listeners[type].push([plugin, cb])</span>
+    <span class="s1">}</span>
+    <span class="s2">for </span><span class="s1">(let plugin of </span><span class="s2">this</span><span class="s1">.plugins) {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin === </span><span class="s0">'object'</span><span class="s1">) {</span>
+        <span class="s2">for </span><span class="s1">(let event </span><span class="s2">in </span><span class="s1">plugin) {</span>
+          <span class="s2">if </span><span class="s1">(!PLUGIN_PROPS[event] &amp;&amp; /^[A-Z]/.test(event)) {</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span>
+              <span class="s1">`Unknown event ${event} </span><span class="s2">in </span><span class="s1">${plugin.postcssPlugin}. ` +</span>
+                <span class="s1">`Try to update PostCSS (${</span><span class="s2">this</span><span class="s1">.processor.version} now).`</span>
+            <span class="s1">)</span>
+          <span class="s1">}</span>
+          <span class="s2">if </span><span class="s1">(!NOT_VISITORS[event]) {</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin[event] === </span><span class="s0">'object'</span><span class="s1">) {</span>
+              <span class="s2">for </span><span class="s1">(let filter </span><span class="s2">in </span><span class="s1">plugin[event]) {</span>
+                <span class="s2">if </span><span class="s1">(filter === </span><span class="s0">'*'</span><span class="s1">) {</span>
+                  <span class="s1">add(plugin, event, plugin[event][filter])</span>
+                <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                  <span class="s1">add(</span>
+                    <span class="s1">plugin,</span>
+                    <span class="s1">event + </span><span class="s0">'-' </span><span class="s1">+ filter.toLowerCase(),</span>
+                    <span class="s1">plugin[event][filter]</span>
+                  <span class="s1">)</span>
+                <span class="s1">}</span>
+              <span class="s1">}</span>
+            <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin[event] === </span><span class="s0">'function'</span><span class="s1">) {</span>
+              <span class="s1">add(plugin, event, plugin[event])</span>
+            <span class="s1">}</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">.hasListener = Object.keys(</span><span class="s2">this</span><span class="s1">.listeners).length &gt; </span><span class="s3">0</span>
+  <span class="s1">}</span>
+
+  <span class="s1">async runAsync() {</span>
+    <span class="s2">this</span><span class="s1">.plugin = </span><span class="s3">0</span>
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s3">0</span><span class="s1">; i &lt; </span><span class="s2">this</span><span class="s1">.plugins.length; i++) {</span>
+      <span class="s1">let plugin = </span><span class="s2">this</span><span class="s1">.plugins[i]</span>
+      <span class="s1">let promise = </span><span class="s2">this</span><span class="s1">.runOnRoot(plugin)</span>
+      <span class="s2">if </span><span class="s1">(isPromise(promise)) {</span>
+        <span class="s2">try </span><span class="s1">{</span>
+          <span class="s1">await promise</span>
+        <span class="s1">} </span><span class="s2">catch </span><span class="s1">(error) {</span>
+          <span class="s2">throw this</span><span class="s1">.handleError(error)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.prepareVisitors()</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.hasListener) {</span>
+      <span class="s1">let root = </span><span class="s2">this</span><span class="s1">.result.root</span>
+      <span class="s2">while </span><span class="s1">(!root[isClean]) {</span>
+        <span class="s1">root[isClean] = </span><span class="s2">true</span>
+        <span class="s1">let stack = [toStack(root)]</span>
+        <span class="s2">while </span><span class="s1">(stack.length &gt; </span><span class="s3">0</span><span class="s1">) {</span>
+          <span class="s1">let promise = </span><span class="s2">this</span><span class="s1">.visitTick(stack)</span>
+          <span class="s2">if </span><span class="s1">(isPromise(promise)) {</span>
+            <span class="s2">try </span><span class="s1">{</span>
+              <span class="s1">await promise</span>
+            <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+              <span class="s1">let node = stack[stack.length - </span><span class="s3">1</span><span class="s1">].node</span>
+              <span class="s2">throw this</span><span class="s1">.handleError(e, node)</span>
+            <span class="s1">}</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.listeners.OnceExit) {</span>
+        <span class="s2">for </span><span class="s1">(let [plugin, visitor] of </span><span class="s2">this</span><span class="s1">.listeners.OnceExit) {</span>
+          <span class="s2">this</span><span class="s1">.result.lastPlugin = plugin</span>
+          <span class="s2">try </span><span class="s1">{</span>
+            <span class="s2">if </span><span class="s1">(root.type === </span><span class="s0">'document'</span><span class="s1">) {</span>
+              <span class="s1">let roots = root.nodes.map(subRoot =&gt;</span>
+                <span class="s1">visitor(subRoot, </span><span class="s2">this</span><span class="s1">.helpers)</span>
+              <span class="s1">)</span>
+
+              <span class="s1">await Promise.all(roots)</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+              <span class="s1">await visitor(root, </span><span class="s2">this</span><span class="s1">.helpers)</span>
+            <span class="s1">}</span>
+          <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+            <span class="s2">throw this</span><span class="s1">.handleError(e)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.processed = </span><span class="s2">true</span>
+    <span class="s2">return this</span><span class="s1">.stringify()</span>
+  <span class="s1">}</span>
+
+  <span class="s1">runOnRoot(plugin) {</span>
+    <span class="s2">this</span><span class="s1">.result.lastPlugin = plugin</span>
+    <span class="s2">try </span><span class="s1">{</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin === </span><span class="s0">'object' </span><span class="s1">&amp;&amp; plugin.Once) {</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.result.root.type === </span><span class="s0">'document'</span><span class="s1">) {</span>
+          <span class="s1">let roots = </span><span class="s2">this</span><span class="s1">.result.root.nodes.map(root =&gt;</span>
+            <span class="s1">plugin.Once(root, </span><span class="s2">this</span><span class="s1">.helpers)</span>
+          <span class="s1">)</span>
+
+          <span class="s2">if </span><span class="s1">(isPromise(roots[</span><span class="s3">0</span><span class="s1">])) {</span>
+            <span class="s2">return </span><span class="s1">Promise.all(roots)</span>
+          <span class="s1">}</span>
+
+          <span class="s2">return </span><span class="s1">roots</span>
+        <span class="s1">}</span>
+
+        <span class="s2">return </span><span class="s1">plugin.Once(</span><span class="s2">this</span><span class="s1">.result.root, </span><span class="s2">this</span><span class="s1">.helpers)</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">plugin === </span><span class="s0">'function'</span><span class="s1">) {</span>
+        <span class="s2">return </span><span class="s1">plugin(</span><span class="s2">this</span><span class="s1">.result.root, </span><span class="s2">this</span><span class="s1">.result)</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(error) {</span>
+      <span class="s2">throw this</span><span class="s1">.handleError(error)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">stringify() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.error) </span><span class="s2">throw this</span><span class="s1">.error</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.stringified) </span><span class="s2">return this</span><span class="s1">.result</span>
+    <span class="s2">this</span><span class="s1">.stringified = </span><span class="s2">true</span>
+
+    <span class="s2">this</span><span class="s1">.sync()</span>
+
+    <span class="s1">let opts = </span><span class="s2">this</span><span class="s1">.result.opts</span>
+    <span class="s1">let str = stringify</span>
+    <span class="s2">if </span><span class="s1">(opts.syntax) str = opts.syntax.stringify</span>
+    <span class="s2">if </span><span class="s1">(opts.stringifier) str = opts.stringifier</span>
+    <span class="s2">if </span><span class="s1">(str.stringify) str = str.stringify</span>
+
+    <span class="s1">let rootSource = </span><span class="s2">this</span><span class="s1">.result.root.source</span>
+    <span class="s2">if </span><span class="s1">(</span>
+      <span class="s1">opts.map === undefined &amp;&amp;</span>
+      <span class="s1">!(rootSource &amp;&amp; rootSource.input &amp;&amp; rootSource.input.map)</span>
+    <span class="s1">) {</span>
+      <span class="s1">let result = </span><span class="s0">''</span>
+      <span class="s1">str(</span><span class="s2">this</span><span class="s1">.result.root, i =&gt; {</span>
+        <span class="s1">result += i</span>
+      <span class="s1">})</span>
+      <span class="s2">this</span><span class="s1">.result.css = result</span>
+      <span class="s2">return this</span><span class="s1">.result</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let map = </span><span class="s2">new </span><span class="s1">MapGenerator(str, </span><span class="s2">this</span><span class="s1">.result.root, </span><span class="s2">this</span><span class="s1">.result.opts)</span>
+    <span class="s1">let data = map.generate()</span>
+    <span class="s2">this</span><span class="s1">.result.css = data[</span><span class="s3">0</span><span class="s1">]</span>
+    <span class="s2">this</span><span class="s1">.result.map = data[</span><span class="s3">1</span><span class="s1">]</span>
+
+    <span class="s2">return this</span><span class="s1">.result</span>
+  <span class="s1">}</span>
+
+  <span class="s1">sync() {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.error) </span><span class="s2">throw this</span><span class="s1">.error</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.processed) </span><span class="s2">return this</span><span class="s1">.result</span>
+    <span class="s2">this</span><span class="s1">.processed = </span><span class="s2">true</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.processing) {</span>
+      <span class="s2">throw this</span><span class="s1">.getAsyncError()</span>
+    <span class="s1">}</span>
+
+    <span class="s2">for </span><span class="s1">(let plugin of </span><span class="s2">this</span><span class="s1">.plugins) {</span>
+      <span class="s1">let promise = </span><span class="s2">this</span><span class="s1">.runOnRoot(plugin)</span>
+      <span class="s2">if </span><span class="s1">(isPromise(promise)) {</span>
+        <span class="s2">throw this</span><span class="s1">.getAsyncError()</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">this</span><span class="s1">.prepareVisitors()</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.hasListener) {</span>
+      <span class="s1">let root = </span><span class="s2">this</span><span class="s1">.result.root</span>
+      <span class="s2">while </span><span class="s1">(!root[isClean]) {</span>
+        <span class="s1">root[isClean] = </span><span class="s2">true</span>
+        <span class="s2">this</span><span class="s1">.walkSync(root)</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.listeners.OnceExit) {</span>
+        <span class="s2">if </span><span class="s1">(root.type === </span><span class="s0">'document'</span><span class="s1">) {</span>
+          <span class="s2">for </span><span class="s1">(let subRoot of root.nodes) {</span>
+            <span class="s2">this</span><span class="s1">.visitSync(</span><span class="s2">this</span><span class="s1">.listeners.OnceExit, subRoot)</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+          <span class="s2">this</span><span class="s1">.visitSync(</span><span class="s2">this</span><span class="s1">.listeners.OnceExit, root)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return this</span><span class="s1">.result</span>
+  <span class="s1">}</span>
+
+  <span class="s1">then(onFulfilled, onRejected) {</span>
+    <span class="s2">if </span><span class="s1">(process.env.NODE_ENV !== </span><span class="s0">'production'</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(!(</span><span class="s0">'from' </span><span class="s2">in this</span><span class="s1">.opts)) {</span>
+        <span class="s1">warnOnce(</span>
+          <span class="s0">'Without `from` option PostCSS could generate wrong source map ' </span><span class="s1">+</span>
+            <span class="s0">'and will not find Browserslist config. Set it to CSS file path ' </span><span class="s1">+</span>
+            <span class="s0">'or to `undefined` to prevent this warning.'</span>
+        <span class="s1">)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">.async().then(onFulfilled, onRejected)</span>
+  <span class="s1">}</span>
+
+  <span class="s1">toString() {</span>
+    <span class="s2">return this</span><span class="s1">.css</span>
+  <span class="s1">}</span>
+
+  <span class="s1">visitSync(visitors, node) {</span>
+    <span class="s2">for </span><span class="s1">(let [plugin, visitor] of visitors) {</span>
+      <span class="s2">this</span><span class="s1">.result.lastPlugin = plugin</span>
+      <span class="s1">let promise</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s1">promise = visitor(node, </span><span class="s2">this</span><span class="s1">.helpers)</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+        <span class="s2">throw this</span><span class="s1">.handleError(e, node.proxyOf)</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(node.type !== </span><span class="s0">'root' </span><span class="s1">&amp;&amp; node.type !== </span><span class="s0">'document' </span><span class="s1">&amp;&amp; !node.parent) {</span>
+        <span class="s2">return true</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(isPromise(promise)) {</span>
+        <span class="s2">throw this</span><span class="s1">.getAsyncError()</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">visitTick(stack) {</span>
+    <span class="s1">let visit = stack[stack.length - </span><span class="s3">1</span><span class="s1">]</span>
+    <span class="s1">let { node, visitors } = visit</span>
+
+    <span class="s2">if </span><span class="s1">(node.type !== </span><span class="s0">'root' </span><span class="s1">&amp;&amp; node.type !== </span><span class="s0">'document' </span><span class="s1">&amp;&amp; !node.parent) {</span>
+      <span class="s1">stack.pop()</span>
+      <span class="s2">return</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(visitors.length &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; visit.visitorIndex &lt; visitors.length) {</span>
+      <span class="s1">let [plugin, visitor] = visitors[visit.visitorIndex]</span>
+      <span class="s1">visit.visitorIndex += </span><span class="s3">1</span>
+      <span class="s2">if </span><span class="s1">(visit.visitorIndex === visitors.length) {</span>
+        <span class="s1">visit.visitors = []</span>
+        <span class="s1">visit.visitorIndex = </span><span class="s3">0</span>
+      <span class="s1">}</span>
+      <span class="s2">this</span><span class="s1">.result.lastPlugin = plugin</span>
+      <span class="s2">try </span><span class="s1">{</span>
+        <span class="s2">return </span><span class="s1">visitor(node.toProxy(), </span><span class="s2">this</span><span class="s1">.helpers)</span>
+      <span class="s1">} </span><span class="s2">catch </span><span class="s1">(e) {</span>
+        <span class="s2">throw this</span><span class="s1">.handleError(e, node)</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s2">if </span><span class="s1">(visit.iterator !== </span><span class="s3">0</span><span class="s1">) {</span>
+      <span class="s1">let iterator = visit.iterator</span>
+      <span class="s1">let child</span>
+      <span class="s2">while </span><span class="s1">((child = node.nodes[node.indexes[iterator]])) {</span>
+        <span class="s1">node.indexes[iterator] += </span><span class="s3">1</span>
+        <span class="s2">if </span><span class="s1">(!child[isClean]) {</span>
+          <span class="s1">child[isClean] = </span><span class="s2">true</span>
+          <span class="s1">stack.push(toStack(child))</span>
+          <span class="s2">return</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s1">visit.iterator = </span><span class="s3">0</span>
+      <span class="s2">delete </span><span class="s1">node.indexes[iterator]</span>
+    <span class="s1">}</span>
+
+    <span class="s1">let events = visit.events</span>
+    <span class="s2">while </span><span class="s1">(visit.eventIndex &lt; events.length) {</span>
+      <span class="s1">let event = events[visit.eventIndex]</span>
+      <span class="s1">visit.eventIndex += </span><span class="s3">1</span>
+      <span class="s2">if </span><span class="s1">(event === CHILDREN) {</span>
+        <span class="s2">if </span><span class="s1">(node.nodes &amp;&amp; node.nodes.length) {</span>
+          <span class="s1">node[isClean] = </span><span class="s2">true</span>
+          <span class="s1">visit.iterator = node.getIterator()</span>
+        <span class="s1">}</span>
+        <span class="s2">return</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.listeners[event]) {</span>
+        <span class="s1">visit.visitors = </span><span class="s2">this</span><span class="s1">.listeners[event]</span>
+        <span class="s2">return</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">stack.pop()</span>
+  <span class="s1">}</span>
+
+  <span class="s1">walkSync(node) {</span>
+    <span class="s1">node[isClean] = </span><span class="s2">true</span>
+    <span class="s1">let events = getEvents(node)</span>
+    <span class="s2">for </span><span class="s1">(let event of events) {</span>
+      <span class="s2">if </span><span class="s1">(event === CHILDREN) {</span>
+        <span class="s2">if </span><span class="s1">(node.nodes) {</span>
+          <span class="s1">node.each(child =&gt; {</span>
+            <span class="s2">if </span><span class="s1">(!child[isClean]) </span><span class="s2">this</span><span class="s1">.walkSync(child)</span>
+          <span class="s1">})</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">let visitors = </span><span class="s2">this</span><span class="s1">.listeners[event]</span>
+        <span class="s2">if </span><span class="s1">(visitors) {</span>
+          <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.visitSync(visitors, node.toProxy())) </span><span class="s2">return</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s1">warnings() {</span>
+    <span class="s2">return this</span><span class="s1">.sync().warnings()</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">LazyResult.registerPostcss = dependant =&gt; {</span>
+  <span class="s1">postcss = dependant</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = LazyResult</span>
+<span class="s1">LazyResult.</span><span class="s2">default </span><span class="s1">= LazyResult</span>
+
+<span class="s1">Root.registerLazyResult(LazyResult)</span>
+<span class="s1">Document.registerLazyResult(LazyResult)</span>
+</pre>
+</body>
+</html>

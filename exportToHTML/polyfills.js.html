@@ -1,0 +1,376 @@
+<html>
+<head>
+<title>polyfills.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+polyfills.js</font>
+</center></td></tr></table>
+<pre><span class="s0">var </span><span class="s1">constants = require(</span><span class="s2">'constants'</span><span class="s1">)</span>
+
+<span class="s0">var </span><span class="s1">origCwd = process.cwd</span>
+<span class="s0">var </span><span class="s1">cwd = </span><span class="s0">null</span>
+
+<span class="s0">var </span><span class="s1">platform = process.env.GRACEFUL_FS_PLATFORM || process.platform</span>
+
+<span class="s1">process.cwd = </span><span class="s0">function</span><span class="s1">() {</span>
+  <span class="s0">if </span><span class="s1">(!cwd)</span>
+    <span class="s1">cwd = origCwd.call(process)</span>
+  <span class="s0">return </span><span class="s1">cwd</span>
+<span class="s1">}</span>
+<span class="s0">try </span><span class="s1">{</span>
+  <span class="s1">process.cwd()</span>
+<span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {}</span>
+
+<span class="s3">// This check is needed until node.js 12 is required</span>
+<span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">process.chdir === </span><span class="s2">'function'</span><span class="s1">) {</span>
+  <span class="s0">var </span><span class="s1">chdir = process.chdir</span>
+  <span class="s1">process.chdir = </span><span class="s0">function </span><span class="s1">(d) {</span>
+    <span class="s1">cwd = </span><span class="s0">null</span>
+    <span class="s1">chdir.call(process, d)</span>
+  <span class="s1">}</span>
+  <span class="s0">if </span><span class="s1">(Object.setPrototypeOf) Object.setPrototypeOf(process.chdir, chdir)</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = patch</span>
+
+<span class="s0">function </span><span class="s1">patch (fs) {</span>
+  <span class="s3">// (re-)implement some things that are known busted or missing.</span>
+
+  <span class="s3">// lchmod, broken prior to 0.6.2</span>
+  <span class="s3">// back-port the fix here.</span>
+  <span class="s0">if </span><span class="s1">(constants.hasOwnProperty(</span><span class="s2">'O_SYMLINK'</span><span class="s1">) &amp;&amp;</span>
+      <span class="s1">process.version.match(/^v0\.</span><span class="s4">6</span><span class="s1">\.[</span><span class="s4">0</span><span class="s1">-</span><span class="s4">2</span><span class="s1">]|^v0\.</span><span class="s4">5</span><span class="s1">\./)) {</span>
+    <span class="s1">patchLchmod(fs)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// lutimes implementation, or no-op</span>
+  <span class="s0">if </span><span class="s1">(!fs.lutimes) {</span>
+    <span class="s1">patchLutimes(fs)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// https://github.com/isaacs/node-graceful-fs/issues/4</span>
+  <span class="s3">// Chown should not fail on einval or eperm if non-root.</span>
+  <span class="s3">// It should not fail on enosys ever, as this just indicates</span>
+  <span class="s3">// that a fs doesn't support the intended operation.</span>
+
+  <span class="s1">fs.chown = chownFix(fs.chown)</span>
+  <span class="s1">fs.fchown = chownFix(fs.fchown)</span>
+  <span class="s1">fs.lchown = chownFix(fs.lchown)</span>
+
+  <span class="s1">fs.chmod = chmodFix(fs.chmod)</span>
+  <span class="s1">fs.fchmod = chmodFix(fs.fchmod)</span>
+  <span class="s1">fs.lchmod = chmodFix(fs.lchmod)</span>
+
+  <span class="s1">fs.chownSync = chownFixSync(fs.chownSync)</span>
+  <span class="s1">fs.fchownSync = chownFixSync(fs.fchownSync)</span>
+  <span class="s1">fs.lchownSync = chownFixSync(fs.lchownSync)</span>
+
+  <span class="s1">fs.chmodSync = chmodFixSync(fs.chmodSync)</span>
+  <span class="s1">fs.fchmodSync = chmodFixSync(fs.fchmodSync)</span>
+  <span class="s1">fs.lchmodSync = chmodFixSync(fs.lchmodSync)</span>
+
+  <span class="s1">fs.stat = statFix(fs.stat)</span>
+  <span class="s1">fs.fstat = statFix(fs.fstat)</span>
+  <span class="s1">fs.lstat = statFix(fs.lstat)</span>
+
+  <span class="s1">fs.statSync = statFixSync(fs.statSync)</span>
+  <span class="s1">fs.fstatSync = statFixSync(fs.fstatSync)</span>
+  <span class="s1">fs.lstatSync = statFixSync(fs.lstatSync)</span>
+
+  <span class="s3">// if lchmod/lchown do not exist, then make them no-ops</span>
+  <span class="s0">if </span><span class="s1">(fs.chmod &amp;&amp; !fs.lchmod) {</span>
+    <span class="s1">fs.lchmod = </span><span class="s0">function </span><span class="s1">(path, mode, cb) {</span>
+      <span class="s0">if </span><span class="s1">(cb) process.nextTick(cb)</span>
+    <span class="s1">}</span>
+    <span class="s1">fs.lchmodSync = </span><span class="s0">function </span><span class="s1">() {}</span>
+  <span class="s1">}</span>
+  <span class="s0">if </span><span class="s1">(fs.chown &amp;&amp; !fs.lchown) {</span>
+    <span class="s1">fs.lchown = </span><span class="s0">function </span><span class="s1">(path, uid, gid, cb) {</span>
+      <span class="s0">if </span><span class="s1">(cb) process.nextTick(cb)</span>
+    <span class="s1">}</span>
+    <span class="s1">fs.lchownSync = </span><span class="s0">function </span><span class="s1">() {}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// on Windows, A/V software can lock the directory, causing this</span>
+  <span class="s3">// to fail with an EACCES or EPERM if the directory contains newly</span>
+  <span class="s3">// created files.  Try again on failure, for up to 60 seconds.</span>
+
+  <span class="s3">// Set the timeout this long because some Windows Anti-Virus, such as Parity</span>
+  <span class="s3">// bit9, may lock files for up to a minute, causing npm package install</span>
+  <span class="s3">// failures. Also, take care to yield the scheduler. Windows scheduling gives</span>
+  <span class="s3">// CPU to a busy looping process, which can cause the program causing the lock</span>
+  <span class="s3">// contention to be starved of CPU by node, so the contention doesn't resolve.</span>
+  <span class="s0">if </span><span class="s1">(platform === </span><span class="s2">&quot;win32&quot;</span><span class="s1">) {</span>
+    <span class="s1">fs.rename = </span><span class="s0">typeof </span><span class="s1">fs.rename !== </span><span class="s2">'function' </span><span class="s1">? fs.rename</span>
+    <span class="s1">: (</span><span class="s0">function </span><span class="s1">(fs$rename) {</span>
+      <span class="s0">function </span><span class="s1">rename (from, to, cb) {</span>
+        <span class="s0">var </span><span class="s1">start = Date.now()</span>
+        <span class="s0">var </span><span class="s1">backoff = </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s1">fs$rename(from, to, </span><span class="s0">function </span><span class="s1">CB (er) {</span>
+          <span class="s0">if </span><span class="s1">(er</span>
+              <span class="s1">&amp;&amp; (er.code === </span><span class="s2">&quot;EACCES&quot; </span><span class="s1">|| er.code === </span><span class="s2">&quot;EPERM&quot; </span><span class="s1">|| er.code === </span><span class="s2">&quot;EBUSY&quot;</span><span class="s1">)</span>
+              <span class="s1">&amp;&amp; Date.now() - start &lt; </span><span class="s4">60000</span><span class="s1">) {</span>
+            <span class="s1">setTimeout(</span><span class="s0">function</span><span class="s1">() {</span>
+              <span class="s1">fs.stat(to, </span><span class="s0">function </span><span class="s1">(stater, st) {</span>
+                <span class="s0">if </span><span class="s1">(stater &amp;&amp; stater.code === </span><span class="s2">&quot;ENOENT&quot;</span><span class="s1">)</span>
+                  <span class="s1">fs$rename(from, to, CB);</span>
+                <span class="s0">else</span>
+                  <span class="s1">cb(er)</span>
+              <span class="s1">})</span>
+            <span class="s1">}, backoff)</span>
+            <span class="s0">if </span><span class="s1">(backoff &lt; </span><span class="s4">100</span><span class="s1">)</span>
+              <span class="s1">backoff += </span><span class="s4">10</span><span class="s1">;</span>
+            <span class="s0">return</span><span class="s1">;</span>
+          <span class="s1">}</span>
+          <span class="s0">if </span><span class="s1">(cb) cb(er)</span>
+        <span class="s1">})</span>
+      <span class="s1">}</span>
+      <span class="s0">if </span><span class="s1">(Object.setPrototypeOf) Object.setPrototypeOf(rename, fs$rename)</span>
+      <span class="s0">return </span><span class="s1">rename</span>
+    <span class="s1">})(fs.rename)</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// if read() returns EAGAIN, then just try it again.</span>
+  <span class="s1">fs.read = </span><span class="s0">typeof </span><span class="s1">fs.read !== </span><span class="s2">'function' </span><span class="s1">? fs.read</span>
+  <span class="s1">: (</span><span class="s0">function </span><span class="s1">(fs$read) {</span>
+    <span class="s0">function </span><span class="s1">read (fd, buffer, offset, length, position, callback_) {</span>
+      <span class="s0">var </span><span class="s1">callback</span>
+      <span class="s0">if </span><span class="s1">(callback_ &amp;&amp; </span><span class="s0">typeof </span><span class="s1">callback_ === </span><span class="s2">'function'</span><span class="s1">) {</span>
+        <span class="s0">var </span><span class="s1">eagCounter = </span><span class="s4">0</span>
+        <span class="s1">callback = </span><span class="s0">function </span><span class="s1">(er, _, __) {</span>
+          <span class="s0">if </span><span class="s1">(er &amp;&amp; er.code === </span><span class="s2">'EAGAIN' </span><span class="s1">&amp;&amp; eagCounter &lt; </span><span class="s4">10</span><span class="s1">) {</span>
+            <span class="s1">eagCounter ++</span>
+            <span class="s0">return </span><span class="s1">fs$read.call(fs, fd, buffer, offset, length, position, callback)</span>
+          <span class="s1">}</span>
+          <span class="s1">callback_.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s0">return </span><span class="s1">fs$read.call(fs, fd, buffer, offset, length, position, callback)</span>
+    <span class="s1">}</span>
+
+    <span class="s3">// This ensures `util.promisify` works as it does for native `fs.read`.</span>
+    <span class="s0">if </span><span class="s1">(Object.setPrototypeOf) Object.setPrototypeOf(read, fs$read)</span>
+    <span class="s0">return </span><span class="s1">read</span>
+  <span class="s1">})(fs.read)</span>
+
+  <span class="s1">fs.readSync = </span><span class="s0">typeof </span><span class="s1">fs.readSync !== </span><span class="s2">'function' </span><span class="s1">? fs.readSync</span>
+  <span class="s1">: (</span><span class="s0">function </span><span class="s1">(fs$readSync) { </span><span class="s0">return function </span><span class="s1">(fd, buffer, offset, length, position) {</span>
+    <span class="s0">var </span><span class="s1">eagCounter = </span><span class="s4">0</span>
+    <span class="s0">while </span><span class="s1">(</span><span class="s0">true</span><span class="s1">) {</span>
+      <span class="s0">try </span><span class="s1">{</span>
+        <span class="s0">return </span><span class="s1">fs$readSync.call(fs, fd, buffer, offset, length, position)</span>
+      <span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {</span>
+        <span class="s0">if </span><span class="s1">(er.code === </span><span class="s2">'EAGAIN' </span><span class="s1">&amp;&amp; eagCounter &lt; </span><span class="s4">10</span><span class="s1">) {</span>
+          <span class="s1">eagCounter ++</span>
+          <span class="s0">continue</span>
+        <span class="s1">}</span>
+        <span class="s0">throw </span><span class="s1">er</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}})(fs.readSync)</span>
+
+  <span class="s0">function </span><span class="s1">patchLchmod (fs) {</span>
+    <span class="s1">fs.lchmod = </span><span class="s0">function </span><span class="s1">(path, mode, callback) {</span>
+      <span class="s1">fs.open( path</span>
+             <span class="s1">, constants.O_WRONLY | constants.O_SYMLINK</span>
+             <span class="s1">, mode</span>
+             <span class="s1">, </span><span class="s0">function </span><span class="s1">(err, fd) {</span>
+        <span class="s0">if </span><span class="s1">(err) {</span>
+          <span class="s0">if </span><span class="s1">(callback) callback(err)</span>
+          <span class="s0">return</span>
+        <span class="s1">}</span>
+        <span class="s3">// prefer to return the chmod error, if one occurs,</span>
+        <span class="s3">// but still try to close, and report closing errors if they occur.</span>
+        <span class="s1">fs.fchmod(fd, mode, </span><span class="s0">function </span><span class="s1">(err) {</span>
+          <span class="s1">fs.close(fd, </span><span class="s0">function</span><span class="s1">(err2) {</span>
+            <span class="s0">if </span><span class="s1">(callback) callback(err || err2)</span>
+          <span class="s1">})</span>
+        <span class="s1">})</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+
+    <span class="s1">fs.lchmodSync = </span><span class="s0">function </span><span class="s1">(path, mode) {</span>
+      <span class="s0">var </span><span class="s1">fd = fs.openSync(path, constants.O_WRONLY | constants.O_SYMLINK, mode)</span>
+
+      <span class="s3">// prefer to return the chmod error, if one occurs,</span>
+      <span class="s3">// but still try to close, and report closing errors if they occur.</span>
+      <span class="s0">var </span><span class="s1">threw = </span><span class="s0">true</span>
+      <span class="s0">var </span><span class="s1">ret</span>
+      <span class="s0">try </span><span class="s1">{</span>
+        <span class="s1">ret = fs.fchmodSync(fd, mode)</span>
+        <span class="s1">threw = </span><span class="s0">false</span>
+      <span class="s1">} </span><span class="s0">finally </span><span class="s1">{</span>
+        <span class="s0">if </span><span class="s1">(threw) {</span>
+          <span class="s0">try </span><span class="s1">{</span>
+            <span class="s1">fs.closeSync(fd)</span>
+          <span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {}</span>
+        <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+          <span class="s1">fs.closeSync(fd)</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+      <span class="s0">return </span><span class="s1">ret</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">patchLutimes (fs) {</span>
+    <span class="s0">if </span><span class="s1">(constants.hasOwnProperty(</span><span class="s2">&quot;O_SYMLINK&quot;</span><span class="s1">) &amp;&amp; fs.futimes) {</span>
+      <span class="s1">fs.lutimes = </span><span class="s0">function </span><span class="s1">(path, at, mt, cb) {</span>
+        <span class="s1">fs.open(path, constants.O_SYMLINK, </span><span class="s0">function </span><span class="s1">(er, fd) {</span>
+          <span class="s0">if </span><span class="s1">(er) {</span>
+            <span class="s0">if </span><span class="s1">(cb) cb(er)</span>
+            <span class="s0">return</span>
+          <span class="s1">}</span>
+          <span class="s1">fs.futimes(fd, at, mt, </span><span class="s0">function </span><span class="s1">(er) {</span>
+            <span class="s1">fs.close(fd, </span><span class="s0">function </span><span class="s1">(er2) {</span>
+              <span class="s0">if </span><span class="s1">(cb) cb(er || er2)</span>
+            <span class="s1">})</span>
+          <span class="s1">})</span>
+        <span class="s1">})</span>
+      <span class="s1">}</span>
+
+      <span class="s1">fs.lutimesSync = </span><span class="s0">function </span><span class="s1">(path, at, mt) {</span>
+        <span class="s0">var </span><span class="s1">fd = fs.openSync(path, constants.O_SYMLINK)</span>
+        <span class="s0">var </span><span class="s1">ret</span>
+        <span class="s0">var </span><span class="s1">threw = </span><span class="s0">true</span>
+        <span class="s0">try </span><span class="s1">{</span>
+          <span class="s1">ret = fs.futimesSync(fd, at, mt)</span>
+          <span class="s1">threw = </span><span class="s0">false</span>
+        <span class="s1">} </span><span class="s0">finally </span><span class="s1">{</span>
+          <span class="s0">if </span><span class="s1">(threw) {</span>
+            <span class="s0">try </span><span class="s1">{</span>
+              <span class="s1">fs.closeSync(fd)</span>
+            <span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {}</span>
+          <span class="s1">} </span><span class="s0">else </span><span class="s1">{</span>
+            <span class="s1">fs.closeSync(fd)</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s0">return </span><span class="s1">ret</span>
+      <span class="s1">}</span>
+
+    <span class="s1">} </span><span class="s0">else if </span><span class="s1">(fs.futimes) {</span>
+      <span class="s1">fs.lutimes = </span><span class="s0">function </span><span class="s1">(_a, _b, _c, cb) { </span><span class="s0">if </span><span class="s1">(cb) process.nextTick(cb) }</span>
+      <span class="s1">fs.lutimesSync = </span><span class="s0">function </span><span class="s1">() {}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">chmodFix (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s0">return function </span><span class="s1">(target, mode, cb) {</span>
+      <span class="s0">return </span><span class="s1">orig.call(fs, target, mode, </span><span class="s0">function </span><span class="s1">(er) {</span>
+        <span class="s0">if </span><span class="s1">(chownErOk(er)) er = </span><span class="s0">null</span>
+        <span class="s0">if </span><span class="s1">(cb) cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">chmodFixSync (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s0">return function </span><span class="s1">(target, mode) {</span>
+      <span class="s0">try </span><span class="s1">{</span>
+        <span class="s0">return </span><span class="s1">orig.call(fs, target, mode)</span>
+      <span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {</span>
+        <span class="s0">if </span><span class="s1">(!chownErOk(er)) </span><span class="s0">throw </span><span class="s1">er</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+
+  <span class="s0">function </span><span class="s1">chownFix (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s0">return function </span><span class="s1">(target, uid, gid, cb) {</span>
+      <span class="s0">return </span><span class="s1">orig.call(fs, target, uid, gid, </span><span class="s0">function </span><span class="s1">(er) {</span>
+        <span class="s0">if </span><span class="s1">(chownErOk(er)) er = </span><span class="s0">null</span>
+        <span class="s0">if </span><span class="s1">(cb) cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+      <span class="s1">})</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">chownFixSync (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s0">return function </span><span class="s1">(target, uid, gid) {</span>
+      <span class="s0">try </span><span class="s1">{</span>
+        <span class="s0">return </span><span class="s1">orig.call(fs, target, uid, gid)</span>
+      <span class="s1">} </span><span class="s0">catch </span><span class="s1">(er) {</span>
+        <span class="s0">if </span><span class="s1">(!chownErOk(er)) </span><span class="s0">throw </span><span class="s1">er</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">statFix (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s3">// Older versions of Node erroneously returned signed integers for</span>
+    <span class="s3">// uid + gid.</span>
+    <span class="s0">return function </span><span class="s1">(target, options, cb) {</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s0">typeof </span><span class="s1">options === </span><span class="s2">'function'</span><span class="s1">) {</span>
+        <span class="s1">cb = options</span>
+        <span class="s1">options = </span><span class="s0">null</span>
+      <span class="s1">}</span>
+      <span class="s0">function </span><span class="s1">callback (er, stats) {</span>
+        <span class="s0">if </span><span class="s1">(stats) {</span>
+          <span class="s0">if </span><span class="s1">(stats.uid &lt; </span><span class="s4">0</span><span class="s1">) stats.uid += </span><span class="s4">0</span><span class="s1">x100000000</span>
+          <span class="s0">if </span><span class="s1">(stats.gid &lt; </span><span class="s4">0</span><span class="s1">) stats.gid += </span><span class="s4">0</span><span class="s1">x100000000</span>
+        <span class="s1">}</span>
+        <span class="s0">if </span><span class="s1">(cb) cb.apply(</span><span class="s0">this</span><span class="s1">, arguments)</span>
+      <span class="s1">}</span>
+      <span class="s0">return </span><span class="s1">options ? orig.call(fs, target, options, callback)</span>
+        <span class="s1">: orig.call(fs, target, callback)</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s0">function </span><span class="s1">statFixSync (orig) {</span>
+    <span class="s0">if </span><span class="s1">(!orig) </span><span class="s0">return </span><span class="s1">orig</span>
+    <span class="s3">// Older versions of Node erroneously returned signed integers for</span>
+    <span class="s3">// uid + gid.</span>
+    <span class="s0">return function </span><span class="s1">(target, options) {</span>
+      <span class="s0">var </span><span class="s1">stats = options ? orig.call(fs, target, options)</span>
+        <span class="s1">: orig.call(fs, target)</span>
+      <span class="s0">if </span><span class="s1">(stats) {</span>
+        <span class="s0">if </span><span class="s1">(stats.uid &lt; </span><span class="s4">0</span><span class="s1">) stats.uid += </span><span class="s4">0</span><span class="s1">x100000000</span>
+        <span class="s0">if </span><span class="s1">(stats.gid &lt; </span><span class="s4">0</span><span class="s1">) stats.gid += </span><span class="s4">0</span><span class="s1">x100000000</span>
+      <span class="s1">}</span>
+      <span class="s0">return </span><span class="s1">stats;</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">// ENOSYS means that the fs doesn't support the op. Just ignore</span>
+  <span class="s3">// that, because it doesn't matter.</span>
+  <span class="s3">//</span>
+  <span class="s3">// if there's no getuid, or if getuid() is something other</span>
+  <span class="s3">// than 0, and the error is EINVAL or EPERM, then just ignore</span>
+  <span class="s3">// it.</span>
+  <span class="s3">//</span>
+  <span class="s3">// This specific case is a silent failure in cp, install, tar,</span>
+  <span class="s3">// and most other unix tools that manage permissions.</span>
+  <span class="s3">//</span>
+  <span class="s3">// When running as root, or if other types of errors are</span>
+  <span class="s3">// encountered, then it's strict.</span>
+  <span class="s0">function </span><span class="s1">chownErOk (er) {</span>
+    <span class="s0">if </span><span class="s1">(!er)</span>
+      <span class="s0">return true</span>
+
+    <span class="s0">if </span><span class="s1">(er.code === </span><span class="s2">&quot;ENOSYS&quot;</span><span class="s1">)</span>
+      <span class="s0">return true</span>
+
+    <span class="s0">var </span><span class="s1">nonroot = !process.getuid || process.getuid() !== </span><span class="s4">0</span>
+    <span class="s0">if </span><span class="s1">(nonroot) {</span>
+      <span class="s0">if </span><span class="s1">(er.code === </span><span class="s2">&quot;EINVAL&quot; </span><span class="s1">|| er.code === </span><span class="s2">&quot;EPERM&quot;</span><span class="s1">)</span>
+        <span class="s0">return true</span>
+    <span class="s1">}</span>
+
+    <span class="s0">return false</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

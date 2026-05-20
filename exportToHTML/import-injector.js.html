@@ -1,0 +1,325 @@
+<html>
+<head>
+<title>import-injector.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #2aacb8;}
+.s4 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+import-injector.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, {</span>
+  <span class="s1">value: </span><span class="s2">true</span>
+<span class="s1">});</span>
+<span class="s1">exports.</span><span class="s2">default </span><span class="s1">= </span><span class="s2">void </span><span class="s3">0</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">_assert = require(</span><span class="s0">&quot;assert&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_t = require(</span><span class="s0">&quot;@babel/types&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_importBuilder = require(</span><span class="s0">&quot;./import-builder.js&quot;</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">_isModule = require(</span><span class="s0">&quot;./is-module.js&quot;</span><span class="s1">);</span>
+<span class="s1">const {</span>
+  <span class="s1">identifier,</span>
+  <span class="s1">importSpecifier,</span>
+  <span class="s1">numericLiteral,</span>
+  <span class="s1">sequenceExpression,</span>
+  <span class="s1">isImportDeclaration</span>
+<span class="s1">} = _t;</span>
+<span class="s1">class ImportInjector {</span>
+  <span class="s1">constructor(path, importedSource, opts) {</span>
+    <span class="s2">this</span><span class="s1">._defaultOpts = {</span>
+      <span class="s1">importedSource: </span><span class="s2">null</span><span class="s1">,</span>
+      <span class="s1">importedType: </span><span class="s0">&quot;commonjs&quot;</span><span class="s1">,</span>
+      <span class="s1">importedInterop: </span><span class="s0">&quot;babel&quot;</span><span class="s1">,</span>
+      <span class="s1">importingInterop: </span><span class="s0">&quot;babel&quot;</span><span class="s1">,</span>
+      <span class="s1">ensureLiveReference: </span><span class="s2">false</span><span class="s1">,</span>
+      <span class="s1">ensureNoContext: </span><span class="s2">false</span><span class="s1">,</span>
+      <span class="s1">importPosition: </span><span class="s0">&quot;before&quot;</span>
+    <span class="s1">};</span>
+    <span class="s1">const programPath = path.find(p =&gt; p.isProgram());</span>
+    <span class="s2">this</span><span class="s1">._programPath = programPath;</span>
+    <span class="s2">this</span><span class="s1">._programScope = programPath.scope;</span>
+    <span class="s2">this</span><span class="s1">._hub = programPath.hub;</span>
+    <span class="s2">this</span><span class="s1">._defaultOpts = </span><span class="s2">this</span><span class="s1">._applyDefaults(importedSource, opts, </span><span class="s2">true</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">addDefault(importedSourceIn, opts) {</span>
+    <span class="s2">return this</span><span class="s1">.addNamed(</span><span class="s0">&quot;default&quot;</span><span class="s1">, importedSourceIn, opts);</span>
+  <span class="s1">}</span>
+  <span class="s1">addNamed(importName, importedSourceIn, opts) {</span>
+    <span class="s1">_assert(</span><span class="s2">typeof </span><span class="s1">importName === </span><span class="s0">&quot;string&quot;</span><span class="s1">);</span>
+    <span class="s2">return this</span><span class="s1">._generateImport(</span><span class="s2">this</span><span class="s1">._applyDefaults(importedSourceIn, opts), importName);</span>
+  <span class="s1">}</span>
+  <span class="s1">addNamespace(importedSourceIn, opts) {</span>
+    <span class="s2">return this</span><span class="s1">._generateImport(</span><span class="s2">this</span><span class="s1">._applyDefaults(importedSourceIn, opts), </span><span class="s2">null</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">addSideEffect(importedSourceIn, opts) {</span>
+    <span class="s2">return this</span><span class="s1">._generateImport(</span><span class="s2">this</span><span class="s1">._applyDefaults(importedSourceIn, opts), </span><span class="s2">void </span><span class="s3">0</span><span class="s1">);</span>
+  <span class="s1">}</span>
+  <span class="s1">_applyDefaults(importedSource, opts, isInit = </span><span class="s2">false</span><span class="s1">) {</span>
+    <span class="s1">let newOpts;</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">importedSource === </span><span class="s0">&quot;string&quot;</span><span class="s1">) {</span>
+      <span class="s1">newOpts = Object.assign({}, </span><span class="s2">this</span><span class="s1">._defaultOpts, {</span>
+        <span class="s1">importedSource</span>
+      <span class="s1">}, opts);</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">_assert(!opts, </span><span class="s0">&quot;Unexpected secondary arguments.&quot;</span><span class="s1">);</span>
+      <span class="s1">newOpts = Object.assign({}, </span><span class="s2">this</span><span class="s1">._defaultOpts, importedSource);</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(!isInit &amp;&amp; opts) {</span>
+      <span class="s2">if </span><span class="s1">(opts.nameHint !== undefined) newOpts.nameHint = opts.nameHint;</span>
+      <span class="s2">if </span><span class="s1">(opts.blockHoist !== undefined) newOpts.blockHoist = opts.blockHoist;</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">newOpts;</span>
+  <span class="s1">}</span>
+  <span class="s1">_generateImport(opts, importName) {</span>
+    <span class="s1">const isDefault = importName === </span><span class="s0">&quot;default&quot;</span><span class="s1">;</span>
+    <span class="s1">const isNamed = !!importName &amp;&amp; !isDefault;</span>
+    <span class="s1">const isNamespace = importName === </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s1">const {</span>
+      <span class="s1">importedSource,</span>
+      <span class="s1">importedType,</span>
+      <span class="s1">importedInterop,</span>
+      <span class="s1">importingInterop,</span>
+      <span class="s1">ensureLiveReference,</span>
+      <span class="s1">ensureNoContext,</span>
+      <span class="s1">nameHint,</span>
+      <span class="s1">importPosition,</span>
+      <span class="s1">blockHoist</span>
+    <span class="s1">} = opts;</span>
+    <span class="s1">let name = nameHint || importName;</span>
+    <span class="s1">const isMod = (</span><span class="s3">0</span><span class="s1">, _isModule.</span><span class="s2">default</span><span class="s1">)(</span><span class="s2">this</span><span class="s1">._programPath);</span>
+    <span class="s1">const isModuleForNode = isMod &amp;&amp; importingInterop === </span><span class="s0">&quot;node&quot;</span><span class="s1">;</span>
+    <span class="s1">const isModuleForBabel = isMod &amp;&amp; importingInterop === </span><span class="s0">&quot;babel&quot;</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(importPosition === </span><span class="s0">&quot;after&quot; </span><span class="s1">&amp;&amp; !isMod) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(`</span><span class="s0">&quot;importPosition&quot;</span><span class="s1">: </span><span class="s0">&quot;after&quot; </span><span class="s1">is only supported </span><span class="s2">in </span><span class="s1">modules`);</span>
+    <span class="s1">}</span>
+    <span class="s1">const builder = </span><span class="s2">new </span><span class="s1">_importBuilder.</span><span class="s2">default</span><span class="s1">(importedSource, </span><span class="s2">this</span><span class="s1">._programScope, </span><span class="s2">this</span><span class="s1">._hub);</span>
+    <span class="s2">if </span><span class="s1">(importedType === </span><span class="s0">&quot;es6&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(!isModuleForNode &amp;&amp; !isModuleForBabel) {</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;Cannot import an ES6 module from CommonJS&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+      <span class="s1">builder.import();</span>
+      <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+        <span class="s1">builder.namespace(nameHint || importedSource);</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault || isNamed) {</span>
+        <span class="s1">builder.named(name, importName);</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(importedType !== </span><span class="s0">&quot;commonjs&quot;</span><span class="s1">) {</span>
+      <span class="s2">throw new </span><span class="s1">Error(`Unexpected interopType </span><span class="s0">&quot;${importedType}&quot;</span><span class="s1">`);</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(importedInterop === </span><span class="s0">&quot;babel&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(isModuleForNode) {</span>
+        <span class="s1">name = name !== </span><span class="s0">&quot;default&quot; </span><span class="s1">? name : importedSource;</span>
+        <span class="s1">const es6Default = `${importedSource}$es6Default`;</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(es6Default).</span><span class="s2">var</span><span class="s1">(name || importedSource).wildcardInterop();</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault) {</span>
+          <span class="s2">if </span><span class="s1">(ensureLiveReference) {</span>
+            <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(es6Default).</span><span class="s2">var</span><span class="s1">(name || importedSource).defaultInterop().read(</span><span class="s0">&quot;default&quot;</span><span class="s1">);</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(es6Default).</span><span class="s2">var</span><span class="s1">(name).defaultInterop().prop(importName);</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isNamed) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(es6Default).read(importName);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isModuleForBabel) {</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.namespace(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault || isNamed) {</span>
+          <span class="s1">builder.named(name, importName);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">builder.require();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name || importedSource).wildcardInterop();</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">((isDefault || isNamed) &amp;&amp; ensureLiveReference) {</span>
+          <span class="s2">if </span><span class="s1">(isDefault) {</span>
+            <span class="s1">name = name !== </span><span class="s0">&quot;default&quot; </span><span class="s1">? name : importedSource;</span>
+            <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name).read(importName);</span>
+            <span class="s1">builder.defaultInterop();</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(importedSource).read(importName);</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name).defaultInterop().prop(importName);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isNamed) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name).prop(importName);</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(importedInterop === </span><span class="s0">&quot;compiled&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(isModuleForNode) {</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault || isNamed) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(importedSource).read(name);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isModuleForBabel) {</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.namespace(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault || isNamed) {</span>
+          <span class="s1">builder.named(name, importName);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">builder.require();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault || isNamed) {</span>
+          <span class="s2">if </span><span class="s1">(ensureLiveReference) {</span>
+            <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(importedSource).read(name);</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">builder.prop(importName).</span><span class="s2">var</span><span class="s1">(name);</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else if </span><span class="s1">(importedInterop === </span><span class="s0">&quot;uncompiled&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(isDefault &amp;&amp; ensureLiveReference) {</span>
+        <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;No live reference for commonjs default&quot;</span><span class="s1">);</span>
+      <span class="s1">}</span>
+      <span class="s2">if </span><span class="s1">(isModuleForNode) {</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(name);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isNamed) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(importedSource).read(name);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isModuleForBabel) {</span>
+        <span class="s1">builder.import();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault) {</span>
+          <span class="s1">builder.</span><span class="s2">default</span><span class="s1">(name);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isNamed) {</span>
+          <span class="s1">builder.named(name, importName);</span>
+        <span class="s1">}</span>
+      <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+        <span class="s1">builder.require();</span>
+        <span class="s2">if </span><span class="s1">(isNamespace) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name || importedSource);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isDefault) {</span>
+          <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name);</span>
+        <span class="s1">} </span><span class="s2">else if </span><span class="s1">(isNamed) {</span>
+          <span class="s2">if </span><span class="s1">(ensureLiveReference) {</span>
+            <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(importedSource).read(name);</span>
+          <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">builder.</span><span class="s2">var</span><span class="s1">(name).prop(importName);</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">throw new </span><span class="s1">Error(`Unknown importedInterop </span><span class="s0">&quot;${importedInterop}&quot;</span><span class="s1">.`);</span>
+    <span class="s1">}</span>
+    <span class="s1">const {</span>
+      <span class="s1">statements,</span>
+      <span class="s1">resultName</span>
+    <span class="s1">} = builder.done();</span>
+    <span class="s2">this</span><span class="s1">._insertStatements(statements, importPosition, blockHoist);</span>
+    <span class="s2">if </span><span class="s1">((isDefault || isNamed) &amp;&amp; ensureNoContext &amp;&amp; resultName.type !== </span><span class="s0">&quot;Identifier&quot;</span><span class="s1">) {</span>
+      <span class="s2">return </span><span class="s1">sequenceExpression([numericLiteral(</span><span class="s3">0</span><span class="s1">), resultName]);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">resultName;</span>
+  <span class="s1">}</span>
+  <span class="s1">_insertStatements(statements, importPosition = </span><span class="s0">&quot;before&quot;</span><span class="s1">, blockHoist = </span><span class="s3">3</span><span class="s1">) {</span>
+    <span class="s2">if </span><span class="s1">(importPosition === </span><span class="s0">&quot;after&quot;</span><span class="s1">) {</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._insertStatementsAfter(statements)) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">._insertStatementsBefore(statements, blockHoist)) </span><span class="s2">return</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">this</span><span class="s1">._programPath.unshiftContainer(</span><span class="s0">&quot;body&quot;</span><span class="s1">, statements);</span>
+  <span class="s1">}</span>
+  <span class="s1">_insertStatementsBefore(statements, blockHoist) {</span>
+    <span class="s2">if </span><span class="s1">(statements.length === </span><span class="s3">1 </span><span class="s1">&amp;&amp; isImportDeclaration(statements[</span><span class="s3">0</span><span class="s1">]) &amp;&amp; isValueImport(statements[</span><span class="s3">0</span><span class="s1">])) {</span>
+      <span class="s1">const firstImportDecl = </span><span class="s2">this</span><span class="s1">._programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).find(p =&gt; {</span>
+        <span class="s2">return </span><span class="s1">p.isImportDeclaration() &amp;&amp; isValueImport(p.node);</span>
+      <span class="s1">});</span>
+      <span class="s2">if </span><span class="s1">((firstImportDecl == </span><span class="s2">null </span><span class="s1">? </span><span class="s2">void </span><span class="s3">0 </span><span class="s1">: firstImportDecl.node.source.value) === statements[</span><span class="s3">0</span><span class="s1">].source.value &amp;&amp; maybeAppendImportSpecifiers(firstImportDecl.node, statements[</span><span class="s3">0</span><span class="s1">])) {</span>
+        <span class="s2">return true</span><span class="s1">;</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">statements.forEach(node =&gt; {</span>
+      <span class="s1">node._blockHoist = blockHoist;</span>
+    <span class="s1">});</span>
+    <span class="s1">const targetPath = </span><span class="s2">this</span><span class="s1">._programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">).find(p =&gt; {</span>
+      <span class="s1">const val = p.node._blockHoist;</span>
+      <span class="s2">return </span><span class="s1">Number.isFinite(val) &amp;&amp; val &lt; </span><span class="s3">4</span><span class="s1">;</span>
+    <span class="s1">});</span>
+    <span class="s2">if </span><span class="s1">(targetPath) {</span>
+      <span class="s1">targetPath.insertBefore(statements);</span>
+      <span class="s2">return true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">return false</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s1">_insertStatementsAfter(statements) {</span>
+    <span class="s1">const statementsSet = </span><span class="s2">new </span><span class="s1">Set(statements);</span>
+    <span class="s1">const importDeclarations = </span><span class="s2">new </span><span class="s1">Map();</span>
+    <span class="s2">for </span><span class="s1">(const statement of statements) {</span>
+      <span class="s2">if </span><span class="s1">(isImportDeclaration(statement) &amp;&amp; isValueImport(statement)) {</span>
+        <span class="s1">const source = statement.source.value;</span>
+        <span class="s2">if </span><span class="s1">(!importDeclarations.has(source)) importDeclarations.set(source, []);</span>
+        <span class="s1">importDeclarations.get(source).push(statement);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">let lastImportPath = </span><span class="s2">null</span><span class="s1">;</span>
+    <span class="s2">for </span><span class="s1">(const bodyStmt of </span><span class="s2">this</span><span class="s1">._programPath.get(</span><span class="s0">&quot;body&quot;</span><span class="s1">)) {</span>
+      <span class="s2">if </span><span class="s1">(bodyStmt.isImportDeclaration() &amp;&amp; isValueImport(bodyStmt.node)) {</span>
+        <span class="s1">lastImportPath = bodyStmt;</span>
+        <span class="s1">const source = bodyStmt.node.source.value;</span>
+        <span class="s1">const newImports = importDeclarations.get(source);</span>
+        <span class="s2">if </span><span class="s1">(!newImports) </span><span class="s2">continue</span><span class="s1">;</span>
+        <span class="s2">for </span><span class="s1">(const decl of newImports) {</span>
+          <span class="s2">if </span><span class="s1">(!statementsSet.has(decl)) </span><span class="s2">continue</span><span class="s1">;</span>
+          <span class="s2">if </span><span class="s1">(maybeAppendImportSpecifiers(bodyStmt.node, decl)) {</span>
+            <span class="s1">statementsSet.</span><span class="s2">delete</span><span class="s1">(decl);</span>
+          <span class="s1">}</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s2">if </span><span class="s1">(statementsSet.size === </span><span class="s3">0</span><span class="s1">) </span><span class="s2">return true</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(lastImportPath) lastImportPath.insertAfter(Array.from(statementsSet));</span>
+    <span class="s2">return </span><span class="s1">!!lastImportPath;</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.</span><span class="s2">default </span><span class="s1">= ImportInjector;</span>
+<span class="s2">function </span><span class="s1">isValueImport(node) {</span>
+  <span class="s2">return </span><span class="s1">node.importKind !== </span><span class="s0">&quot;type&quot; </span><span class="s1">&amp;&amp; node.importKind !== </span><span class="s0">&quot;typeof&quot;</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">hasNamespaceImport(node) {</span>
+  <span class="s2">return </span><span class="s1">node.specifiers.length === </span><span class="s3">1 </span><span class="s1">&amp;&amp; node.specifiers[</span><span class="s3">0</span><span class="s1">].type === </span><span class="s0">&quot;ImportNamespaceSpecifier&quot; </span><span class="s1">|| node.specifiers.length === </span><span class="s3">2 </span><span class="s1">&amp;&amp; node.specifiers[</span><span class="s3">1</span><span class="s1">].type === </span><span class="s0">&quot;ImportNamespaceSpecifier&quot;</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">hasDefaultImport(node) {</span>
+  <span class="s2">return </span><span class="s1">node.specifiers.length &gt; </span><span class="s3">0 </span><span class="s1">&amp;&amp; node.specifiers[</span><span class="s3">0</span><span class="s1">].type === </span><span class="s0">&quot;ImportDefaultSpecifier&quot;</span><span class="s1">;</span>
+<span class="s1">}</span>
+<span class="s2">function </span><span class="s1">maybeAppendImportSpecifiers(target, source) {</span>
+  <span class="s2">if </span><span class="s1">(!target.specifiers.length) {</span>
+    <span class="s1">target.specifiers = source.specifiers;</span>
+    <span class="s2">return true</span><span class="s1">;</span>
+  <span class="s1">}</span>
+  <span class="s2">if </span><span class="s1">(!source.specifiers.length) </span><span class="s2">return true</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(hasNamespaceImport(target) || hasNamespaceImport(source)) </span><span class="s2">return false</span><span class="s1">;</span>
+  <span class="s2">if </span><span class="s1">(hasDefaultImport(source)) {</span>
+    <span class="s2">if </span><span class="s1">(hasDefaultImport(target)) {</span>
+      <span class="s1">source.specifiers[</span><span class="s3">0</span><span class="s1">] = importSpecifier(source.specifiers[</span><span class="s3">0</span><span class="s1">].local, identifier(</span><span class="s0">&quot;default&quot;</span><span class="s1">));</span>
+    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+      <span class="s1">target.specifiers.unshift(source.specifiers.shift());</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+  <span class="s1">target.specifiers.push(...source.specifiers);</span>
+  <span class="s2">return true</span><span class="s1">;</span>
+<span class="s1">}</span>
+
+<span class="s4">//# sourceMappingURL=import-injector.js.map</span>
+</pre>
+</body>
+</html>

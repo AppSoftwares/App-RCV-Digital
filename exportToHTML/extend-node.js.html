@@ -1,0 +1,238 @@
+<html>
+<head>
+<title>extend-node.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+extend-node.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">var </span><span class="s1">Buffer = require(</span><span class="s0">&quot;buffer&quot;</span><span class="s1">).Buffer;</span>
+<span class="s3">// Note: not polyfilled with safer-buffer on a purpose, as overrides Buffer</span>
+
+<span class="s3">// == Extend Node primitives to use iconv-lite =================================</span>
+
+<span class="s1">module.exports = </span><span class="s2">function </span><span class="s1">(iconv) {</span>
+    <span class="s2">var </span><span class="s1">original = undefined; </span><span class="s3">// Place to keep original methods.</span>
+
+    <span class="s3">// Node authors rewrote Buffer internals to make it compatible with</span>
+    <span class="s3">// Uint8Array and we cannot patch key functions since then.</span>
+    <span class="s3">// Note: this does use older Buffer API on a purpose</span>
+    <span class="s1">iconv.supportsNodeEncodingsExtension = !(Buffer.from || </span><span class="s2">new </span><span class="s1">Buffer(</span><span class="s4">0</span><span class="s1">) </span><span class="s2">instanceof </span><span class="s1">Uint8Array);</span>
+
+    <span class="s1">iconv.extendNodeEncodings = </span><span class="s2">function </span><span class="s1">extendNodeEncodings() {</span>
+        <span class="s2">if </span><span class="s1">(original) </span><span class="s2">return</span><span class="s1">;</span>
+        <span class="s1">original = {};</span>
+
+        <span class="s2">if </span><span class="s1">(!iconv.supportsNodeEncodingsExtension) {</span>
+            <span class="s1">console.error(</span><span class="s0">&quot;ACTION NEEDED: require('iconv-lite').extendNodeEncodings() is not supported in your version of Node&quot;</span><span class="s1">);</span>
+            <span class="s1">console.error(</span><span class="s0">&quot;See more info at https://github.com/ashtuchkin/iconv-lite/wiki/Node-v4-compatibility&quot;</span><span class="s1">);</span>
+            <span class="s2">return</span><span class="s1">;</span>
+        <span class="s1">}</span>
+
+        <span class="s2">var </span><span class="s1">nodeNativeEncodings = {</span>
+            <span class="s0">'hex'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'utf8'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'utf-8'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'ascii'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'binary'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span>
+            <span class="s0">'base64'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'ucs2'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'ucs-2'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'utf16le'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">, </span><span class="s0">'utf-16le'</span><span class="s1">: </span><span class="s2">true</span><span class="s1">,</span>
+        <span class="s1">};</span>
+
+        <span class="s1">Buffer.isNativeEncoding = </span><span class="s2">function</span><span class="s1">(enc) {</span>
+            <span class="s2">return </span><span class="s1">enc &amp;&amp; nodeNativeEncodings[enc.toLowerCase()];</span>
+        <span class="s1">}</span>
+
+        <span class="s3">// -- SlowBuffer -----------------------------------------------------------</span>
+        <span class="s2">var </span><span class="s1">SlowBuffer = require(</span><span class="s0">'buffer'</span><span class="s1">).SlowBuffer;</span>
+
+        <span class="s1">original.SlowBufferToString = SlowBuffer.prototype.toString;</span>
+        <span class="s1">SlowBuffer.prototype.toString = </span><span class="s2">function</span><span class="s1">(encoding, start, end) {</span>
+            <span class="s1">encoding = String(encoding || </span><span class="s0">'utf8'</span><span class="s1">).toLowerCase();</span>
+
+            <span class="s3">// Use native conversion when possible</span>
+            <span class="s2">if </span><span class="s1">(Buffer.isNativeEncoding(encoding))</span>
+                <span class="s2">return </span><span class="s1">original.SlowBufferToString.call(</span><span class="s2">this</span><span class="s1">, encoding, start, end);</span>
+
+            <span class="s3">// Otherwise, use our decoding method.</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">start == </span><span class="s0">'undefined'</span><span class="s1">) start = </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">end == </span><span class="s0">'undefined'</span><span class="s1">) end = </span><span class="s2">this</span><span class="s1">.length;</span>
+            <span class="s2">return </span><span class="s1">iconv.decode(</span><span class="s2">this</span><span class="s1">.slice(start, end), encoding);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">original.SlowBufferWrite = SlowBuffer.prototype.write;</span>
+        <span class="s1">SlowBuffer.prototype.write = </span><span class="s2">function</span><span class="s1">(string, offset, length, encoding) {</span>
+            <span class="s3">// Support both (string, offset, length, encoding)</span>
+            <span class="s3">// and the legacy (string, encoding, offset, length)</span>
+            <span class="s2">if </span><span class="s1">(isFinite(offset)) {</span>
+                <span class="s2">if </span><span class="s1">(!isFinite(length)) {</span>
+                    <span class="s1">encoding = length;</span>
+                    <span class="s1">length = undefined;</span>
+                <span class="s1">}</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{  </span><span class="s3">// legacy</span>
+                <span class="s2">var </span><span class="s1">swap = encoding;</span>
+                <span class="s1">encoding = offset;</span>
+                <span class="s1">offset = length;</span>
+                <span class="s1">length = swap;</span>
+            <span class="s1">}</span>
+
+            <span class="s1">offset = +offset || </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">var </span><span class="s1">remaining = </span><span class="s2">this</span><span class="s1">.length - offset;</span>
+            <span class="s2">if </span><span class="s1">(!length) {</span>
+                <span class="s1">length = remaining;</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">length = +length;</span>
+                <span class="s2">if </span><span class="s1">(length &gt; remaining) {</span>
+                    <span class="s1">length = remaining;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+            <span class="s1">encoding = String(encoding || </span><span class="s0">'utf8'</span><span class="s1">).toLowerCase();</span>
+
+            <span class="s3">// Use native conversion when possible</span>
+            <span class="s2">if </span><span class="s1">(Buffer.isNativeEncoding(encoding))</span>
+                <span class="s2">return </span><span class="s1">original.SlowBufferWrite.call(</span><span class="s2">this</span><span class="s1">, string, offset, length, encoding);</span>
+
+            <span class="s2">if </span><span class="s1">(string.length &gt; </span><span class="s4">0 </span><span class="s1">&amp;&amp; (length &lt; </span><span class="s4">0 </span><span class="s1">|| offset &lt; </span><span class="s4">0</span><span class="s1">))</span>
+                <span class="s2">throw new </span><span class="s1">RangeError(</span><span class="s0">'attempt to write beyond buffer bounds'</span><span class="s1">);</span>
+
+            <span class="s3">// Otherwise, use our encoding method.</span>
+            <span class="s2">var </span><span class="s1">buf = iconv.encode(string, encoding);</span>
+            <span class="s2">if </span><span class="s1">(buf.length &lt; length) length = buf.length;</span>
+            <span class="s1">buf.copy(</span><span class="s2">this</span><span class="s1">, offset, </span><span class="s4">0</span><span class="s1">, length);</span>
+            <span class="s2">return </span><span class="s1">length;</span>
+        <span class="s1">}</span>
+
+        <span class="s3">// -- Buffer ---------------------------------------------------------------</span>
+
+        <span class="s1">original.BufferIsEncoding = Buffer.isEncoding;</span>
+        <span class="s1">Buffer.isEncoding = </span><span class="s2">function</span><span class="s1">(encoding) {</span>
+            <span class="s2">return </span><span class="s1">Buffer.isNativeEncoding(encoding) || iconv.encodingExists(encoding);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">original.BufferByteLength = Buffer.byteLength;</span>
+        <span class="s1">Buffer.byteLength = SlowBuffer.byteLength = </span><span class="s2">function</span><span class="s1">(str, encoding) {</span>
+            <span class="s1">encoding = String(encoding || </span><span class="s0">'utf8'</span><span class="s1">).toLowerCase();</span>
+
+            <span class="s3">// Use native conversion when possible</span>
+            <span class="s2">if </span><span class="s1">(Buffer.isNativeEncoding(encoding))</span>
+                <span class="s2">return </span><span class="s1">original.BufferByteLength.call(</span><span class="s2">this</span><span class="s1">, str, encoding);</span>
+
+            <span class="s3">// Slow, I know, but we don't have a better way yet.</span>
+            <span class="s2">return </span><span class="s1">iconv.encode(str, encoding).length;</span>
+        <span class="s1">}</span>
+
+        <span class="s1">original.BufferToString = Buffer.prototype.toString;</span>
+        <span class="s1">Buffer.prototype.toString = </span><span class="s2">function</span><span class="s1">(encoding, start, end) {</span>
+            <span class="s1">encoding = String(encoding || </span><span class="s0">'utf8'</span><span class="s1">).toLowerCase();</span>
+
+            <span class="s3">// Use native conversion when possible</span>
+            <span class="s2">if </span><span class="s1">(Buffer.isNativeEncoding(encoding))</span>
+                <span class="s2">return </span><span class="s1">original.BufferToString.call(</span><span class="s2">this</span><span class="s1">, encoding, start, end);</span>
+
+            <span class="s3">// Otherwise, use our decoding method.</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">start == </span><span class="s0">'undefined'</span><span class="s1">) start = </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">end == </span><span class="s0">'undefined'</span><span class="s1">) end = </span><span class="s2">this</span><span class="s1">.length;</span>
+            <span class="s2">return </span><span class="s1">iconv.decode(</span><span class="s2">this</span><span class="s1">.slice(start, end), encoding);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">original.BufferWrite = Buffer.prototype.write;</span>
+        <span class="s1">Buffer.prototype.write = </span><span class="s2">function</span><span class="s1">(string, offset, length, encoding) {</span>
+            <span class="s2">var </span><span class="s1">_offset = offset, _length = length, _encoding = encoding;</span>
+            <span class="s3">// Support both (string, offset, length, encoding)</span>
+            <span class="s3">// and the legacy (string, encoding, offset, length)</span>
+            <span class="s2">if </span><span class="s1">(isFinite(offset)) {</span>
+                <span class="s2">if </span><span class="s1">(!isFinite(length)) {</span>
+                    <span class="s1">encoding = length;</span>
+                    <span class="s1">length = undefined;</span>
+                <span class="s1">}</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{  </span><span class="s3">// legacy</span>
+                <span class="s2">var </span><span class="s1">swap = encoding;</span>
+                <span class="s1">encoding = offset;</span>
+                <span class="s1">offset = length;</span>
+                <span class="s1">length = swap;</span>
+            <span class="s1">}</span>
+
+            <span class="s1">encoding = String(encoding || </span><span class="s0">'utf8'</span><span class="s1">).toLowerCase();</span>
+
+            <span class="s3">// Use native conversion when possible</span>
+            <span class="s2">if </span><span class="s1">(Buffer.isNativeEncoding(encoding))</span>
+                <span class="s2">return </span><span class="s1">original.BufferWrite.call(</span><span class="s2">this</span><span class="s1">, string, _offset, _length, _encoding);</span>
+
+            <span class="s1">offset = +offset || </span><span class="s4">0</span><span class="s1">;</span>
+            <span class="s2">var </span><span class="s1">remaining = </span><span class="s2">this</span><span class="s1">.length - offset;</span>
+            <span class="s2">if </span><span class="s1">(!length) {</span>
+                <span class="s1">length = remaining;</span>
+            <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                <span class="s1">length = +length;</span>
+                <span class="s2">if </span><span class="s1">(length &gt; remaining) {</span>
+                    <span class="s1">length = remaining;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+
+            <span class="s2">if </span><span class="s1">(string.length &gt; </span><span class="s4">0 </span><span class="s1">&amp;&amp; (length &lt; </span><span class="s4">0 </span><span class="s1">|| offset &lt; </span><span class="s4">0</span><span class="s1">))</span>
+                <span class="s2">throw new </span><span class="s1">RangeError(</span><span class="s0">'attempt to write beyond buffer bounds'</span><span class="s1">);</span>
+
+            <span class="s3">// Otherwise, use our encoding method.</span>
+            <span class="s2">var </span><span class="s1">buf = iconv.encode(string, encoding);</span>
+            <span class="s2">if </span><span class="s1">(buf.length &lt; length) length = buf.length;</span>
+            <span class="s1">buf.copy(</span><span class="s2">this</span><span class="s1">, offset, </span><span class="s4">0</span><span class="s1">, length);</span>
+            <span class="s2">return </span><span class="s1">length;</span>
+
+            <span class="s3">// TODO: Set _charsWritten.</span>
+        <span class="s1">}</span>
+
+
+        <span class="s3">// -- Readable -------------------------------------------------------------</span>
+        <span class="s2">if </span><span class="s1">(iconv.supportsStreams) {</span>
+            <span class="s2">var </span><span class="s1">Readable = require(</span><span class="s0">'stream'</span><span class="s1">).Readable;</span>
+
+            <span class="s1">original.ReadableSetEncoding = Readable.prototype.setEncoding;</span>
+            <span class="s1">Readable.prototype.setEncoding = </span><span class="s2">function </span><span class="s1">setEncoding(enc, options) {</span>
+                <span class="s3">// Use our own decoder, it has the same interface.</span>
+                <span class="s3">// We cannot use original function as it doesn't handle BOM-s.</span>
+                <span class="s2">this</span><span class="s1">._readableState.decoder = iconv.getDecoder(enc, options);</span>
+                <span class="s2">this</span><span class="s1">._readableState.encoding = enc;</span>
+            <span class="s1">}</span>
+
+            <span class="s1">Readable.prototype.collect = iconv._collect;</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s3">// Remove iconv-lite Node primitive extensions.</span>
+    <span class="s1">iconv.undoExtendNodeEncodings = </span><span class="s2">function </span><span class="s1">undoExtendNodeEncodings() {</span>
+        <span class="s2">if </span><span class="s1">(!iconv.supportsNodeEncodingsExtension)</span>
+            <span class="s2">return</span><span class="s1">;</span>
+        <span class="s2">if </span><span class="s1">(!original)</span>
+            <span class="s2">throw new </span><span class="s1">Error(</span><span class="s0">&quot;require('iconv-lite').undoExtendNodeEncodings(): Nothing to undo; extendNodeEncodings() is not called.&quot;</span><span class="s1">)</span>
+
+        <span class="s2">delete </span><span class="s1">Buffer.isNativeEncoding;</span>
+
+        <span class="s2">var </span><span class="s1">SlowBuffer = require(</span><span class="s0">'buffer'</span><span class="s1">).SlowBuffer;</span>
+
+        <span class="s1">SlowBuffer.prototype.toString = original.SlowBufferToString;</span>
+        <span class="s1">SlowBuffer.prototype.write = original.SlowBufferWrite;</span>
+
+        <span class="s1">Buffer.isEncoding = original.BufferIsEncoding;</span>
+        <span class="s1">Buffer.byteLength = original.BufferByteLength;</span>
+        <span class="s1">Buffer.prototype.toString = original.BufferToString;</span>
+        <span class="s1">Buffer.prototype.write = original.BufferWrite;</span>
+
+        <span class="s2">if </span><span class="s1">(iconv.supportsStreams) {</span>
+            <span class="s2">var </span><span class="s1">Readable = require(</span><span class="s0">'stream'</span><span class="s1">).Readable;</span>
+
+            <span class="s1">Readable.prototype.setEncoding = original.ReadableSetEncoding;</span>
+            <span class="s2">delete </span><span class="s1">Readable.prototype.collect;</span>
+        <span class="s1">}</span>
+
+        <span class="s1">original = undefined;</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

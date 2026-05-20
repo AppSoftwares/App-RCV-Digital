@@ -1,0 +1,138 @@
+<html>
+<head>
+<title>presenceAdapter.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+presenceAdapter.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ Presence } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">@supabase/phoenix</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{ PresenceState, PresenceStates } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">'</span>
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">RealtimePresenceOptions,</span>
+  <span class="s2">RealtimePresenceState,</span>
+  <span class="s2">Presence </span><span class="s0">as </span><span class="s2">RealtimePresenceType,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../RealtimePresence</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">ChannelAdapter </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./channelAdapter</span><span class="s2">'</span>
+
+<span class="s0">export default class </span><span class="s2">PresenceAdapter {</span>
+  <span class="s0">private </span><span class="s2">presence: Presence</span>
+
+  <span class="s0">constructor</span><span class="s2">(channel: ChannelAdapter, opts?: RealtimePresenceOptions) {</span>
+    <span class="s0">const </span><span class="s2">phoenixOptions = </span><span class="s4">phoenixPresenceOptions</span><span class="s1">(</span><span class="s2">opts</span><span class="s1">)</span>
+    <span class="s2">this.presence = new </span><span class="s4">Presence</span><span class="s1">(</span><span class="s2">channel.</span><span class="s4">getChannel</span><span class="s1">()</span><span class="s2">, phoenixOptions</span><span class="s1">)</span>
+
+    <span class="s2">this.presence.</span><span class="s4">onJoin</span><span class="s1">(</span><span class="s2">(key, currentPresence, newPresence) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">onJoinPayload = PresenceAdapter.</span><span class="s4">onJoinPayload</span><span class="s1">(</span><span class="s2">key, currentPresence, newPresence</span><span class="s1">)</span>
+      <span class="s2">channel.</span><span class="s4">getChannel</span><span class="s1">()</span><span class="s2">.</span><span class="s4">trigger</span><span class="s1">(</span><span class="s2">'</span><span class="s3">presence</span><span class="s2">', onJoinPayload</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s2">this.presence.</span><span class="s4">onLeave</span><span class="s1">(</span><span class="s2">(key, currentPresence, leftPresence) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">onLeavePayload = PresenceAdapter.</span><span class="s4">onLeavePayload</span><span class="s1">(</span><span class="s2">key, currentPresence, leftPresence</span><span class="s1">)</span>
+      <span class="s2">channel.</span><span class="s4">getChannel</span><span class="s1">()</span><span class="s2">.</span><span class="s4">trigger</span><span class="s1">(</span><span class="s2">'</span><span class="s3">presence</span><span class="s2">', onLeavePayload</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+
+    <span class="s2">this.presence.</span><span class="s4">onSync</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s2">channel.</span><span class="s4">getChannel</span><span class="s1">()</span><span class="s2">.</span><span class="s4">trigger</span><span class="s1">(</span><span class="s2">'</span><span class="s3">presence</span><span class="s2">', { </span><span class="s1">event</span><span class="s2">: '</span><span class="s3">sync</span><span class="s2">' }</span><span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">get </span><span class="s4">state</span><span class="s2">() {</span>
+    <span class="s0">return </span><span class="s2">PresenceAdapter.</span><span class="s4">transformState</span><span class="s1">(</span><span class="s2">this.presence.state</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s5">* </span><span class="s2">@</span><span class="s0">private</span>
+   <span class="s5">* Remove 'metas' key 
+   * Change 'phx_ref' to 'presence_ref' 
+   * Remove 'phx_ref' and 'phx_ref_prev' 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Transform state 
+   </span><span class="s5">* </span><span class="s1">// returns { 
+   </span><span class="s5">*  </span><span class="s1">abc123: [ 
+   </span><span class="s5">*    </span><span class="s1">{ presence_ref: '2', user_id: 1 }, 
+   </span><span class="s5">*    </span><span class="s1">{ presence_ref: '3', user_id: 2 } 
+   </span><span class="s5">*  </span><span class="s1">] 
+   </span><span class="s5">* </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">RealtimePresence.transformState({ 
+   </span><span class="s5">*  </span><span class="s1">abc123: { 
+   </span><span class="s5">*    </span><span class="s1">metas: [ 
+   </span><span class="s5">*      </span><span class="s1">{ phx_ref: '2', phx_ref_prev: '1' user_id: 1 }, 
+   </span><span class="s5">*      </span><span class="s1">{ phx_ref: '3', user_id: 2 } 
+   </span><span class="s5">*    </span><span class="s1">] 
+   </span><span class="s5">*  </span><span class="s1">} 
+   </span><span class="s5">* </span><span class="s1">}) 
+   </span><span class="s5">* 
+   </span><span class="s2">*/</span>
+  <span class="s0">static </span><span class="s4">transformState</span><span class="s2">(state: PresenceStates): RealtimePresenceState {</span>
+    <span class="s2">state = </span><span class="s4">cloneState</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">Object.</span><span class="s4">getOwnPropertyNames</span><span class="s1">(</span><span class="s2">state</span><span class="s1">)</span><span class="s2">.</span><span class="s4">reduce</span><span class="s1">(</span><span class="s2">(newState, key) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">presences = state</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span>
+      <span class="s2">newState</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= </span><span class="s4">transformState</span><span class="s1">(</span><span class="s2">presences</span><span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">newState</span>
+    <span class="s2">}, {} </span><span class="s0">as </span><span class="s2">RealtimePresenceState</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">static </span><span class="s4">onJoinPayload</span><span class="s2">(key: string, currentPresence: PresenceState, newPresence: PresenceState) {</span>
+    <span class="s0">const </span><span class="s2">currentPresences = </span><span class="s4">parseCurrentPresences</span><span class="s1">(</span><span class="s2">currentPresence</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s2">newPresences = </span><span class="s4">transformState</span><span class="s1">(</span><span class="s2">newPresence</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">event</span><span class="s2">: '</span><span class="s3">join</span><span class="s2">',</span>
+      <span class="s2">key,</span>
+      <span class="s2">currentPresences,</span>
+      <span class="s2">newPresences,</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s0">static </span><span class="s4">onLeavePayload</span><span class="s2">(key: string, currentPresence: PresenceState, leftPresence: PresenceState) {</span>
+    <span class="s0">const </span><span class="s2">currentPresences = </span><span class="s4">parseCurrentPresences</span><span class="s1">(</span><span class="s2">currentPresence</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s2">leftPresences = </span><span class="s4">transformState</span><span class="s1">(</span><span class="s2">leftPresence</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">event</span><span class="s2">: '</span><span class="s3">leave</span><span class="s2">',</span>
+      <span class="s2">key,</span>
+      <span class="s2">currentPresences,</span>
+      <span class="s2">leftPresences,</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">transformState</span><span class="s2">(presences: PresenceState) {</span>
+  <span class="s0">return </span><span class="s2">presences.metas.</span><span class="s4">map</span><span class="s1">(</span><span class="s2">(presence) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+    <span class="s2">presence</span><span class="s1">[</span><span class="s2">'</span><span class="s3">presence_ref</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= presence</span><span class="s1">[</span><span class="s2">'</span><span class="s3">phx_ref</span><span class="s2">'</span><span class="s1">]</span>
+
+    <span class="s2">delete presence</span><span class="s1">[</span><span class="s2">'</span><span class="s3">phx_ref</span><span class="s2">'</span><span class="s1">]</span>
+    <span class="s2">delete presence</span><span class="s1">[</span><span class="s2">'</span><span class="s3">phx_ref_prev</span><span class="s2">'</span><span class="s1">]</span>
+
+    <span class="s0">return </span><span class="s2">presence</span>
+  <span class="s2">}</span><span class="s1">) </span><span class="s0">as </span><span class="s2">RealtimePresenceType</span><span class="s1">[]</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">cloneState</span><span class="s2">(state: PresenceStates): PresenceStates {</span>
+  <span class="s0">return </span><span class="s2">JSON.</span><span class="s4">parse</span><span class="s1">(</span><span class="s2">JSON.</span><span class="s4">stringify</span><span class="s1">(</span><span class="s2">state</span><span class="s1">))</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">phoenixPresenceOptions</span><span class="s2">(opts?: RealtimePresenceOptions) {</span>
+  <span class="s0">return </span><span class="s2">opts?.events &amp;&amp; { </span><span class="s1">events</span><span class="s2">: opts.events }</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">parseCurrentPresences</span><span class="s2">(currentPresences?: PresenceState) {</span>
+  <span class="s0">return </span><span class="s2">currentPresences?.metas ? </span><span class="s4">transformState</span><span class="s1">(</span><span class="s2">currentPresences</span><span class="s1">) </span><span class="s2">: </span><span class="s1">[]</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

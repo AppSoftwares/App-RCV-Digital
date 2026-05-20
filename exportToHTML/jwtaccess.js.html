@@ -1,0 +1,221 @@
+<html>
+<head>
+<title>jwtaccess.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+jwtaccess.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s2">// Copyright 2015 Google LLC</span>
+<span class="s2">//</span>
+<span class="s2">// Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="s2">// you may not use this file except in compliance with the License.</span>
+<span class="s2">// You may obtain a copy of the License at</span>
+<span class="s2">//</span>
+<span class="s2">//      http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="s2">//</span>
+<span class="s2">// Unless required by applicable law or agreed to in writing, software</span>
+<span class="s2">// distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="s2">// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="s2">// See the License for the specific language governing permissions and</span>
+<span class="s2">// limitations under the License.</span>
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">&quot;__esModule&quot;</span><span class="s1">, { value: </span><span class="s3">true </span><span class="s1">});</span>
+<span class="s1">exports.JWTAccess = </span><span class="s3">void </span><span class="s4">0</span><span class="s1">;</span>
+<span class="s1">const jws = require(</span><span class="s0">&quot;jws&quot;</span><span class="s1">);</span>
+<span class="s1">const util_1 = require(</span><span class="s0">&quot;../util&quot;</span><span class="s1">);</span>
+<span class="s1">const DEFAULT_HEADER = {</span>
+    <span class="s1">alg: </span><span class="s0">'RS256'</span><span class="s1">,</span>
+    <span class="s1">typ: </span><span class="s0">'JWT'</span><span class="s1">,</span>
+<span class="s1">};</span>
+<span class="s1">class JWTAccess {</span>
+    <span class="s1">email;</span>
+    <span class="s1">key;</span>
+    <span class="s1">keyId;</span>
+    <span class="s1">projectId;</span>
+    <span class="s1">eagerRefreshThresholdMillis;</span>
+    <span class="s1">cache = </span><span class="s3">new </span><span class="s1">util_1.LRUCache({</span>
+        <span class="s1">capacity: </span><span class="s4">500</span><span class="s1">,</span>
+        <span class="s1">maxAge: </span><span class="s4">60 </span><span class="s1">* </span><span class="s4">60 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">,</span>
+    <span class="s1">});</span>
+    <span class="s2">/** 
+     * JWTAccess service account credentials. 
+     * 
+     * Create a new access token by using the credential to create a new JWT token 
+     * that's recognized as the access token. 
+     * 
+     * @param email the service account email address. 
+     * @param key the private key that will be used to sign the token. 
+     * @param keyId the ID of the private key used to sign the token. 
+     */</span>
+    <span class="s1">constructor(email, key, keyId, eagerRefreshThresholdMillis) {</span>
+        <span class="s3">this</span><span class="s1">.email = email;</span>
+        <span class="s3">this</span><span class="s1">.key = key;</span>
+        <span class="s3">this</span><span class="s1">.keyId = keyId;</span>
+        <span class="s3">this</span><span class="s1">.eagerRefreshThresholdMillis =</span>
+            <span class="s1">eagerRefreshThresholdMillis ?? </span><span class="s4">5 </span><span class="s1">* </span><span class="s4">60 </span><span class="s1">* </span><span class="s4">1000</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Ensures that we're caching a key appropriately, giving precedence to scopes vs. url 
+     * 
+     * @param url The URI being authorized. 
+     * @param scopes The scope or scopes being authorized 
+     * @returns A string that returns the cached key. 
+     */</span>
+    <span class="s1">getCachedKey(url, scopes) {</span>
+        <span class="s1">let cacheKey = url;</span>
+        <span class="s3">if </span><span class="s1">(scopes &amp;&amp; Array.isArray(scopes) &amp;&amp; scopes.length) {</span>
+            <span class="s1">cacheKey = url ? `${url}_${scopes.join(</span><span class="s0">'_'</span><span class="s1">)}` : `${scopes.join(</span><span class="s0">'_'</span><span class="s1">)}`;</span>
+        <span class="s1">}</span>
+        <span class="s3">else if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">scopes === </span><span class="s0">'string'</span><span class="s1">) {</span>
+            <span class="s1">cacheKey = url ? `${url}_${scopes}` : scopes;</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!cacheKey) {</span>
+            <span class="s3">throw </span><span class="s1">Error(</span><span class="s0">'Scopes or url must be provided'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">return </span><span class="s1">cacheKey;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Get a non-expired access token, after refreshing if necessary. 
+     * 
+     * @param url The URI being authorized. 
+     * @param additionalClaims An object with a set of additional claims to 
+     * include in the payload. 
+     * @returns An object that includes the authorization header. 
+     */</span>
+    <span class="s1">getRequestHeaders(url, additionalClaims, scopes) {</span>
+        <span class="s2">// Return cached authorization headers, unless we are within</span>
+        <span class="s2">// eagerRefreshThresholdMillis ms of them expiring:</span>
+        <span class="s1">const key = </span><span class="s3">this</span><span class="s1">.getCachedKey(url, scopes);</span>
+        <span class="s1">const cachedToken = </span><span class="s3">this</span><span class="s1">.cache.get(key);</span>
+        <span class="s1">const now = Date.now();</span>
+        <span class="s3">if </span><span class="s1">(cachedToken &amp;&amp;</span>
+            <span class="s1">cachedToken.expiration - now &gt; </span><span class="s3">this</span><span class="s1">.eagerRefreshThresholdMillis) {</span>
+            <span class="s2">// Copying headers into a new `Headers` object to avoid potential leakage -</span>
+            <span class="s2">// as this is a cache it is possible for multiple requests to reference this</span>
+            <span class="s2">// same value.</span>
+            <span class="s3">return new </span><span class="s1">Headers(cachedToken.headers);</span>
+        <span class="s1">}</span>
+        <span class="s1">const iat = Math.floor(Date.now() / </span><span class="s4">1000</span><span class="s1">);</span>
+        <span class="s1">const exp = JWTAccess.getExpirationTime(iat);</span>
+        <span class="s1">let defaultClaims;</span>
+        <span class="s2">// Turn scopes into space-separated string</span>
+        <span class="s3">if </span><span class="s1">(Array.isArray(scopes)) {</span>
+            <span class="s1">scopes = scopes.join(</span><span class="s0">' '</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// If scopes are specified, sign with scopes</span>
+        <span class="s3">if </span><span class="s1">(scopes) {</span>
+            <span class="s1">defaultClaims = {</span>
+                <span class="s1">iss: </span><span class="s3">this</span><span class="s1">.email,</span>
+                <span class="s1">sub: </span><span class="s3">this</span><span class="s1">.email,</span>
+                <span class="s1">scope: scopes,</span>
+                <span class="s1">exp,</span>
+                <span class="s1">iat,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s1">defaultClaims = {</span>
+                <span class="s1">iss: </span><span class="s3">this</span><span class="s1">.email,</span>
+                <span class="s1">sub: </span><span class="s3">this</span><span class="s1">.email,</span>
+                <span class="s1">aud: url,</span>
+                <span class="s1">exp,</span>
+                <span class="s1">iat,</span>
+            <span class="s1">};</span>
+        <span class="s1">}</span>
+        <span class="s2">// if additionalClaims are provided, ensure they do not collide with</span>
+        <span class="s2">// other required claims.</span>
+        <span class="s3">if </span><span class="s1">(additionalClaims) {</span>
+            <span class="s3">for </span><span class="s1">(const claim </span><span class="s3">in </span><span class="s1">defaultClaims) {</span>
+                <span class="s3">if </span><span class="s1">(additionalClaims[claim]) {</span>
+                    <span class="s3">throw new </span><span class="s1">Error(`The </span><span class="s0">'${claim}' </span><span class="s1">property is not allowed when passing additionalClaims. This claim is included </span><span class="s3">in </span><span class="s1">the JWT by </span><span class="s3">default</span><span class="s1">.`);</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s1">const header = </span><span class="s3">this</span><span class="s1">.keyId</span>
+            <span class="s1">? { ...DEFAULT_HEADER, kid: </span><span class="s3">this</span><span class="s1">.keyId }</span>
+            <span class="s1">: DEFAULT_HEADER;</span>
+        <span class="s1">const payload = Object.assign(defaultClaims, additionalClaims);</span>
+        <span class="s2">// Sign the jwt and add it to the cache</span>
+        <span class="s1">const signedJWT = jws.sign({ header, payload, secret: </span><span class="s3">this</span><span class="s1">.key });</span>
+        <span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers({ authorization: `Bearer ${signedJWT}` });</span>
+        <span class="s3">this</span><span class="s1">.cache.set(key, {</span>
+            <span class="s1">expiration: exp * </span><span class="s4">1000</span><span class="s1">,</span>
+            <span class="s1">headers,</span>
+        <span class="s1">});</span>
+        <span class="s3">return </span><span class="s1">headers;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Returns an expiration time for the JWT token. 
+     * 
+     * @param iat The issued at time for the JWT. 
+     * @returns An expiration time for the JWT. 
+     */</span>
+    <span class="s1">static getExpirationTime(iat) {</span>
+        <span class="s1">const exp = iat + </span><span class="s4">3600</span><span class="s1">; </span><span class="s2">// 3600 seconds = 1 hour</span>
+        <span class="s3">return </span><span class="s1">exp;</span>
+    <span class="s1">}</span>
+    <span class="s2">/** 
+     * Create a JWTAccess credentials instance using the given input options. 
+     * @param json The input object. 
+     */</span>
+    <span class="s1">fromJSON(json) {</span>
+        <span class="s3">if </span><span class="s1">(!json) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'Must pass in a JSON object containing the service account auth settings.'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.client_email) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a client_email field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s3">if </span><span class="s1">(!json.private_key) {</span>
+            <span class="s3">throw new </span><span class="s1">Error(</span><span class="s0">'The incoming JSON object does not contain a private_key field'</span><span class="s1">);</span>
+        <span class="s1">}</span>
+        <span class="s2">// Extract the relevant information from the json key file.</span>
+        <span class="s3">this</span><span class="s1">.email = json.client_email;</span>
+        <span class="s3">this</span><span class="s1">.key = json.private_key;</span>
+        <span class="s3">this</span><span class="s1">.keyId = json.private_key_id;</span>
+        <span class="s3">this</span><span class="s1">.projectId = json.project_id;</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStream(inputStream, callback) {</span>
+        <span class="s3">if </span><span class="s1">(callback) {</span>
+            <span class="s3">this</span><span class="s1">.fromStreamAsync(inputStream).then(() =&gt; callback(), callback);</span>
+        <span class="s1">}</span>
+        <span class="s3">else </span><span class="s1">{</span>
+            <span class="s3">return this</span><span class="s1">.fromStreamAsync(inputStream);</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s1">fromStreamAsync(inputStream) {</span>
+        <span class="s3">return new </span><span class="s1">Promise((resolve, reject) =&gt; {</span>
+            <span class="s3">if </span><span class="s1">(!inputStream) {</span>
+                <span class="s1">reject(</span><span class="s3">new </span><span class="s1">Error(</span><span class="s0">'Must pass in a stream containing the service account auth settings.'</span><span class="s1">));</span>
+            <span class="s1">}</span>
+            <span class="s1">let s = </span><span class="s0">''</span><span class="s1">;</span>
+            <span class="s1">inputStream</span>
+                <span class="s1">.setEncoding(</span><span class="s0">'utf8'</span><span class="s1">)</span>
+                <span class="s1">.on(</span><span class="s0">'data'</span><span class="s1">, chunk =&gt; (s += chunk))</span>
+                <span class="s1">.on(</span><span class="s0">'error'</span><span class="s1">, reject)</span>
+                <span class="s1">.on(</span><span class="s0">'end'</span><span class="s1">, () =&gt; {</span>
+                <span class="s3">try </span><span class="s1">{</span>
+                    <span class="s1">const data = JSON.parse(s);</span>
+                    <span class="s3">this</span><span class="s1">.fromJSON(data);</span>
+                    <span class="s1">resolve();</span>
+                <span class="s1">}</span>
+                <span class="s3">catch </span><span class="s1">(err) {</span>
+                    <span class="s1">reject(err);</span>
+                <span class="s1">}</span>
+            <span class="s1">});</span>
+        <span class="s1">});</span>
+    <span class="s1">}</span>
+<span class="s1">}</span>
+<span class="s1">exports.JWTAccess = JWTAccess;</span>
+<span class="s2">//# sourceMappingURL=jwtaccess.js.map</span></pre>
+</body>
+</html>

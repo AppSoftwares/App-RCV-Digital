@@ -1,0 +1,1069 @@
+<html>
+<head>
+<title>fraction.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #bcbec4;}
+.s3 { color: #7a7e85;}
+.s4 { color: #cf8e6d;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+.s8 { color: #42c3d4;}
+.s9 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+fraction.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">'</span><span class="s1">use strict</span><span class="s0">';</span>
+
+<span class="s0">/**</span>
+ <span class="s3">* 
+ * This class offers the possibility to calculate fractions. 
+ * You can pass a fraction in different formats. Either as array, as double, as string or as an integer. 
+ * 
+ * Array/Object form 
+ * [ 0 =&gt; &lt;numerator&gt;, 1 =&gt; &lt;denominator&gt; ] 
+ * { n =&gt; &lt;numerator&gt;, d =&gt; &lt;denominator&gt; } 
+ * 
+ * Integer form 
+ * - Single integer value as BigInt or Number 
+ * 
+ * Double form 
+ * - Single double value as Number 
+ * 
+ * String form 
+ * 123.456 - a simple double 
+ * 123/456 - a string fraction 
+ * 123.'456' - a double with repeating decimal places 
+ * 123.(456) - synonym 
+ * 123.45'6' - a double with repeating last place 
+ * 123.45(6) - synonym 
+ * 
+ * Example: 
+ * let f = new Fraction(&quot;9.4'31'&quot;); 
+ * f.mul([-4, 3]).div(4.9); 
+ * 
+ </span><span class="s0">*/</span>
+
+<span class="s0">// </span><span class="s3">Set Identity function to downgrade BigInt to Number if needed</span>
+<span class="s4">if </span><span class="s2">(</span><span class="s0">typeof BigInt === '</span><span class="s1">undefined</span><span class="s0">'</span><span class="s2">) </span><span class="s5">BigInt </span><span class="s0">= </span><span class="s4">function </span><span class="s0">(n) { </span><span class="s4">if </span><span class="s2">(</span><span class="s5">isNaN</span><span class="s2">(</span><span class="s0">n</span><span class="s2">)) </span><span class="s4">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">&quot;&quot;</span><span class="s2">)</span><span class="s0">; </span><span class="s4">return </span><span class="s0">n; };</span>
+
+<span class="s4">const </span><span class="s0">C_ZERO = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">0</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">C_ONE = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">1</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">C_TWO = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">2</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">C_THREE = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">3</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">C_FIVE = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">5</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">C_TEN = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s6">10</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s4">const </span><span class="s0">MAX_INTEGER = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">Number.</span><span class="s2">MAX_SAFE_INTEGER)</span><span class="s0">;</span>
+
+<span class="s0">// </span><span class="s3">Maximum search depth for cyclic rational numbers. 2000 should be more than enough.</span>
+<span class="s0">// </span><span class="s3">Example: 1/7 = 0.(142857) has 6 repeating decimal places.</span>
+<span class="s0">// </span><span class="s3">If MAX_CYCLE_LEN gets reduced, long cycles will not be detected and toString() only gets the first 10 digits</span>
+<span class="s4">const </span><span class="s0">MAX_CYCLE_LEN = </span><span class="s6">2000</span><span class="s0">;</span>
+
+<span class="s0">// </span><span class="s3">Parsed data to avoid calling &quot;new&quot; all the time</span>
+<span class="s4">const </span><span class="s0">P = {</span>
+  <span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;: C_ONE,</span>
+  <span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;: C_ZERO,</span>
+  <span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;: C_ONE</span>
+<span class="s0">};</span>
+
+<span class="s4">function </span><span class="s5">assign</span><span class="s0">(n, s) {</span>
+
+  <span class="s4">try </span><span class="s0">{</span>
+    <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">n</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">} </span><span class="s4">catch </span><span class="s2">(</span><span class="s0">e</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s0">}</span>
+  <span class="s4">return </span><span class="s0">n * s;</span>
+<span class="s0">}</span>
+
+<span class="s4">function </span><span class="s5">ifloor</span><span class="s0">(x) {</span>
+  <span class="s4">return </span><span class="s0">typeof x === '</span><span class="s1">bigint</span><span class="s0">' ? x : Math.</span><span class="s5">floor</span><span class="s2">(</span><span class="s0">x</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s0">// </span><span class="s3">Creates a new Fraction internally without the need of the bulky constructor</span>
+<span class="s4">function </span><span class="s5">newFraction</span><span class="s0">(n, d) {</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">d === C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s4">throw </span><span class="s5">DivisionByZero</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s0">}</span>
+
+  <span class="s4">const </span><span class="s0">f = Object.</span><span class="s5">create</span><span class="s2">(Fraction</span><span class="s0">.</span><span class="s2">prototype)</span><span class="s0">;</span>
+  <span class="s0">f</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= n &lt; C_ZERO ? -C_ONE : C_ONE;</span>
+
+  <span class="s0">n = n &lt; C_ZERO ? -n : n;</span>
+
+  <span class="s4">const </span><span class="s0">a = </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">n, d</span><span class="s2">)</span><span class="s0">;</span>
+
+  <span class="s0">f</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= n / a;</span>
+  <span class="s0">f</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= d / a;</span>
+  <span class="s4">return </span><span class="s0">f;</span>
+<span class="s0">}</span>
+
+<span class="s4">const </span><span class="s0">FACTORSTEPS = </span><span class="s2">[</span><span class="s0">C_TWO * C_TWO, C_TWO, C_TWO * C_TWO, C_TWO, C_TWO * C_TWO, C_TWO * C_THREE, C_TWO, C_TWO * C_THREE</span><span class="s2">]</span><span class="s0">; // </span><span class="s3">repeats</span>
+<span class="s4">function </span><span class="s5">factorize</span><span class="s0">(n) {</span>
+
+  <span class="s4">const </span><span class="s0">factors = Object.</span><span class="s5">create</span><span class="s2">(</span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">n &lt;= C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">factors</span><span class="s2">[</span><span class="s0">n</span><span class="s2">] </span><span class="s0">= C_ONE;</span>
+    <span class="s4">return </span><span class="s0">factors;</span>
+  <span class="s0">}</span>
+
+  <span class="s4">const </span><span class="s5">add </span><span class="s0">= (p) </span><span class="s4">=&gt; </span><span class="s0">{ factors</span><span class="s2">[</span><span class="s0">p</span><span class="s2">] </span><span class="s0">= </span><span class="s2">(</span><span class="s0">factors</span><span class="s2">[</span><span class="s0">p</span><span class="s2">] </span><span class="s0">|| C_ZERO</span><span class="s2">) </span><span class="s0">+ C_ONE; };</span>
+
+  <span class="s4">while </span><span class="s2">(</span><span class="s0">n % C_TWO === C_ZERO</span><span class="s2">) </span><span class="s0">{ </span><span class="s5">add</span><span class="s2">(</span><span class="s0">C_TWO</span><span class="s2">)</span><span class="s0">; n /= C_TWO; }</span>
+  <span class="s4">while </span><span class="s2">(</span><span class="s0">n % C_THREE === C_ZERO</span><span class="s2">) </span><span class="s0">{ </span><span class="s5">add</span><span class="s2">(</span><span class="s0">C_THREE</span><span class="s2">)</span><span class="s0">; n /= C_THREE; }</span>
+  <span class="s4">while </span><span class="s2">(</span><span class="s0">n % C_FIVE === C_ZERO</span><span class="s2">) </span><span class="s0">{ </span><span class="s5">add</span><span class="s2">(</span><span class="s0">C_FIVE</span><span class="s2">)</span><span class="s0">; n /= C_FIVE; }</span>
+
+  <span class="s0">// </span><span class="s3">30-wheel trial division: test only residues coprime to 2*3*5</span>
+  <span class="s0">// </span><span class="s3">Residue step pattern after 5: 7,11,13,17,19,23,29,31, ...</span>
+  <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">si = </span><span class="s6">0</span><span class="s0">, p = C_TWO + C_FIVE; p * p &lt;= n;</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s4">while </span><span class="s2">(</span><span class="s0">n % p === C_ZERO</span><span class="s2">) </span><span class="s0">{ </span><span class="s5">add</span><span class="s2">(</span><span class="s0">p</span><span class="s2">)</span><span class="s0">; n /= p; }</span>
+    <span class="s0">p += FACTORSTEPS</span><span class="s2">[</span><span class="s0">si</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">si = </span><span class="s2">(</span><span class="s0">si + </span><span class="s6">1</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s6">7</span><span class="s0">; // </span><span class="s3">fast modulo 8</span>
+  <span class="s0">}</span>
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">n &gt; C_ONE</span><span class="s2">) </span><span class="s5">add</span><span class="s2">(</span><span class="s0">n</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s4">return </span><span class="s0">factors;</span>
+<span class="s0">}</span>
+
+<span class="s4">const </span><span class="s5">parse </span><span class="s0">= </span><span class="s4">function </span><span class="s0">(p1, p2) {</span>
+
+  <span class="s4">let </span><span class="s0">n = C_ZERO, d = C_ONE, s = C_ONE;</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 === </span><span class="s7">undefined </span><span class="s0">|| p1 === </span><span class="s7">null</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">No argument</span>
+    <span class="s0">/* </span><span class="s3">void </span><span class="s0">*/</span>
+  <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">p2 !== </span><span class="s7">undefined</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Two arguments</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">bigint</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">n = p1;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s5">isNaN</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">)) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">p1 % </span><span class="s6">1 </span><span class="s0">!== </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">NonIntegerParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">typeof p2 === &quot;</span><span class="s1">bigint</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">d = p2;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s5">isNaN</span><span class="s2">(</span><span class="s0">p2</span><span class="s2">)) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">p2 % </span><span class="s6">1 </span><span class="s0">!== </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">NonIntegerParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s0">d = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p2</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s0">s = n * d;</span>
+
+  <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">object</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot; in p1 &amp;&amp; &quot;</span><span class="s1">n</span><span class="s0">&quot; in p1</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s0">d = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot; in p1</span><span class="s2">)</span>
+        <span class="s0">n *= </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s6">0 </span><span class="s0">in p1</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">[</span><span class="s6">0</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s6">1 </span><span class="s0">in p1</span><span class="s2">)</span>
+        <span class="s0">d = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">[</span><span class="s6">1</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">bigint</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">n = p1;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s0">s = n * d;</span>
+  <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">number</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s5">isNaN</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">)) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 &lt; </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">s = -C_ONE;</span>
+      <span class="s0">p1 = -p1;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 % </span><span class="s6">1 </span><span class="s0">=== </span><span class="s6">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+
+      <span class="s4">let </span><span class="s0">z = </span><span class="s6">1</span><span class="s0">;</span>
+
+      <span class="s4">let </span><span class="s0">A = </span><span class="s6">0</span><span class="s0">, B = </span><span class="s6">1</span><span class="s0">;</span>
+      <span class="s4">let </span><span class="s0">C = </span><span class="s6">1</span><span class="s0">, D = </span><span class="s6">1</span><span class="s0">;</span>
+
+      <span class="s4">let </span><span class="s0">N = </span><span class="s6">10000000</span><span class="s0">;</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 &gt;= </span><span class="s6">1</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">z = </span><span class="s6">10 </span><span class="s0">** Math.</span><span class="s5">floor</span><span class="s2">(</span><span class="s6">1 </span><span class="s0">+ Math.</span><span class="s5">log10</span><span class="s2">(</span><span class="s0">p1</span><span class="s2">))</span><span class="s0">;</span>
+        <span class="s0">p1 /= z;</span>
+      <span class="s0">}</span>
+
+      <span class="s0">// </span><span class="s3">Using Farey Sequences</span>
+
+      <span class="s4">while </span><span class="s2">(</span><span class="s0">B &lt;= N &amp;&amp; D &lt;= N</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s4">let </span><span class="s0">M = </span><span class="s2">(</span><span class="s0">A + C</span><span class="s2">) </span><span class="s0">/ </span><span class="s2">(</span><span class="s0">B + D</span><span class="s2">)</span><span class="s0">;</span>
+
+        <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 === M</span><span class="s2">) </span><span class="s0">{</span>
+          <span class="s4">if </span><span class="s2">(</span><span class="s0">B + D &lt;= N</span><span class="s2">) </span><span class="s0">{</span>
+            <span class="s0">n = A + C;</span>
+            <span class="s0">d = B + D;</span>
+          <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">D &gt; B</span><span class="s2">) </span><span class="s0">{</span>
+            <span class="s0">n = C;</span>
+            <span class="s0">d = D;</span>
+          <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+            <span class="s0">n = A;</span>
+            <span class="s0">d = B;</span>
+          <span class="s0">}</span>
+          <span class="s4">break</span><span class="s0">;</span>
+
+        <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+
+          <span class="s4">if </span><span class="s2">(</span><span class="s0">p1 &gt; M</span><span class="s2">) </span><span class="s0">{</span>
+            <span class="s0">A += C;</span>
+            <span class="s0">B += D;</span>
+          <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+            <span class="s0">C += A;</span>
+            <span class="s0">D += B;</span>
+          <span class="s0">}</span>
+
+          <span class="s4">if </span><span class="s2">(</span><span class="s0">B &gt; N</span><span class="s2">) </span><span class="s0">{</span>
+            <span class="s0">n = C;</span>
+            <span class="s0">d = D;</span>
+          <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+            <span class="s0">n = A;</span>
+            <span class="s0">d = B;</span>
+          <span class="s0">}</span>
+        <span class="s0">}</span>
+      <span class="s0">}</span>
+      <span class="s0">n = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">n</span><span class="s2">) </span><span class="s0">* </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">z</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">d = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">d</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+  <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">string</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+
+    <span class="s4">let </span><span class="s0">ndx = </span><span class="s6">0</span><span class="s0">;</span>
+
+    <span class="s4">let </span><span class="s0">v = C_ZERO, w = C_ZERO, x = C_ZERO, y = C_ONE, z = C_ONE;</span>
+
+    <span class="s4">let </span><span class="s0">match = p1.</span><span class="s5">replace</span><span class="s2">(</span><span class="s0">/</span><span class="s8">_</span><span class="s0">/</span><span class="s4">g</span><span class="s0">, ''</span><span class="s2">)</span><span class="s0">.</span><span class="s5">match</span><span class="s2">(</span><span class="s0">/</span><span class="s7">\d</span><span class="s0">+|</span><span class="s7">.</span><span class="s0">/</span><span class="s4">g</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">match === </span><span class="s7">null</span><span class="s2">)</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">-</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{// </span><span class="s3">Check for minus sign at the beginning</span>
+      <span class="s0">s = -C_ONE;</span>
+      <span class="s0">ndx++;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">+</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{// </span><span class="s3">Check for plus sign at the beginning</span>
+      <span class="s0">ndx++;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">match.</span><span class="s2">length </span><span class="s0">=== ndx + </span><span class="s6">1</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Check if it's just a simple number &quot;1234&quot;</span>
+      <span class="s0">w = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx++</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">.</span><span class="s0">' || match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">.</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Check if it's a decimal number</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">!== '</span><span class="s1">.</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Handle 0.5 and .5</span>
+        <span class="s0">v = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx++</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s0">ndx++;</span>
+
+      <span class="s0">// </span><span class="s3">Check for decimal places</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">ndx + </span><span class="s6">1 </span><span class="s0">=== match.</span><span class="s2">length </span><span class="s0">|| match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">(</span><span class="s0">' &amp;&amp; match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">3</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">)</span><span class="s0">' || match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== &quot;</span><span class="s1">'</span><span class="s0">&quot; &amp;&amp; match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">3</span><span class="s2">] </span><span class="s0">=== &quot;</span><span class="s1">'</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">w = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+        <span class="s0">y = C_TEN ** </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">]</span><span class="s0">.</span><span class="s2">length)</span><span class="s0">;</span>
+        <span class="s0">ndx++;</span>
+      <span class="s0">}</span>
+
+      <span class="s0">// </span><span class="s3">Check for repeating places</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">(</span><span class="s0">' &amp;&amp; match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">2</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">)</span><span class="s0">' || match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">] </span><span class="s0">=== &quot;</span><span class="s1">'</span><span class="s0">&quot; &amp;&amp; match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">2</span><span class="s2">] </span><span class="s0">=== &quot;</span><span class="s1">'</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">x = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+        <span class="s0">z = C_TEN ** </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">]</span><span class="s0">.</span><span class="s2">length) </span><span class="s0">- C_ONE;</span>
+        <span class="s0">ndx += </span><span class="s6">3</span><span class="s0">;</span>
+      <span class="s0">}</span>
+
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">/</span><span class="s0">' || match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">:</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Check for a simple fraction &quot;123/456&quot; or &quot;123:456&quot;</span>
+      <span class="s0">w = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">y = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">2</span><span class="s2">]</span><span class="s0">, C_ONE</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">ndx += </span><span class="s6">3</span><span class="s0">;</span>
+    <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">3</span><span class="s2">] </span><span class="s0">=== '</span><span class="s1">/</span><span class="s0">' &amp;&amp; match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">1</span><span class="s2">] </span><span class="s0">=== ' '</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Check for a complex fraction &quot;123 1/2&quot;</span>
+      <span class="s0">v = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">w = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">2</span><span class="s2">]</span><span class="s0">, s</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">y = </span><span class="s5">assign</span><span class="s2">(</span><span class="s0">match</span><span class="s2">[</span><span class="s0">ndx + </span><span class="s6">4</span><span class="s2">]</span><span class="s0">, C_ONE</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">ndx += </span><span class="s6">5</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">match.</span><span class="s2">length </span><span class="s0">&lt;= ndx</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">Check for more tokens on the stack</span>
+      <span class="s0">d = y * z;</span>
+      <span class="s0">s = /* </span><span class="s3">void </span><span class="s0">*/</span>
+        <span class="s0">n = x + d * v + z * w;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+  <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">typeof p1 === &quot;</span><span class="s1">bigint</span><span class="s0">&quot;</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">n = p1;</span>
+    <span class="s0">s = p1;</span>
+    <span class="s0">d = C_ONE;</span>
+  <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+    <span class="s4">throw </span><span class="s5">InvalidParameter</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s0">}</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">d === C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s4">throw </span><span class="s5">DivisionByZero</span><span class="s2">()</span><span class="s0">;</span>
+  <span class="s0">}</span>
+
+  <span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= s &lt; C_ZERO ? -C_ONE : C_ONE;</span>
+  <span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= n &lt; C_ZERO ? -n : n;</span>
+  <span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= d &lt; C_ZERO ? -d : d;</span>
+<span class="s0">};</span>
+
+<span class="s4">function </span><span class="s5">modpow</span><span class="s0">(b, e, m) {</span>
+
+  <span class="s4">let </span><span class="s0">r = C_ONE;</span>
+  <span class="s4">for </span><span class="s2">(</span><span class="s0">; e &gt; C_ZERO; b = </span><span class="s2">(</span><span class="s0">b * b</span><span class="s2">) </span><span class="s0">% m, e &gt;&gt;= C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">e &amp; C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">r = </span><span class="s2">(</span><span class="s0">r * b</span><span class="s2">) </span><span class="s0">% m;</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+  <span class="s4">return </span><span class="s0">r;</span>
+<span class="s0">}</span>
+
+<span class="s4">function </span><span class="s5">cycleLen</span><span class="s0">(n, d) {</span>
+
+  <span class="s4">for </span><span class="s2">(</span><span class="s0">; d % C_TWO === C_ZERO;</span>
+    <span class="s0">d /= C_TWO</span><span class="s2">) </span><span class="s0">{</span>
+  <span class="s0">}</span>
+
+  <span class="s4">for </span><span class="s2">(</span><span class="s0">; d % C_FIVE === C_ZERO;</span>
+    <span class="s0">d /= C_FIVE</span><span class="s2">) </span><span class="s0">{</span>
+  <span class="s0">}</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">d === C_ONE</span><span class="s2">) </span><span class="s0">// </span><span class="s3">Catch non-cyclic numbers</span>
+    <span class="s4">return </span><span class="s0">C_ZERO;</span>
+
+  <span class="s0">// </span><span class="s3">If we would like to compute really large numbers quicker, we could make use of Fermat's little theorem:</span>
+  <span class="s0">// </span><span class="s3">10^(d-1) % d == 1</span>
+  <span class="s0">// </span><span class="s3">However, we don't need such large numbers and MAX_CYCLE_LEN should be the capstone,</span>
+  <span class="s0">// </span><span class="s3">as we want to translate the numbers to strings.</span>
+
+  <span class="s4">let </span><span class="s0">rem = C_TEN % d;</span>
+  <span class="s4">let </span><span class="s0">t = </span><span class="s6">1</span><span class="s0">;</span>
+
+  <span class="s4">for </span><span class="s2">(</span><span class="s0">; rem !== C_ONE; t++</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">rem = rem * C_TEN % d;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">t &gt; MAX_CYCLE_LEN</span><span class="s2">)</span>
+      <span class="s4">return </span><span class="s0">C_ZERO; // </span><span class="s3">Returning 0 here means that we don't print it as a cyclic number. It's likely that the answer is `d-1`</span>
+  <span class="s0">}</span>
+  <span class="s4">return </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">t</span><span class="s2">)</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s4">function </span><span class="s5">cycleStart</span><span class="s0">(n, d, len) {</span>
+
+  <span class="s4">let </span><span class="s0">rem1 = C_ONE;</span>
+  <span class="s4">let </span><span class="s0">rem2 = </span><span class="s5">modpow</span><span class="s2">(</span><span class="s0">C_TEN, len, d</span><span class="s2">)</span><span class="s0">;</span>
+
+  <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">t = </span><span class="s6">0</span><span class="s0">; t &lt; </span><span class="s6">300</span><span class="s0">; t++</span><span class="s2">) </span><span class="s0">{ // </span><span class="s3">s &lt; ~log10(Number.MAX_VALUE)</span>
+    <span class="s0">// </span><span class="s3">Solve 10^s == 10^(s+t) (mod d)</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">rem1 === rem2</span><span class="s2">)</span>
+      <span class="s4">return </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">t</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">rem1 = rem1 * C_TEN % d;</span>
+    <span class="s0">rem2 = rem2 * C_TEN % d;</span>
+  <span class="s0">}</span>
+  <span class="s4">return </span><span class="s6">0</span><span class="s0">;</span>
+<span class="s0">}</span>
+
+<span class="s4">function </span><span class="s5">gcd</span><span class="s0">(a, b) {</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">!a</span><span class="s2">)</span>
+    <span class="s4">return </span><span class="s0">b;</span>
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">!b</span><span class="s2">)</span>
+    <span class="s4">return </span><span class="s0">a;</span>
+
+  <span class="s4">while </span><span class="s2">(</span><span class="s6">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">a %= b;</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">!a</span><span class="s2">)</span>
+      <span class="s4">return </span><span class="s0">b;</span>
+    <span class="s0">b %= a;</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">!b</span><span class="s2">)</span>
+      <span class="s4">return </span><span class="s0">a;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s3">* Module constructor 
+ * 
+ * </span><span class="s0">@</span><span class="s4">constructor</span>
+ <span class="s3">* </span><span class="s0">@</span><span class="s4">param </span><span class="s0">{number|Fraction=} a</span>
+ <span class="s3">* </span><span class="s0">@</span><span class="s4">param </span><span class="s0">{number=} b</span>
+ <span class="s0">*/</span>
+<span class="s4">function </span><span class="s5">Fraction</span><span class="s0">(a, b) {</span>
+
+  <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+  <span class="s4">if </span><span class="s2">(</span><span class="s0">this instanceof Fraction</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">a = </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">; // </span><span class="s3">Abuse a</span>
+    <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">/ a;</span>
+    <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">= P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">/ a;</span>
+  <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">, P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s4">const </span><span class="s5">DivisionByZero </span><span class="s0">= </span><span class="s4">function </span><span class="s0">() { </span><span class="s4">return </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">&quot;</span><span class="s1">Division by Zero</span><span class="s0">&quot;</span><span class="s2">)</span><span class="s0">; };</span>
+<span class="s4">const </span><span class="s5">InvalidParameter </span><span class="s0">= </span><span class="s4">function </span><span class="s0">() { </span><span class="s4">return </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">&quot;</span><span class="s1">Invalid argument</span><span class="s0">&quot;</span><span class="s2">)</span><span class="s0">; };</span>
+<span class="s4">const </span><span class="s5">NonIntegerParameter </span><span class="s0">= </span><span class="s4">function </span><span class="s0">() { </span><span class="s4">return </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">&quot;</span><span class="s1">Parameters must be integer</span><span class="s0">&quot;</span><span class="s2">)</span><span class="s0">; };</span>
+
+<span class="s2">Fraction</span><span class="s0">.</span><span class="s2">prototype </span><span class="s0">= {</span>
+
+  <span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;: C_ONE,</span>
+  <span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;: C_ZERO,</span>
+  <span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;: C_ONE,</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the absolute value 
+   * 
+   * Ex: new Fraction(-4).abs() =&gt; 4 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">abs</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">() {</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Inverts the sign of the current fraction 
+   * 
+   * Ex: new Fraction(-4).neg() =&gt; 4 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">neg</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">() {</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">-this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Adds two rational numbers 
+   * 
+   * Ex: new Fraction({n: 2, d: 3}).add(&quot;14.9&quot;) =&gt; 467 / 30 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">add</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">+ P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">,</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span>
+    <span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Subtracts two rational numbers 
+   * 
+   * Ex: new Fraction({n: 2, d: 3}).add(&quot;14.9&quot;) =&gt; -427 / 30 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">sub</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">- P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">,</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span>
+    <span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Multiplies two rational numbers 
+   * 
+   * Ex: new Fraction(&quot;-17.(345)&quot;).mul(3) =&gt; 5776 / 111 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">mul</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">,</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span>
+    <span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Divides two rational numbers 
+   * 
+   * Ex: new Fraction(&quot;-17.(345)&quot;).inverse().div(3) 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">div</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">,</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span>
+    <span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Clones the actual object 
+   * 
+   * Ex: new Fraction(&quot;-17.(345)&quot;).clone() 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">clone</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">() {</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the modulo of two rational numbers - a more precise fmod 
+   * 
+   * Ex: new Fraction('4.(3)').mod([7, 8]) =&gt; (13/3) % (7/8) = (5/6) 
+   * Ex: new Fraction(20, 10).mod().equals(0) ? &quot;is Integer&quot; 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">mod</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">a === </span><span class="s7">undefined</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">% this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, C_ONE</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">C_ZERO === P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">{</span>
+      <span class="s4">throw </span><span class="s5">DivisionByZero</span><span class="s2">()</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s0">/**</span>
+     <span class="s3">* I derived the rational modulo similar to the modulo for integers 
+     * 
+     * https://raw.org/book/analysis/rational-numbers/ 
+     * 
+     *    n1/d1 = (n2/d2) * q + r, where 0 ≤ r &lt; n2/d2 
+     * =&gt; d2 * n1 = n2 * d1 * q + d1 * d2 * r 
+     * =&gt; r = (d2 * n1 - n2 * d1 * q) / (d1 * d2) 
+     *      = (d2 * n1 - n2 * d1 * floor((d2 * n1) / (n2 * d1))) / (d1 * d2) 
+     *      = ((d2 * n1) % (n2 * d1)) / (d1 * d2) 
+     </span><span class="s0">*/</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">% </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">,</span>
+      <span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the fractional gcd of two rational numbers 
+   * 
+   * Ex: new Fraction(5,8).gcd(3,7) =&gt; 1/56 
+   </span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">gcd</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">https://raw.org/book/analysis/rational-numbers/</span>
+    <span class="s0">// </span><span class="s3">gcd(a / b, c / d) = gcd(a, c) / lcm(b, d)</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">* </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">, P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the fractional lcm of two rational numbers 
+   * 
+   * Ex: new Fraction(5,8).lcm(3,7) =&gt; 15 
+   </span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">lcm</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">https://raw.org/book/analysis/rational-numbers/</span>
+    <span class="s0">// </span><span class="s3">lcm(a / b, c / d) = lcm(a, c) / gcd(b, d)</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">=== C_ZERO &amp;&amp; this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">=== C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">C_ZERO, C_ONE</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">* </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]))</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Gets the inverse of the fraction, means numerator and denominator are exchanged 
+   * 
+   * Ex: new Fraction([-3, 4]).inverse() =&gt; -4 / 3 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">inverse</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">() {</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the fraction to some integer exponent 
+   * 
+   * Ex: new Fraction(-1,2).pow(-3) =&gt; -8 
+   </span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">pow</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">Trivial case when exp is an integer</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">] </span><span class="s0">=== C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">((</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">** P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">** P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+        <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">((</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">** P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">, this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">** P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s0">// </span><span class="s3">Negative roots become complex</span>
+    <span class="s0">//     </span><span class="s3">(-a/b)^(c/d) = x</span>
+    <span class="s0">// </span><span class="s3">⇔ (-1)^(c/d) * (a/b)^(c/d) = x</span>
+    <span class="s0">// </span><span class="s3">⇔ (cos(pi) + i*sin(pi))^(c/d) * (a/b)^(c/d) = x</span>
+    <span class="s0">// </span><span class="s3">⇔ (cos(c*pi/d) + i*sin(c*pi/d)) * (a/b)^(c/d) = x       # DeMoivre's formula</span>
+    <span class="s0">// </span><span class="s3">From which follows that only for c=0 the root is non-complex</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO</span><span class="s2">) </span><span class="s4">return </span><span class="s7">null</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">Now prime factor n and d</span>
+    <span class="s4">let </span><span class="s0">N = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">D = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">Exponentiate and take root for n and d individually</span>
+    <span class="s4">let </span><span class="s0">n = C_ONE;</span>
+    <span class="s4">let </span><span class="s0">d = C_ONE;</span>
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">k in N</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">k === '</span><span class="s1">1</span><span class="s0">'</span><span class="s2">) </span><span class="s4">continue</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">k === '</span><span class="s1">0</span><span class="s0">'</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">n = C_ZERO;</span>
+        <span class="s4">break</span><span class="s0">;</span>
+      <span class="s0">}</span>
+      <span class="s0">N</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">*= P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">N</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">% P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">] </span><span class="s0">=== C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">N</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">/= P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s0">} </span><span class="s4">else return </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s0">n *= </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">k</span><span class="s2">) </span><span class="s0">** N</span><span class="s2">[</span><span class="s0">k</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">k in D</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">k === '</span><span class="s1">1</span><span class="s0">'</span><span class="s2">) </span><span class="s4">continue</span><span class="s0">;</span>
+      <span class="s0">D</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">*= P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">D</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">% P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">] </span><span class="s0">=== C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">D</span><span class="s2">[</span><span class="s0">k</span><span class="s2">] </span><span class="s0">/= P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+      <span class="s0">} </span><span class="s4">else return </span><span class="s7">null</span><span class="s0">;</span>
+      <span class="s0">d *= </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">k</span><span class="s2">) </span><span class="s0">** D</span><span class="s2">[</span><span class="s0">k</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">d, n</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">n, d</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the logarithm of a fraction to a given rational base 
+   * 
+   * Ex: new Fraction(27, 8).log(9, 4) =&gt; 3/2 
+   </span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">log</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt;= C_ZERO || P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt;= C_ZERO</span><span class="s2">) </span><span class="s4">return </span><span class="s7">null</span><span class="s0">;</span>
+
+    <span class="s4">const </span><span class="s0">allPrimes = Object.</span><span class="s5">create</span><span class="s2">(</span><span class="s7">null</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">const </span><span class="s0">baseFactors = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">T1 = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+
+    <span class="s4">const </span><span class="s0">numberFactors = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">T2 = </span><span class="s5">factorize</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">const </span><span class="s0">prime in T1</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">baseFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">= </span><span class="s2">(</span><span class="s0">baseFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">|| C_ZERO</span><span class="s2">) </span><span class="s0">- T1</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">const </span><span class="s0">prime in T2</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">numberFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">= </span><span class="s2">(</span><span class="s0">numberFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">|| C_ZERO</span><span class="s2">) </span><span class="s0">- T2</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">const </span><span class="s0">prime in baseFactors</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">prime === '</span><span class="s1">1</span><span class="s0">'</span><span class="s2">) </span><span class="s4">continue</span><span class="s0">;</span>
+      <span class="s0">allPrimes</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">= </span><span class="s7">true</span><span class="s0">;</span>
+    <span class="s0">}</span>
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">const </span><span class="s0">prime in numberFactors</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">prime === '</span><span class="s1">1</span><span class="s0">'</span><span class="s2">) </span><span class="s4">continue</span><span class="s0">;</span>
+      <span class="s0">allPrimes</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">= </span><span class="s7">true</span><span class="s0">;</span>
+    <span class="s0">}</span>
+
+    <span class="s4">let </span><span class="s0">retN = </span><span class="s7">null</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">retD = </span><span class="s7">null</span><span class="s0">;</span>
+
+    <span class="s0">// </span><span class="s3">Iterate over all unique primes to determine if a consistent ratio exists</span>
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">const </span><span class="s0">prime in allPrimes</span><span class="s2">) </span><span class="s0">{</span>
+
+      <span class="s4">const </span><span class="s0">baseExponent = baseFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">|| C_ZERO;</span>
+      <span class="s4">const </span><span class="s0">numberExponent = numberFactors</span><span class="s2">[</span><span class="s0">prime</span><span class="s2">] </span><span class="s0">|| C_ZERO;</span>
+
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">baseExponent === C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s4">if </span><span class="s2">(</span><span class="s0">numberExponent !== C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+          <span class="s4">return </span><span class="s7">null</span><span class="s0">; // </span><span class="s3">Logarithm cannot be expressed as a rational number</span>
+        <span class="s0">}</span>
+        <span class="s4">continue</span><span class="s0">; // </span><span class="s3">Skip this prime since both exponents are zero</span>
+      <span class="s0">}</span>
+
+      <span class="s0">// </span><span class="s3">Calculate the ratio of exponents for this prime</span>
+      <span class="s4">let </span><span class="s0">curN = numberExponent;</span>
+      <span class="s4">let </span><span class="s0">curD = baseExponent;</span>
+
+      <span class="s0">// </span><span class="s3">Simplify the current ratio</span>
+      <span class="s4">const </span><span class="s0">gcdValue = </span><span class="s5">gcd</span><span class="s2">(</span><span class="s0">curN, curD</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s0">curN /= gcdValue;</span>
+      <span class="s0">curD /= gcdValue;</span>
+
+      <span class="s0">// </span><span class="s3">Check if this is the first ratio; otherwise, ensure ratios are consistent</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">retN === </span><span class="s7">null </span><span class="s0">&amp;&amp; retD === </span><span class="s7">null</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">retN = curN;</span>
+        <span class="s0">retD = curD;</span>
+      <span class="s0">} </span><span class="s4">else if </span><span class="s2">(</span><span class="s0">curN * retD !== retN * curD</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s4">return </span><span class="s7">null</span><span class="s0">; // </span><span class="s3">Ratios do not match, logarithm cannot be rational</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s4">return </span><span class="s0">retN !== </span><span class="s7">null </span><span class="s0">&amp;&amp; retD !== </span><span class="s7">null</span>
+      <span class="s0">? </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">retN, retD</span><span class="s2">)</span>
+      <span class="s0">: </span><span class="s7">null</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if two rational numbers are the same 
+   * 
+   * Ex: new Fraction(19.6).equals([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">equals</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">=== P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if this rational number is less than another 
+   * 
+   * Ex: new Fraction(19.6).lt([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">lt</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&lt; P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if this rational number is less than or equal another 
+   * 
+   * Ex: new Fraction(19.6).lt([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">lte</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&lt;= P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if this rational number is greater than another 
+   * 
+   * Ex: new Fraction(19.6).lt([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">gt</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt; P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if this rational number is greater than or equal another 
+   * 
+   * Ex: new Fraction(19.6).lt([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">gte</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt;= P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Compare two rational numbers 
+   * &lt; 0 iff this &lt; that 
+   * &gt; 0 iff this &gt; that 
+   * = 0 iff this = that 
+   * 
+   * Ex: new Fraction(19.6).compare([98, 5]); 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">compare</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">t = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">- P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+
+    <span class="s4">return </span><span class="s2">(</span><span class="s0">C_ZERO &lt; t</span><span class="s2">) </span><span class="s0">- </span><span class="s2">(</span><span class="s0">t &lt; C_ZERO</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the ceil of a rational number 
+   * 
+   * Ex: new Fraction('4.(3)').ceil() =&gt; (5 / 1) 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">ceil</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(places) {</span>
+
+    <span class="s0">places = C_TEN ** </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">places || </span><span class="s6">0</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">/ this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">+</span>
+      <span class="s2">(</span><span class="s0">places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">% this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt; C_ZERO &amp;&amp; this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt;= C_ZERO ? C_ONE : C_ZERO</span><span class="s2">)</span><span class="s0">,</span>
+      <span class="s0">places</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Calculates the floor of a rational number 
+   * 
+   * Ex: new Fraction('4.(3)').floor() =&gt; (4 / 1) 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">floor</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(places) {</span>
+
+    <span class="s0">places = C_TEN ** </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">places || </span><span class="s6">0</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">/ this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">-</span>
+      <span class="s2">(</span><span class="s0">places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">% this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt; C_ZERO &amp;&amp; this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&lt; C_ZERO ? C_ONE : C_ZERO</span><span class="s2">)</span><span class="s0">,</span>
+      <span class="s0">places</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Rounds a rational numbers 
+   * 
+   * Ex: new Fraction('4.(3)').round() =&gt; (4 / 1) 
+   *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">round</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(places) {</span>
+
+    <span class="s0">places = C_TEN ** </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">places || </span><span class="s6">0</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">/* </span><span class="s3">Derivation: 
+</span>
+    <span class="s3">s &gt;= 0: 
+      round(n / d) = ifloor(n / d) + (n % d) / d &gt;= 0.5 ? 1 : 0 
+                   = ifloor(n / d) + 2(n % d) &gt;= d ? 1 : 0 
+    s &lt; 0: 
+      round(n / d) =-ifloor(n / d) - (n % d) / d &gt; 0.5 ? 1 : 0 
+                   =-ifloor(n / d) - 2(n % d) &gt; d ? 1 : 0 
+</span>
+    <span class="s3">=&gt;: 
+</span>
+    <span class="s3">round(s * n / d) = s * ifloor(n / d) + s * (C + 2(n % d) &gt; d ? 1 : 0) 
+        where C = s &gt;= 0 ? 1 : 0, to fix the &gt;= for the positve case. 
+    </span><span class="s0">*/</span>
+
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">/ this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">+</span>
+      <span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">* </span><span class="s2">((</span><span class="s0">this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">s</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">&gt;= C_ZERO ? C_ONE : C_ZERO</span><span class="s2">) </span><span class="s0">+ C_TWO * </span><span class="s2">(</span><span class="s0">places * this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">% this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]) </span><span class="s0">&gt; this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">] </span><span class="s0">? C_ONE : C_ZERO</span><span class="s2">)</span><span class="s0">,</span>
+      <span class="s0">places</span><span class="s2">)</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+    <span class="s3">* Rounds a rational number to a multiple of another rational number 
+    * 
+    * Ex: new Fraction('0.9').roundTo(&quot;1/8&quot;) =&gt; 7 / 8 
+    *</span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">roundTo</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s0">/*</span>
+    <span class="s3">k * x/y ≤ a/b &lt; (k+1) * x/y 
+    ⇔ k ≤ a/b / (x/y) &lt; (k+1) 
+    ⇔ k = floor(a/b * y/x) 
+    ⇔ k = floor((a * y) / (b * x)) 
+    </span><span class="s0">*/</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s4">const </span><span class="s0">n = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">d = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">r = n % d;</span>
+
+    <span class="s0">// </span><span class="s3">round(n / d) = ifloor(n / d) + 2(n % d) &gt;= d ? 1 : 0</span>
+    <span class="s4">let </span><span class="s0">k = </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">n / d</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">r + r &gt;= d</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">k++;</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* k * P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">, P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Check if two rational numbers are divisible 
+   * 
+   * Ex: new Fraction(19.6).divisible(1.5); 
+   </span><span class="s0">*/</span>
+  <span class="s0">&quot;</span><span class="s1">divisible</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(a, b) {</span>
+
+    <span class="s5">parse</span><span class="s2">(</span><span class="s0">a, b</span><span class="s2">)</span><span class="s0">;</span>
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">] </span><span class="s0">=== C_ZERO</span><span class="s2">) </span><span class="s4">return </span><span class="s7">false</span><span class="s0">;</span>
+    <span class="s4">return </span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]) </span><span class="s0">% </span><span class="s2">(</span><span class="s0">P</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]) </span><span class="s0">=== C_ZERO;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Returns a decimal representation of the fraction 
+   * 
+   * Ex: new Fraction(&quot;100.'91823'&quot;).valueOf() =&gt; 100.91823918239183 
+   *</span><span class="s0">*/</span>
+  <span class="s0">'</span><span class="s1">valueOf</span><span class="s0">': </span><span class="s4">function </span><span class="s0">() {</span>
+    <span class="s0">//</span><span class="s3">if (this['n'] &lt;= MAX_INTEGER &amp;&amp; this['d'] &lt;= MAX_INTEGER) {</span>
+    <span class="s4">return </span><span class="s5">Number</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]) </span><span class="s0">/ </span><span class="s5">Number</span><span class="s2">(</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+    <span class="s0">//</span><span class="s3">}</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Creates a string representation of a fraction with all digits 
+   * 
+   * Ex: new Fraction(&quot;100.'91823'&quot;).toString() =&gt; &quot;100.(91823)&quot; 
+   *</span><span class="s0">*/</span>
+  <span class="s0">'</span><span class="s1">toString</span><span class="s0">': </span><span class="s4">function </span><span class="s0">(dec = </span><span class="s6">15</span><span class="s0">) {</span>
+
+    <span class="s4">let </span><span class="s0">N = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">D = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+
+    <span class="s4">let </span><span class="s0">cycLen = </span><span class="s5">cycleLen</span><span class="s2">(</span><span class="s0">N, D</span><span class="s2">)</span><span class="s0">; // </span><span class="s3">Cycle length</span>
+    <span class="s4">let </span><span class="s0">cycOff = </span><span class="s5">cycleStart</span><span class="s2">(</span><span class="s0">N, D, cycLen</span><span class="s2">)</span><span class="s0">; // </span><span class="s3">Cycle start</span>
+
+    <span class="s4">let </span><span class="s0">str = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO ? &quot;</span><span class="s1">-</span><span class="s0">&quot; : &quot;&quot;;</span>
+
+    <span class="s0">// </span><span class="s3">Append integer part</span>
+    <span class="s0">str += </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">N / D</span><span class="s2">)</span><span class="s0">;</span>
+
+    <span class="s0">N %= D;</span>
+    <span class="s0">N *= C_TEN;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">N</span><span class="s2">)</span>
+      <span class="s0">str += &quot;</span><span class="s1">.</span><span class="s0">&quot;;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">cycLen</span><span class="s2">) </span><span class="s0">{</span>
+
+      <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">i = cycOff; i--;</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">str += </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">N / D</span><span class="s2">)</span><span class="s0">;</span>
+        <span class="s0">N %= D;</span>
+        <span class="s0">N *= C_TEN;</span>
+      <span class="s0">}</span>
+      <span class="s0">str += &quot;</span><span class="s1">(</span><span class="s0">&quot;;</span>
+      <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">i = cycLen; i--;</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">str += </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">N / D</span><span class="s2">)</span><span class="s0">;</span>
+        <span class="s0">N %= D;</span>
+        <span class="s0">N *= C_TEN;</span>
+      <span class="s0">}</span>
+      <span class="s0">str += &quot;</span><span class="s1">)</span><span class="s0">&quot;;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">i = dec; N &amp;&amp; i--;</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">str += </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">N / D</span><span class="s2">)</span><span class="s0">;</span>
+        <span class="s0">N %= D;</span>
+        <span class="s0">N *= C_TEN;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s0">str;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Returns a string-fraction representation of a Fraction object 
+   * 
+   * Ex: new Fraction(&quot;1.'3'&quot;).toFraction() =&gt; &quot;4 1/3&quot; 
+   *</span><span class="s0">*/</span>
+  <span class="s0">'</span><span class="s1">toFraction</span><span class="s0">': </span><span class="s4">function </span><span class="s0">(showMixed = </span><span class="s7">false</span><span class="s0">) {</span>
+
+    <span class="s4">let </span><span class="s0">n = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">d = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">str = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO ? &quot;</span><span class="s1">-</span><span class="s0">&quot; : &quot;&quot;;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">d === C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">str += n;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s4">const </span><span class="s0">whole = </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">n / d</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">showMixed &amp;&amp; whole &gt; C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">str += whole;</span>
+        <span class="s0">str += &quot; &quot;;</span>
+        <span class="s0">n %= d;</span>
+      <span class="s0">}</span>
+
+      <span class="s0">str += n;</span>
+      <span class="s0">str += '</span><span class="s1">/</span><span class="s0">';</span>
+      <span class="s0">str += d;</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s0">str;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Returns a latex representation of a Fraction object 
+   * 
+   * Ex: new Fraction(&quot;1.'3'&quot;).toLatex() =&gt; &quot;\frac{4}{3}&quot; 
+   *</span><span class="s0">*/</span>
+  <span class="s0">'</span><span class="s1">toLatex</span><span class="s0">': </span><span class="s4">function </span><span class="s0">(showMixed = </span><span class="s7">false</span><span class="s0">) {</span>
+
+    <span class="s4">let </span><span class="s0">n = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">n</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">d = this</span><span class="s2">[</span><span class="s0">&quot;</span><span class="s1">d</span><span class="s0">&quot;</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">str = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">] </span><span class="s0">&lt; C_ZERO ? &quot;</span><span class="s1">-</span><span class="s0">&quot; : &quot;&quot;;</span>
+
+    <span class="s4">if </span><span class="s2">(</span><span class="s0">d === C_ONE</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">str += n;</span>
+    <span class="s0">} </span><span class="s4">else </span><span class="s0">{</span>
+      <span class="s4">const </span><span class="s0">whole = </span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">n / d</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">showMixed &amp;&amp; whole &gt; C_ZERO</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">str += whole;</span>
+        <span class="s0">n %= d;</span>
+      <span class="s0">}</span>
+
+      <span class="s0">str += &quot;</span><span class="s9">\\</span><span class="s1">frac{</span><span class="s0">&quot;;</span>
+      <span class="s0">str += n;</span>
+      <span class="s0">str += '</span><span class="s1">}{</span><span class="s0">';</span>
+      <span class="s0">str += d;</span>
+      <span class="s0">str += '</span><span class="s1">}</span><span class="s0">';</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s0">str;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">/**</span>
+   <span class="s3">* Returns an array of continued fraction elements 
+   * 
+   * Ex: new Fraction(&quot;7/8&quot;).toContinued() =&gt; [0,1,7] 
+   </span><span class="s0">*/</span>
+  <span class="s0">'</span><span class="s1">toContinued</span><span class="s0">': </span><span class="s4">function </span><span class="s0">() {</span>
+
+    <span class="s4">let </span><span class="s0">a = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">let </span><span class="s0">b = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">res = </span><span class="s2">[]</span><span class="s0">;</span>
+
+    <span class="s4">while </span><span class="s2">(</span><span class="s0">b</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">res.</span><span class="s5">push</span><span class="s2">(</span><span class="s5">ifloor</span><span class="s2">(</span><span class="s0">a / b</span><span class="s2">))</span><span class="s0">;</span>
+      <span class="s4">const </span><span class="s0">t = a % b;</span>
+      <span class="s0">a = b;</span>
+      <span class="s0">b = t;</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s0">res;</span>
+  <span class="s0">},</span>
+
+  <span class="s0">&quot;</span><span class="s1">simplify</span><span class="s0">&quot;: </span><span class="s4">function </span><span class="s0">(eps = </span><span class="s6">1e-3</span><span class="s0">) {</span>
+
+    <span class="s0">// </span><span class="s3">Continued fractions give best approximations for a max denominator,</span>
+    <span class="s0">// </span><span class="s3">generally outperforming mediants in denominator–accuracy trade-offs.</span>
+    <span class="s0">// </span><span class="s3">Semiconvergents can further reduce the denominator within tolerance.</span>
+
+    <span class="s4">const </span><span class="s0">ieps = </span><span class="s5">BigInt</span><span class="s2">(</span><span class="s0">Math.</span><span class="s5">ceil</span><span class="s2">(</span><span class="s6">1 </span><span class="s0">/ eps</span><span class="s2">))</span><span class="s0">;</span>
+
+    <span class="s4">const </span><span class="s0">thisABS = this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">abs</span><span class="s0">'</span><span class="s2">]()</span><span class="s0">;</span>
+    <span class="s4">const </span><span class="s0">cont = thisABS</span><span class="s2">[</span><span class="s0">'</span><span class="s1">toContinued</span><span class="s0">'</span><span class="s2">]()</span><span class="s0">;</span>
+
+    <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">i = </span><span class="s6">1</span><span class="s0">; i &lt; cont.</span><span class="s2">length</span><span class="s0">; i++</span><span class="s2">) </span><span class="s0">{</span>
+
+      <span class="s4">let </span><span class="s0">s = </span><span class="s5">newFraction</span><span class="s2">(</span><span class="s0">cont</span><span class="s2">[</span><span class="s0">i - </span><span class="s6">1</span><span class="s2">]</span><span class="s0">, C_ONE</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s4">for </span><span class="s2">(</span><span class="s4">let </span><span class="s0">k = i - </span><span class="s6">2</span><span class="s0">; k &gt;= </span><span class="s6">0</span><span class="s0">; k--</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">s = s</span><span class="s2">[</span><span class="s0">'</span><span class="s1">inverse</span><span class="s0">'</span><span class="s2">]()[</span><span class="s0">'</span><span class="s1">add</span><span class="s0">'</span><span class="s2">](</span><span class="s0">cont</span><span class="s2">[</span><span class="s0">k</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s0">}</span>
+
+      <span class="s4">let </span><span class="s0">t = s</span><span class="s2">[</span><span class="s0">'</span><span class="s1">sub</span><span class="s0">'</span><span class="s2">](</span><span class="s0">thisABS</span><span class="s2">)</span><span class="s0">;</span>
+      <span class="s4">if </span><span class="s2">(</span><span class="s0">t</span><span class="s2">[</span><span class="s0">'</span><span class="s1">n</span><span class="s0">'</span><span class="s2">] </span><span class="s0">* ieps &lt; t</span><span class="s2">[</span><span class="s0">'</span><span class="s1">d</span><span class="s0">'</span><span class="s2">]) </span><span class="s0">{ // </span><span class="s3">More robust than Math.abs(t.valueOf()) &lt; eps</span>
+        <span class="s4">return </span><span class="s0">s</span><span class="s2">[</span><span class="s0">'</span><span class="s1">mul</span><span class="s0">'</span><span class="s2">](</span><span class="s0">this</span><span class="s2">[</span><span class="s0">'</span><span class="s1">s</span><span class="s0">'</span><span class="s2">])</span><span class="s0">;</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+    <span class="s4">return </span><span class="s0">this;</span>
+  <span class="s0">}</span>
+<span class="s0">};</span>
+<span class="s4">export </span><span class="s0">{</span>
+  <span class="s0">Fraction </span><span class="s4">as default</span><span class="s0">, Fraction</span>
+<span class="s0">};</span>
+</pre>
+</body>
+</html>

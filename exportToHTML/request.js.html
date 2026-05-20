@@ -1,0 +1,334 @@
+<html>
+<head>
+<title>request.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+request.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/** 
+ * Request.js 
+ * 
+ * Request class contains server only options 
+ * 
+ * All spec algorithm step numbers are based on https://fetch.spec.whatwg.org/commit-snapshots/ae716822cb3a61843226cd090eefc6589446c1d2/. 
+ */</span>
+
+<span class="s1">import {format as formatUrl} from </span><span class="s2">'node:url'</span><span class="s1">;</span>
+<span class="s1">import {deprecate} from </span><span class="s2">'node:util'</span><span class="s1">;</span>
+<span class="s1">import Headers from </span><span class="s2">'./headers.js'</span><span class="s1">;</span>
+<span class="s1">import Body, {clone, extractContentType, getTotalBytes} from </span><span class="s2">'./body.js'</span><span class="s1">;</span>
+<span class="s1">import {isAbortSignal} from </span><span class="s2">'./utils/is.js'</span><span class="s1">;</span>
+<span class="s1">import {getSearch} from </span><span class="s2">'./utils/get-search.js'</span><span class="s1">;</span>
+<span class="s1">import {</span>
+	<span class="s1">validateReferrerPolicy, determineRequestsReferrer, DEFAULT_REFERRER_POLICY</span>
+<span class="s1">} from </span><span class="s2">'./utils/referrer.js'</span><span class="s1">;</span>
+
+<span class="s1">const INTERNALS = Symbol(</span><span class="s2">'Request internals'</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Check if `obj` is an instance of Request. 
+ * 
+ * @param  {*} object 
+ * @return {boolean} 
+ */</span>
+<span class="s1">const isRequest = object =&gt; {</span>
+	<span class="s3">return </span><span class="s1">(</span>
+		<span class="s3">typeof </span><span class="s1">object === </span><span class="s2">'object' </span><span class="s1">&amp;&amp;</span>
+		<span class="s3">typeof </span><span class="s1">object[INTERNALS] === </span><span class="s2">'object'</span>
+	<span class="s1">);</span>
+<span class="s1">};</span>
+
+<span class="s1">const doBadDataWarn = deprecate(() =&gt; {},</span>
+	<span class="s2">'.data is not a valid RequestInit property, use .body instead'</span><span class="s1">,</span>
+	<span class="s2">'https://github.com/node-fetch/node-fetch/issues/1000 (request)'</span><span class="s1">);</span>
+
+<span class="s0">/** 
+ * Request class 
+ * 
+ * Ref: https://fetch.spec.whatwg.org/#request-class 
+ * 
+ * @param   Mixed   input  Url or Request instance 
+ * @param   Object  init   Custom options 
+ * @return  Void 
+ */</span>
+<span class="s1">export </span><span class="s3">default </span><span class="s1">class Request extends Body {</span>
+	<span class="s1">constructor(input, init = {}) {</span>
+		<span class="s1">let parsedURL;</span>
+
+		<span class="s0">// Normalize input and force URL to be encoded as UTF-8 (https://github.com/node-fetch/node-fetch/issues/245)</span>
+		<span class="s3">if </span><span class="s1">(isRequest(input)) {</span>
+			<span class="s1">parsedURL = </span><span class="s3">new </span><span class="s1">URL(input.url);</span>
+		<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+			<span class="s1">parsedURL = </span><span class="s3">new </span><span class="s1">URL(input);</span>
+			<span class="s1">input = {};</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(parsedURL.username !== </span><span class="s2">'' </span><span class="s1">|| parsedURL.password !== </span><span class="s2">''</span><span class="s1">) {</span>
+			<span class="s3">throw new </span><span class="s1">TypeError(`${parsedURL} is an url </span><span class="s3">with </span><span class="s1">embedded credentials.`);</span>
+		<span class="s1">}</span>
+
+		<span class="s1">let method = init.method || input.method || </span><span class="s2">'GET'</span><span class="s1">;</span>
+		<span class="s3">if </span><span class="s1">(/^(</span><span class="s3">delete</span><span class="s1">|get|head|options|post|put)$/i.test(method)) {</span>
+			<span class="s1">method = method.toUpperCase();</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(!isRequest(init) &amp;&amp; </span><span class="s2">'data' </span><span class="s3">in </span><span class="s1">init) {</span>
+			<span class="s1">doBadDataWarn();</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// eslint-disable-next-line no-eq-null, eqeqeq</span>
+		<span class="s3">if </span><span class="s1">((init.body != </span><span class="s3">null </span><span class="s1">|| (isRequest(input) &amp;&amp; input.body !== </span><span class="s3">null</span><span class="s1">)) &amp;&amp;</span>
+			<span class="s1">(method === </span><span class="s2">'GET' </span><span class="s1">|| method === </span><span class="s2">'HEAD'</span><span class="s1">)) {</span>
+			<span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'Request with GET/HEAD method cannot have body'</span><span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const inputBody = init.body ?</span>
+			<span class="s1">init.body :</span>
+			<span class="s1">(isRequest(input) &amp;&amp; input.body !== </span><span class="s3">null </span><span class="s1">?</span>
+				<span class="s1">clone(input) :</span>
+				<span class="s3">null</span><span class="s1">);</span>
+
+		<span class="s1">super(inputBody, {</span>
+			<span class="s1">size: init.size || input.size || </span><span class="s4">0</span>
+		<span class="s1">});</span>
+
+		<span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers(init.headers || input.headers || {});</span>
+
+		<span class="s3">if </span><span class="s1">(inputBody !== </span><span class="s3">null </span><span class="s1">&amp;&amp; !headers.has(</span><span class="s2">'Content-Type'</span><span class="s1">)) {</span>
+			<span class="s1">const contentType = extractContentType(inputBody, </span><span class="s3">this</span><span class="s1">);</span>
+			<span class="s3">if </span><span class="s1">(contentType) {</span>
+				<span class="s1">headers.set(</span><span class="s2">'Content-Type'</span><span class="s1">, contentType);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s1">let signal = isRequest(input) ?</span>
+			<span class="s1">input.signal :</span>
+			<span class="s3">null</span><span class="s1">;</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s2">'signal' </span><span class="s3">in </span><span class="s1">init) {</span>
+			<span class="s1">signal = init.signal;</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// eslint-disable-next-line no-eq-null, eqeqeq</span>
+		<span class="s3">if </span><span class="s1">(signal != </span><span class="s3">null </span><span class="s1">&amp;&amp; !isAbortSignal(signal)) {</span>
+			<span class="s3">throw new </span><span class="s1">TypeError(</span><span class="s2">'Expected signal to be an instanceof AbortSignal or EventTarget'</span><span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s0">// §5.4, Request constructor steps, step 15.1</span>
+		<span class="s0">// eslint-disable-next-line no-eq-null, eqeqeq</span>
+		<span class="s1">let referrer = init.referrer == </span><span class="s3">null </span><span class="s1">? input.referrer : init.referrer;</span>
+		<span class="s3">if </span><span class="s1">(referrer === </span><span class="s2">''</span><span class="s1">) {</span>
+			<span class="s0">// §5.4, Request constructor steps, step 15.2</span>
+			<span class="s1">referrer = </span><span class="s2">'no-referrer'</span><span class="s1">;</span>
+		<span class="s1">} </span><span class="s3">else if </span><span class="s1">(referrer) {</span>
+			<span class="s0">// §5.4, Request constructor steps, step 15.3.1, 15.3.2</span>
+			<span class="s1">const parsedReferrer = </span><span class="s3">new </span><span class="s1">URL(referrer);</span>
+			<span class="s0">// §5.4, Request constructor steps, step 15.3.3, 15.3.4</span>
+			<span class="s1">referrer = /^about:(\/\/)?client$/.test(parsedReferrer) ? </span><span class="s2">'client' </span><span class="s1">: parsedReferrer;</span>
+		<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+			<span class="s1">referrer = undefined;</span>
+		<span class="s1">}</span>
+
+		<span class="s3">this</span><span class="s1">[INTERNALS] = {</span>
+			<span class="s1">method,</span>
+			<span class="s1">redirect: init.redirect || input.redirect || </span><span class="s2">'follow'</span><span class="s1">,</span>
+			<span class="s1">headers,</span>
+			<span class="s1">parsedURL,</span>
+			<span class="s1">signal,</span>
+			<span class="s1">referrer</span>
+		<span class="s1">};</span>
+
+		<span class="s0">// Node-fetch-only options</span>
+		<span class="s3">this</span><span class="s1">.follow = init.follow === undefined ? (input.follow === undefined ? </span><span class="s4">20 </span><span class="s1">: input.follow) : init.follow;</span>
+		<span class="s3">this</span><span class="s1">.compress = init.compress === undefined ? (input.compress === undefined ? </span><span class="s3">true </span><span class="s1">: input.compress) : init.compress;</span>
+		<span class="s3">this</span><span class="s1">.counter = init.counter || input.counter || </span><span class="s4">0</span><span class="s1">;</span>
+		<span class="s3">this</span><span class="s1">.agent = init.agent || input.agent;</span>
+		<span class="s3">this</span><span class="s1">.highWaterMark = init.highWaterMark || input.highWaterMark || </span><span class="s4">16384</span><span class="s1">;</span>
+		<span class="s3">this</span><span class="s1">.insecureHTTPParser = init.insecureHTTPParser || input.insecureHTTPParser || </span><span class="s3">false</span><span class="s1">;</span>
+
+		<span class="s0">// §5.4, Request constructor steps, step 16.</span>
+		<span class="s0">// Default is empty string per https://fetch.spec.whatwg.org/#concept-request-referrer-policy</span>
+		<span class="s3">this</span><span class="s1">.referrerPolicy = init.referrerPolicy || input.referrerPolicy || </span><span class="s2">''</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @returns {string} */</span>
+	<span class="s1">get method() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].method;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @returns {string} */</span>
+	<span class="s1">get url() {</span>
+		<span class="s3">return </span><span class="s1">formatUrl(</span><span class="s3">this</span><span class="s1">[INTERNALS].parsedURL);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @returns {Headers} */</span>
+	<span class="s1">get headers() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].headers;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get redirect() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].redirect;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** @returns {AbortSignal} */</span>
+	<span class="s1">get signal() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].signal;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// https://fetch.spec.whatwg.org/#dom-request-referrer</span>
+	<span class="s1">get referrer() {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">[INTERNALS].referrer === </span><span class="s2">'no-referrer'</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s2">''</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">[INTERNALS].referrer === </span><span class="s2">'client'</span><span class="s1">) {</span>
+			<span class="s3">return </span><span class="s2">'about:client'</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">[INTERNALS].referrer) {</span>
+			<span class="s3">return this</span><span class="s1">[INTERNALS].referrer.toString();</span>
+		<span class="s1">}</span>
+
+		<span class="s3">return </span><span class="s1">undefined;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get referrerPolicy() {</span>
+		<span class="s3">return this</span><span class="s1">[INTERNALS].referrerPolicy;</span>
+	<span class="s1">}</span>
+
+	<span class="s1">set referrerPolicy(referrerPolicy) {</span>
+		<span class="s3">this</span><span class="s1">[INTERNALS].referrerPolicy = validateReferrerPolicy(referrerPolicy);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Clone this request 
+     * 
+     * @return  Request 
+     */</span>
+	<span class="s1">clone() {</span>
+		<span class="s3">return new </span><span class="s1">Request(</span><span class="s3">this</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">get [Symbol.toStringTag]() {</span>
+		<span class="s3">return </span><span class="s2">'Request'</span><span class="s1">;</span>
+	<span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">Object.defineProperties(Request.prototype, {</span>
+	<span class="s1">method: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">url: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">headers: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">redirect: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">clone: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">signal: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">referrer: {enumerable: </span><span class="s3">true</span><span class="s1">},</span>
+	<span class="s1">referrerPolicy: {enumerable: </span><span class="s3">true</span><span class="s1">}</span>
+<span class="s1">});</span>
+
+<span class="s0">/** 
+ * Convert a Request to Node.js http request options. 
+ * 
+ * @param {Request} request - A Request instance 
+ * @return The options object to be passed to http.request 
+ */</span>
+<span class="s1">export const getNodeRequestOptions = request =&gt; {</span>
+	<span class="s1">const {parsedURL} = request[INTERNALS];</span>
+	<span class="s1">const headers = </span><span class="s3">new </span><span class="s1">Headers(request[INTERNALS].headers);</span>
+
+	<span class="s0">// Fetch step 1.3</span>
+	<span class="s3">if </span><span class="s1">(!headers.has(</span><span class="s2">'Accept'</span><span class="s1">)) {</span>
+		<span class="s1">headers.set(</span><span class="s2">'Accept'</span><span class="s1">, </span><span class="s2">'*/*'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// HTTP-network-or-cache fetch steps 2.4-2.7</span>
+	<span class="s1">let contentLengthValue = </span><span class="s3">null</span><span class="s1">;</span>
+	<span class="s3">if </span><span class="s1">(request.body === </span><span class="s3">null </span><span class="s1">&amp;&amp; /^(post|put)$/i.test(request.method)) {</span>
+		<span class="s1">contentLengthValue = </span><span class="s2">'0'</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s3">if </span><span class="s1">(request.body !== </span><span class="s3">null</span><span class="s1">) {</span>
+		<span class="s1">const totalBytes = getTotalBytes(request);</span>
+		<span class="s0">// Set Content-Length if totalBytes is a number (that is not NaN)</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">totalBytes === </span><span class="s2">'number' </span><span class="s1">&amp;&amp; !Number.isNaN(totalBytes)) {</span>
+			<span class="s1">contentLengthValue = String(totalBytes);</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s3">if </span><span class="s1">(contentLengthValue) {</span>
+		<span class="s1">headers.set(</span><span class="s2">'Content-Length'</span><span class="s1">, contentLengthValue);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// 4.1. Main fetch, step 2.6</span>
+	<span class="s0">// &gt; If request's referrer policy is the empty string, then set request's referrer policy to the</span>
+	<span class="s0">// &gt; default referrer policy.</span>
+	<span class="s3">if </span><span class="s1">(request.referrerPolicy === </span><span class="s2">''</span><span class="s1">) {</span>
+		<span class="s1">request.referrerPolicy = DEFAULT_REFERRER_POLICY;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// 4.1. Main fetch, step 2.7</span>
+	<span class="s0">// &gt; If request's referrer is not &quot;no-referrer&quot;, set request's referrer to the result of invoking</span>
+	<span class="s0">// &gt; determine request's referrer.</span>
+	<span class="s3">if </span><span class="s1">(request.referrer &amp;&amp; request.referrer !== </span><span class="s2">'no-referrer'</span><span class="s1">) {</span>
+		<span class="s1">request[INTERNALS].referrer = determineRequestsReferrer(request);</span>
+	<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+		<span class="s1">request[INTERNALS].referrer = </span><span class="s2">'no-referrer'</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// 4.5. HTTP-network-or-cache fetch, step 6.9</span>
+	<span class="s0">// &gt; If httpRequest's referrer is a URL, then append `Referer`/httpRequest's referrer, serialized</span>
+	<span class="s0">// &gt;  and isomorphic encoded, to httpRequest's header list.</span>
+	<span class="s3">if </span><span class="s1">(request[INTERNALS].referrer </span><span class="s3">instanceof </span><span class="s1">URL) {</span>
+		<span class="s1">headers.set(</span><span class="s2">'Referer'</span><span class="s1">, request.referrer);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// HTTP-network-or-cache fetch step 2.11</span>
+	<span class="s3">if </span><span class="s1">(!headers.has(</span><span class="s2">'User-Agent'</span><span class="s1">)) {</span>
+		<span class="s1">headers.set(</span><span class="s2">'User-Agent'</span><span class="s1">, </span><span class="s2">'node-fetch'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// HTTP-network-or-cache fetch step 2.15</span>
+	<span class="s3">if </span><span class="s1">(request.compress &amp;&amp; !headers.has(</span><span class="s2">'Accept-Encoding'</span><span class="s1">)) {</span>
+		<span class="s1">headers.set(</span><span class="s2">'Accept-Encoding'</span><span class="s1">, </span><span class="s2">'gzip, deflate, br'</span><span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s1">let {agent} = request;</span>
+	<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">agent === </span><span class="s2">'function'</span><span class="s1">) {</span>
+		<span class="s1">agent = agent(parsedURL);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">// HTTP-network fetch step 4.2</span>
+	<span class="s0">// chunked encoding is handled by Node.js</span>
+
+	<span class="s1">const search = getSearch(parsedURL);</span>
+
+	<span class="s0">// Pass the full URL directly to request(), but overwrite the following</span>
+	<span class="s0">// options:</span>
+	<span class="s1">const options = {</span>
+		<span class="s0">// Overwrite search to retain trailing ? (issue #776)</span>
+		<span class="s1">path: parsedURL.pathname + search,</span>
+		<span class="s0">// The following options are not expressed in the URL</span>
+		<span class="s1">method: request.method,</span>
+		<span class="s1">headers: headers[Symbol.</span><span class="s3">for</span><span class="s1">(</span><span class="s2">'nodejs.util.inspect.custom'</span><span class="s1">)](),</span>
+		<span class="s1">insecureHTTPParser: request.insecureHTTPParser,</span>
+		<span class="s1">agent</span>
+	<span class="s1">};</span>
+
+	<span class="s3">return </span><span class="s1">{</span>
+		<span class="s0">/** @type {URL} */</span>
+		<span class="s1">parsedURL,</span>
+		<span class="s1">options</span>
+	<span class="s1">};</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

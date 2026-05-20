@@ -1,0 +1,119 @@
+<html>
+<head>
+<title>channelAdapter.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+channelAdapter.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import { CHANNEL_STATES, MAX_PUSH_BUFFER_SIZE } from </span><span class="s1">'../lib/constants'</span><span class="s0">;</span>
+<span class="s0">export </span><span class="s2">default </span><span class="s0">class ChannelAdapter {</span>
+    <span class="s0">constructor(socket, topic, params) {</span>
+        <span class="s0">const phoenixParams = phoenixChannelParams(params);</span>
+        <span class="s2">this</span><span class="s0">.channel = socket.getSocket().channel(topic, phoenixParams);</span>
+        <span class="s2">this</span><span class="s0">.socket = socket;</span>
+    <span class="s0">}</span>
+    <span class="s0">get state() {</span>
+        <span class="s2">return this</span><span class="s0">.channel.state;</span>
+    <span class="s0">}</span>
+    <span class="s0">set state(state) {</span>
+        <span class="s2">this</span><span class="s0">.channel.state = state;</span>
+    <span class="s0">}</span>
+    <span class="s0">get joinedOnce() {</span>
+        <span class="s2">return this</span><span class="s0">.channel.joinedOnce;</span>
+    <span class="s0">}</span>
+    <span class="s0">get joinPush() {</span>
+        <span class="s2">return this</span><span class="s0">.channel.joinPush;</span>
+    <span class="s0">}</span>
+    <span class="s0">get rejoinTimer() {</span>
+        <span class="s2">return this</span><span class="s0">.channel.rejoinTimer;</span>
+    <span class="s0">}</span>
+    <span class="s0">on(event, callback) {</span>
+        <span class="s2">return this</span><span class="s0">.channel.on(event, callback);</span>
+    <span class="s0">}</span>
+    <span class="s0">off(event, refNumber) {</span>
+        <span class="s2">this</span><span class="s0">.channel.off(event, refNumber);</span>
+    <span class="s0">}</span>
+    <span class="s0">subscribe(timeout) {</span>
+        <span class="s2">return this</span><span class="s0">.channel.join(timeout);</span>
+    <span class="s0">}</span>
+    <span class="s0">unsubscribe(timeout) {</span>
+        <span class="s2">return this</span><span class="s0">.channel.leave(timeout);</span>
+    <span class="s0">}</span>
+    <span class="s0">teardown() {</span>
+        <span class="s2">this</span><span class="s0">.channel.teardown();</span>
+    <span class="s0">}</span>
+    <span class="s0">onClose(callback) {</span>
+        <span class="s2">this</span><span class="s0">.channel.onClose(callback);</span>
+    <span class="s0">}</span>
+    <span class="s0">onError(callback) {</span>
+        <span class="s2">return this</span><span class="s0">.channel.onError(callback);</span>
+    <span class="s0">}</span>
+    <span class="s0">push(event, payload, timeout) {</span>
+        <span class="s0">let push;</span>
+        <span class="s2">try </span><span class="s0">{</span>
+            <span class="s0">push = </span><span class="s2">this</span><span class="s0">.channel.push(event, payload, timeout);</span>
+        <span class="s0">}</span>
+        <span class="s2">catch </span><span class="s0">(error) {</span>
+            <span class="s2">throw new </span><span class="s0">Error(`tried to push </span><span class="s1">'${event}' </span><span class="s0">to </span><span class="s1">'${this.channel.topic}' </span><span class="s0">before joining. Use channel.subscribe() before pushing events`);</span>
+        <span class="s0">}</span>
+        <span class="s2">if </span><span class="s0">(</span><span class="s2">this</span><span class="s0">.channel.pushBuffer.length &gt; MAX_PUSH_BUFFER_SIZE) {</span>
+            <span class="s0">const removedPush = </span><span class="s2">this</span><span class="s0">.channel.pushBuffer.shift();</span>
+            <span class="s0">removedPush.cancelTimeout();</span>
+            <span class="s2">this</span><span class="s0">.socket.log(</span><span class="s1">'channel'</span><span class="s0">, `discarded push due to buffer overflow: ${removedPush.event}`, removedPush.payload());</span>
+        <span class="s0">}</span>
+        <span class="s2">return </span><span class="s0">push;</span>
+    <span class="s0">}</span>
+    <span class="s0">updateJoinPayload(payload) {</span>
+        <span class="s0">const oldPayload = </span><span class="s2">this</span><span class="s0">.channel.joinPush.payload();</span>
+        <span class="s2">this</span><span class="s0">.channel.joinPush.payload = () =&gt; (Object.assign(Object.assign({}, oldPayload), payload));</span>
+    <span class="s0">}</span>
+    <span class="s0">canPush() {</span>
+        <span class="s2">return this</span><span class="s0">.socket.isConnected() &amp;&amp; </span><span class="s2">this</span><span class="s0">.state === CHANNEL_STATES.joined;</span>
+    <span class="s0">}</span>
+    <span class="s0">isJoined() {</span>
+        <span class="s2">return this</span><span class="s0">.state === CHANNEL_STATES.joined;</span>
+    <span class="s0">}</span>
+    <span class="s0">isJoining() {</span>
+        <span class="s2">return this</span><span class="s0">.state === CHANNEL_STATES.joining;</span>
+    <span class="s0">}</span>
+    <span class="s0">isClosed() {</span>
+        <span class="s2">return this</span><span class="s0">.state === CHANNEL_STATES.closed;</span>
+    <span class="s0">}</span>
+    <span class="s0">isLeaving() {</span>
+        <span class="s2">return this</span><span class="s0">.state === CHANNEL_STATES.leaving;</span>
+    <span class="s0">}</span>
+    <span class="s0">updateFilterBindings(filterBindings) {</span>
+        <span class="s2">this</span><span class="s0">.channel.filterBindings = filterBindings;</span>
+    <span class="s0">}</span>
+    <span class="s0">updatePayloadTransform(callback) {</span>
+        <span class="s2">this</span><span class="s0">.channel.onMessage = callback;</span>
+    <span class="s0">}</span>
+    <span class="s3">/** 
+     * @internal 
+     */</span>
+    <span class="s0">getChannel() {</span>
+        <span class="s2">return this</span><span class="s0">.channel;</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+<span class="s2">function </span><span class="s0">phoenixChannelParams(options) {</span>
+    <span class="s2">return </span><span class="s0">{</span>
+        <span class="s0">config: Object.assign({</span>
+            <span class="s0">broadcast: { ack: </span><span class="s2">false</span><span class="s0">, self: </span><span class="s2">false </span><span class="s0">},</span>
+            <span class="s0">presence: { key: </span><span class="s1">''</span><span class="s0">, enabled: </span><span class="s2">false </span><span class="s0">},</span>
+            <span class="s0">private: </span><span class="s2">false</span><span class="s0">,</span>
+        <span class="s0">}, options.config),</span>
+    <span class="s0">};</span>
+<span class="s0">}</span>
+<span class="s3">//# sourceMappingURL=channelAdapter.js.map</span></pre>
+</body>
+</html>

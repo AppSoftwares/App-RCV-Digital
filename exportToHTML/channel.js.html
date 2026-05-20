@@ -1,0 +1,352 @@
+<html>
+<head>
+<title>channel.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #6aab73;}
+.s2 { color: #7a7e85;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+channel.js</font>
+</center></td></tr></table>
+<pre><span class="s0">import {closure} from </span><span class="s1">&quot;./utils&quot;</span>
+<span class="s0">import {</span>
+  <span class="s0">CHANNEL_EVENTS,</span>
+  <span class="s0">CHANNEL_STATES,</span>
+<span class="s0">} from </span><span class="s1">&quot;./constants&quot;</span>
+
+<span class="s0">import Push from </span><span class="s1">&quot;./push&quot;</span>
+<span class="s0">import Timer from </span><span class="s1">&quot;./timer&quot;</span>
+
+<span class="s2">/** 
+* @import Socket from &quot;./socket&quot; 
+* @import { ChannelState, Params, ChannelBindingCallback, ChannelOnMessage, ChannelFilterBindings, ChannelOnErrorCallback, ChannelBinding } from &quot;./types&quot; 
+*/</span>
+
+<span class="s0">export </span><span class="s3">default </span><span class="s0">class Channel {</span>
+<span class="s2">/** 
+ * @param {string} topic 
+ * @param {Params | (() =&gt; Params)} params 
+ * @param {Socket} socket 
+ */</span>
+  <span class="s0">constructor(topic, params, socket){</span>
+    <span class="s2">/** @type{ChannelState} */</span>
+    <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.closed</span>
+    <span class="s2">/** @type{string} */</span>
+    <span class="s3">this</span><span class="s0">.topic = topic</span>
+    <span class="s2">/** @type{() =&gt; Params} */</span>
+    <span class="s3">this</span><span class="s0">.params = closure(params || {})</span>
+    <span class="s2">/** @type {Socket} */</span>
+    <span class="s3">this</span><span class="s0">.socket = socket</span>
+    <span class="s2">/** @type{ChannelBinding[]} */</span>
+    <span class="s3">this</span><span class="s0">.bindings = []</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.bindingRef = </span><span class="s4">0</span>
+    <span class="s2">/** @type{number} */</span>
+    <span class="s3">this</span><span class="s0">.timeout = </span><span class="s3">this</span><span class="s0">.socket.timeout</span>
+    <span class="s2">/** @type{boolean} */</span>
+    <span class="s3">this</span><span class="s0">.joinedOnce = </span><span class="s3">false</span>
+    <span class="s2">/** @type{Push} */</span>
+    <span class="s3">this</span><span class="s0">.joinPush = </span><span class="s3">new </span><span class="s0">Push(</span><span class="s3">this</span><span class="s0">, CHANNEL_EVENTS.join, </span><span class="s3">this</span><span class="s0">.params, </span><span class="s3">this</span><span class="s0">.timeout)</span>
+    <span class="s2">/** @type{Push[]} */</span>
+    <span class="s3">this</span><span class="s0">.pushBuffer = []</span>
+    <span class="s2">/** @type{string[]} */</span>
+    <span class="s3">this</span><span class="s0">.stateChangeRefs = []</span>
+
+    <span class="s2">/** @type{Timer} */</span>
+    <span class="s3">this</span><span class="s0">.rejoinTimer = </span><span class="s3">new </span><span class="s0">Timer(() =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.isConnected()){ </span><span class="s3">this</span><span class="s0">.rejoin() }</span>
+    <span class="s0">}, </span><span class="s3">this</span><span class="s0">.socket.rejoinAfterMs)</span>
+    <span class="s3">this</span><span class="s0">.stateChangeRefs.push(</span><span class="s3">this</span><span class="s0">.socket.onError(() =&gt; </span><span class="s3">this</span><span class="s0">.rejoinTimer.reset()))</span>
+    <span class="s3">this</span><span class="s0">.stateChangeRefs.push(</span><span class="s3">this</span><span class="s0">.socket.onOpen(() =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.rejoinTimer.reset()</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.isErrored()){ </span><span class="s3">this</span><span class="s0">.rejoin() }</span>
+    <span class="s0">})</span>
+    <span class="s0">)</span>
+    <span class="s3">this</span><span class="s0">.joinPush.receive(</span><span class="s1">&quot;ok&quot;</span><span class="s0">, () =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.joined</span>
+      <span class="s3">this</span><span class="s0">.rejoinTimer.reset()</span>
+      <span class="s3">this</span><span class="s0">.pushBuffer.forEach(pushEvent =&gt; pushEvent.send())</span>
+      <span class="s3">this</span><span class="s0">.pushBuffer = []</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.joinPush.receive(</span><span class="s1">&quot;error&quot;</span><span class="s0">, (reason) =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.errored</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, `error ${</span><span class="s3">this</span><span class="s0">.topic}`, reason)</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.isConnected()){ </span><span class="s3">this</span><span class="s0">.rejoinTimer.scheduleTimeout() }</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.onClose(() =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.rejoinTimer.reset()</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, `close ${</span><span class="s3">this</span><span class="s0">.topic}`)</span>
+      <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.closed</span>
+      <span class="s3">this</span><span class="s0">.socket.remove(</span><span class="s3">this</span><span class="s0">)</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.onError(reason =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, `error ${</span><span class="s3">this</span><span class="s0">.topic}`, reason)</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.isJoining()){ </span><span class="s3">this</span><span class="s0">.joinPush.reset() }</span>
+      <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.errored</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.isConnected()){ </span><span class="s3">this</span><span class="s0">.rejoinTimer.scheduleTimeout() }</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.joinPush.receive(</span><span class="s1">&quot;timeout&quot;</span><span class="s0">, () =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, `timeout ${</span><span class="s3">this</span><span class="s0">.topic}`, </span><span class="s3">this</span><span class="s0">.joinPush.timeout)</span>
+      <span class="s0">let leavePush = </span><span class="s3">new </span><span class="s0">Push(</span><span class="s3">this</span><span class="s0">, CHANNEL_EVENTS.leave, closure({}), </span><span class="s3">this</span><span class="s0">.timeout)</span>
+      <span class="s0">leavePush.send()</span>
+      <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.errored</span>
+      <span class="s3">this</span><span class="s0">.joinPush.reset()</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.isConnected()){ </span><span class="s3">this</span><span class="s0">.rejoinTimer.scheduleTimeout() }</span>
+    <span class="s0">})</span>
+    <span class="s3">this</span><span class="s0">.on(CHANNEL_EVENTS.reply, (payload, ref) =&gt; {</span>
+      <span class="s3">this</span><span class="s0">.trigger(</span><span class="s3">this</span><span class="s0">.replyEventName(ref), payload)</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Join the channel 
+   * @param {number} timeout 
+   * @returns {Push} 
+   */</span>
+  <span class="s0">join(timeout = </span><span class="s3">this</span><span class="s0">.timeout){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.joinedOnce){</span>
+      <span class="s3">throw new </span><span class="s0">Error(</span><span class="s1">&quot;tried to join multiple times. 'join' can only be called a single time per channel instance&quot;</span><span class="s0">)</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">this</span><span class="s0">.timeout = timeout</span>
+      <span class="s3">this</span><span class="s0">.joinedOnce = </span><span class="s3">true</span>
+      <span class="s3">this</span><span class="s0">.rejoin()</span>
+      <span class="s3">return this</span><span class="s0">.joinPush</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Teardown the channel. 
+   * 
+   * Destroys and stops related timers. 
+   */</span>
+  <span class="s0">teardown(){</span>
+    <span class="s3">this</span><span class="s0">.pushBuffer.forEach((push) =&gt; push.destroy())</span>
+    <span class="s3">this</span><span class="s0">.pushBuffer = []</span>
+    <span class="s3">this</span><span class="s0">.rejoinTimer.reset()</span>
+    <span class="s3">this</span><span class="s0">.joinPush.destroy()</span>
+    <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.closed</span>
+    <span class="s3">this</span><span class="s0">.bindings = []</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Hook into channel close 
+   * @param {ChannelBindingCallback} callback 
+   */</span>
+  <span class="s0">onClose(callback){</span>
+    <span class="s3">this</span><span class="s0">.on(CHANNEL_EVENTS.close, callback)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Hook into channel errors 
+   * @param {ChannelOnErrorCallback} callback 
+   * @return {number} 
+   */</span>
+  <span class="s0">onError(callback){</span>
+    <span class="s3">return this</span><span class="s0">.on(CHANNEL_EVENTS.error, reason =&gt; callback(reason))</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Subscribes on channel events 
+   * 
+   * Subscription returns a ref counter, which can be used later to 
+   * unsubscribe the exact event listener 
+   * 
+   * @example 
+   * const ref1 = channel.on(&quot;event&quot;, do_stuff) 
+   * const ref2 = channel.on(&quot;event&quot;, do_other_stuff) 
+   * channel.off(&quot;event&quot;, ref1) 
+   * // Since unsubscription, do_stuff won't fire, 
+   * // while do_other_stuff will keep firing on the &quot;event&quot; 
+   * 
+   * @param {string} event 
+   * @param {ChannelBindingCallback} callback 
+   * @returns {number} ref 
+   */</span>
+  <span class="s0">on(event, callback){</span>
+    <span class="s0">let ref = </span><span class="s3">this</span><span class="s0">.bindingRef++</span>
+    <span class="s3">this</span><span class="s0">.bindings.push({event, ref, callback})</span>
+    <span class="s3">return </span><span class="s0">ref</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Unsubscribes off of channel events 
+   * 
+   * Use the ref returned from a channel.on() to unsubscribe one 
+   * handler, or pass nothing for the ref to unsubscribe all 
+   * handlers for the given event. 
+   * 
+   * @example 
+   * // Unsubscribe the do_stuff handler 
+   * const ref1 = channel.on(&quot;event&quot;, do_stuff) 
+   * channel.off(&quot;event&quot;, ref1) 
+   * 
+   * // Unsubscribe all handlers from event 
+   * channel.off(&quot;event&quot;) 
+   * 
+   * @param {string} event 
+   * @param {number} [ref] 
+   */</span>
+  <span class="s0">off(event, ref){</span>
+    <span class="s3">this</span><span class="s0">.bindings = </span><span class="s3">this</span><span class="s0">.bindings.filter((bind) =&gt; {</span>
+      <span class="s3">return </span><span class="s0">!(bind.event === event &amp;&amp; (</span><span class="s3">typeof </span><span class="s0">ref === </span><span class="s1">&quot;undefined&quot; </span><span class="s0">|| ref === bind.ref))</span>
+    <span class="s0">})</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @private 
+   */</span>
+  <span class="s0">canPush(){ </span><span class="s3">return this</span><span class="s0">.socket.isConnected() &amp;&amp; </span><span class="s3">this</span><span class="s0">.isJoined() }</span>
+
+  <span class="s2">/** 
+   * Sends a message `event` to phoenix with the payload `payload`. 
+   * Phoenix receives this in the `handle_in(event, payload, socket)` 
+   * function. if phoenix replies or it times out (default 10000ms), 
+   * then optionally the reply can be received. 
+   * 
+   * @example 
+   * channel.push(&quot;event&quot;) 
+   *   .receive(&quot;ok&quot;, payload =&gt; console.log(&quot;phoenix replied:&quot;, payload)) 
+   *   .receive(&quot;error&quot;, err =&gt; console.log(&quot;phoenix errored&quot;, err)) 
+   *   .receive(&quot;timeout&quot;, () =&gt; console.log(&quot;timed out pushing&quot;)) 
+   * @param {string} event 
+   * @param {Object} payload 
+   * @param {number} [timeout] 
+   * @returns {Push} 
+   */</span>
+  <span class="s0">push(event, payload, timeout = </span><span class="s3">this</span><span class="s0">.timeout){</span>
+    <span class="s0">payload = payload || {}</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.joinedOnce){</span>
+      <span class="s3">throw new </span><span class="s0">Error(`tried to push </span><span class="s1">'${event}' </span><span class="s0">to </span><span class="s1">'${this.topic}' </span><span class="s0">before joining. Use channel.join() before pushing events`)</span>
+    <span class="s0">}</span>
+    <span class="s0">let pushEvent = </span><span class="s3">new </span><span class="s0">Push(</span><span class="s3">this</span><span class="s0">, event, </span><span class="s3">function </span><span class="s0">(){ </span><span class="s3">return </span><span class="s0">payload }, timeout)</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.canPush()){</span>
+      <span class="s0">pushEvent.send()</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s0">pushEvent.startTimeout()</span>
+      <span class="s3">this</span><span class="s0">.pushBuffer.push(pushEvent)</span>
+    <span class="s0">}</span>
+
+    <span class="s3">return </span><span class="s0">pushEvent</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** Leaves the channel 
+   * 
+   * Unsubscribes from server events, and 
+   * instructs channel to terminate on server 
+   * 
+   * Triggers onClose() hooks 
+   * 
+   * To receive leave acknowledgements, use the `receive` 
+   * hook to bind to the server ack, ie: 
+   * 
+   * @example 
+   * channel.leave().receive(&quot;ok&quot;, () =&gt; alert(&quot;left!&quot;) ) 
+   * 
+   * @param {number} timeout 
+   * @returns {Push} 
+   */</span>
+  <span class="s0">leave(timeout = </span><span class="s3">this</span><span class="s0">.timeout){</span>
+    <span class="s3">this</span><span class="s0">.rejoinTimer.reset()</span>
+    <span class="s3">this</span><span class="s0">.joinPush.cancelTimeout()</span>
+
+    <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.leaving</span>
+    <span class="s0">let onClose = () =&gt; {</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, `leave ${</span><span class="s3">this</span><span class="s0">.topic}`)</span>
+      <span class="s3">this</span><span class="s0">.trigger(CHANNEL_EVENTS.close, </span><span class="s1">&quot;leave&quot;</span><span class="s0">)</span>
+    <span class="s0">}</span>
+    <span class="s0">let leavePush = </span><span class="s3">new </span><span class="s0">Push(</span><span class="s3">this</span><span class="s0">, CHANNEL_EVENTS.leave, closure({}), timeout)</span>
+    <span class="s0">leavePush.receive(</span><span class="s1">&quot;ok&quot;</span><span class="s0">, () =&gt; onClose())</span>
+      <span class="s0">.receive(</span><span class="s1">&quot;timeout&quot;</span><span class="s0">, () =&gt; onClose())</span>
+    <span class="s0">leavePush.send()</span>
+    <span class="s3">if</span><span class="s0">(!</span><span class="s3">this</span><span class="s0">.canPush()){ leavePush.trigger(</span><span class="s1">&quot;ok&quot;</span><span class="s0">, {}) }</span>
+
+    <span class="s3">return </span><span class="s0">leavePush</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * Overridable message hook 
+   * 
+   * Receives all events for specialized message handling 
+   * before dispatching to the channel callbacks. 
+   * 
+   * Must return the payload, modified or unmodified 
+   * @type{ChannelOnMessage} 
+   */</span>
+  <span class="s0">onMessage(_event, payload, _ref){ </span><span class="s3">return </span><span class="s0">payload }</span>
+
+  <span class="s2">/** 
+   * Overridable filter hook 
+   * 
+   * If this function returns `true`, `binding`'s callback will be called. 
+   * 
+   * @type{ChannelFilterBindings} 
+   */</span>
+  <span class="s0">filterBindings(_binding, _payload, _ref){ </span><span class="s3">return true </span><span class="s0">}</span>
+
+  <span class="s0">isMember(topic, event, payload, joinRef){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.topic !== topic){ </span><span class="s3">return false </span><span class="s0">}</span>
+
+    <span class="s3">if</span><span class="s0">(joinRef &amp;&amp; joinRef !== </span><span class="s3">this</span><span class="s0">.joinRef()){</span>
+      <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.socket.hasLogger()) </span><span class="s3">this</span><span class="s0">.socket.log(</span><span class="s1">&quot;channel&quot;</span><span class="s0">, </span><span class="s1">&quot;dropping outdated message&quot;</span><span class="s0">, {topic, event, payload, joinRef})</span>
+      <span class="s3">return false</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">return true</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s0">joinRef(){ </span><span class="s3">return this</span><span class="s0">.joinPush.ref }</span>
+
+  <span class="s2">/** 
+   * @private 
+   */</span>
+  <span class="s0">rejoin(timeout = </span><span class="s3">this</span><span class="s0">.timeout){</span>
+    <span class="s3">if</span><span class="s0">(</span><span class="s3">this</span><span class="s0">.isLeaving()){ </span><span class="s3">return </span><span class="s0">}</span>
+    <span class="s3">this</span><span class="s0">.socket.leaveOpenTopic(</span><span class="s3">this</span><span class="s0">.topic)</span>
+    <span class="s3">this</span><span class="s0">.state = CHANNEL_STATES.joining</span>
+    <span class="s3">this</span><span class="s0">.joinPush.resend(timeout)</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+   * @param {string} event 
+   * @param {unknown} [payload] 
+   * @param {?string} [ref] 
+   * @param {?string} [joinRef] 
+   */</span>
+  <span class="s0">trigger(event, payload, ref, joinRef){</span>
+    <span class="s0">let handledPayload = </span><span class="s3">this</span><span class="s0">.onMessage(event, payload, ref, joinRef)</span>
+    <span class="s3">if</span><span class="s0">(payload &amp;&amp; !handledPayload){ </span><span class="s3">throw new </span><span class="s0">Error(</span><span class="s1">&quot;channel onMessage callbacks must return the payload, modified or unmodified&quot;</span><span class="s0">) }</span>
+
+    <span class="s0">let eventBindings = </span><span class="s3">this</span><span class="s0">.bindings.filter(bind =&gt; bind.event === event &amp;&amp; </span><span class="s3">this</span><span class="s0">.filterBindings(bind, payload, ref))</span>
+
+    <span class="s3">for</span><span class="s0">(let i = </span><span class="s4">0</span><span class="s0">; i &lt; eventBindings.length; i++){</span>
+      <span class="s0">let bind = eventBindings[i]</span>
+      <span class="s0">bind.callback(handledPayload, ref, joinRef || </span><span class="s3">this</span><span class="s0">.joinRef())</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+
+  <span class="s2">/** 
+  * @param {string} ref 
+  */</span>
+  <span class="s0">replyEventName(ref){ </span><span class="s3">return </span><span class="s0">`chan_reply_${ref}` }</span>
+
+  <span class="s0">isClosed(){ </span><span class="s3">return this</span><span class="s0">.state === CHANNEL_STATES.closed }</span>
+
+  <span class="s0">isErrored(){ </span><span class="s3">return this</span><span class="s0">.state === CHANNEL_STATES.errored }</span>
+
+  <span class="s0">isJoined(){ </span><span class="s3">return this</span><span class="s0">.state === CHANNEL_STATES.joined }</span>
+
+  <span class="s0">isJoining(){ </span><span class="s3">return this</span><span class="s0">.state === CHANNEL_STATES.joining }</span>
+
+  <span class="s0">isLeaving(){ </span><span class="s3">return this</span><span class="s0">.state === CHANNEL_STATES.leaving }</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

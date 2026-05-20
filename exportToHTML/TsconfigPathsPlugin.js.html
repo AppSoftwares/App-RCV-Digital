@@ -1,0 +1,662 @@
+<html>
+<head>
+<title>TsconfigPathsPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+TsconfigPathsPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Natsu @xiaoxiaojx 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const { aliasResolveHandler, compileAliasOptions } = require(</span><span class="s2">&quot;./AliasUtils&quot;</span><span class="s1">);</span>
+<span class="s1">const { modulesResolveHandler } = require(</span><span class="s2">&quot;./ModulesUtils&quot;</span><span class="s1">);</span>
+<span class="s1">const { readJson } = require(</span><span class="s2">&quot;./util/fs&quot;</span><span class="s1">);</span>
+<span class="s1">const { PathType: _PathType, isSubPath, normalize } = require(</span><span class="s2">&quot;./util/path&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+<span class="s0">/** @typedef {import(&quot;./AliasUtils&quot;).AliasOption} AliasOption */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveContext} ResolveContext */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).FileSystem} FileSystem */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).TsconfigPathsData} TsconfigPathsData */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).TsconfigPathsMap} TsconfigPathsMap */</span>
+<span class="s0">/** @typedef {import(&quot;./ResolverFactory&quot;).TsconfigOptions} TsconfigOptions */</span>
+
+<span class="s0">/** 
+ * @typedef {object} TsconfigCompilerOptions 
+ * @property {string=} baseUrl Base URL for resolving paths 
+ * @property {{ [key: string]: string[] }=} paths TypeScript paths mapping 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} TsconfigReference 
+ * @property {string} path Path to the referenced project 
+ */</span>
+
+<span class="s0">/** 
+ * @typedef {object} Tsconfig 
+ * @property {TsconfigCompilerOptions=} compilerOptions Compiler options 
+ * @property {string | string[]=} extends Extended configuration paths 
+ * @property {TsconfigReference[]=} references Project references 
+ */</span>
+
+<span class="s1">const DEFAULT_CONFIG_FILE = </span><span class="s2">&quot;tsconfig.json&quot;</span><span class="s1">;</span>
+
+<span class="s0">/** 
+ * @param {string} pattern Path pattern 
+ * @returns {number} Length of the prefix 
+ */</span>
+<span class="s3">function </span><span class="s1">getPrefixLength(pattern) {</span>
+	<span class="s1">const prefixLength = pattern.indexOf(</span><span class="s2">&quot;*&quot;</span><span class="s1">);</span>
+	<span class="s3">if </span><span class="s1">(prefixLength === -</span><span class="s4">1</span><span class="s1">) {</span>
+		<span class="s3">return </span><span class="s1">pattern.length;</span>
+	<span class="s1">}</span>
+	<span class="s3">return </span><span class="s1">prefixLength;</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Sort path patterns. 
+ * If a module name can be matched with multiple patterns then pattern with the longest prefix will be picked. 
+ * @param {string[]} arr Array of path patterns 
+ * @returns {string[]} Array of path patterns sorted by longest prefix 
+ */</span>
+<span class="s3">function </span><span class="s1">sortByLongestPrefix(arr) {</span>
+	<span class="s3">return </span><span class="s1">[...arr].sort((a, b) =&gt; getPrefixLength(b) - getPrefixLength(a));</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Merge two tsconfig objects 
+ * @param {Tsconfig | null} base base config 
+ * @param {Tsconfig | null} config config to merge 
+ * @returns {Tsconfig} merged config 
+ */</span>
+<span class="s3">function </span><span class="s1">mergeTsconfigs(base, config) {</span>
+	<span class="s1">base = base || {};</span>
+	<span class="s1">config = config || {};</span>
+
+	<span class="s3">return </span><span class="s1">{</span>
+		<span class="s1">...base,</span>
+		<span class="s1">...config,</span>
+		<span class="s1">compilerOptions: {</span>
+			<span class="s1">...</span><span class="s0">/** @type {TsconfigCompilerOptions} */ </span><span class="s1">(base.compilerOptions),</span>
+			<span class="s1">...</span><span class="s0">/** @type {TsconfigCompilerOptions} */ </span><span class="s1">(config.compilerOptions),</span>
+		<span class="s1">},</span>
+	<span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Substitute ${configDir} template variable in path 
+ * @param {string} pathValue the path value 
+ * @param {string} configDir the config directory 
+ * @returns {string} the path with substituted template 
+ */</span>
+<span class="s3">function </span><span class="s1">substituteConfigDir(pathValue, configDir) {</span>
+	<span class="s3">return </span><span class="s1">pathValue.replace(/\$\{configDir\}/g, configDir);</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Convert tsconfig paths to resolver options 
+ * @param {string} configDir Config file directory 
+ * @param {{ [key: string]: string[] }} paths TypeScript paths mapping 
+ * @param {Resolver} resolver resolver instance 
+ * @param {string=} baseUrl Base URL for resolving paths (relative to configDir) 
+ * @returns {TsconfigPathsData} the resolver options 
+ */</span>
+<span class="s3">function </span><span class="s1">tsconfigPathsToResolveOptions(configDir, paths, resolver, baseUrl) {</span>
+	<span class="s0">// Calculate absolute base URL</span>
+	<span class="s1">const absoluteBaseUrl = !baseUrl</span>
+		<span class="s1">? configDir</span>
+		<span class="s1">: resolver.join(configDir, baseUrl);</span>
+
+	<span class="s0">/** @type {string[]} */</span>
+	<span class="s1">const sortedKeys = sortByLongestPrefix(Object.keys(paths));</span>
+	<span class="s0">/** @type {AliasOption[]} */</span>
+	<span class="s1">const alias = [];</span>
+	<span class="s0">/** @type {string[]} */</span>
+	<span class="s1">const modules = [];</span>
+
+	<span class="s3">for </span><span class="s1">(const pattern of sortedKeys) {</span>
+		<span class="s1">const mappings = paths[pattern];</span>
+		<span class="s0">// Substitute ${configDir} in path mappings</span>
+		<span class="s1">const absolutePaths = mappings.map((mapping) =&gt; {</span>
+			<span class="s1">const substituted = substituteConfigDir(mapping, configDir);</span>
+			<span class="s3">return </span><span class="s1">resolver.join(absoluteBaseUrl, substituted);</span>
+		<span class="s1">});</span>
+
+		<span class="s3">if </span><span class="s1">(absolutePaths.length &gt; </span><span class="s4">0</span><span class="s1">) {</span>
+			<span class="s3">if </span><span class="s1">(pattern === </span><span class="s2">&quot;*&quot;</span><span class="s1">) {</span>
+				<span class="s1">modules.push(</span>
+					<span class="s1">...absolutePaths</span>
+						<span class="s1">.map((dir) =&gt; {</span>
+							<span class="s3">if </span><span class="s1">(/[/\\]\*$/.test(dir)) {</span>
+								<span class="s3">return </span><span class="s1">dir.replace(/[/\\]\*$/, </span><span class="s2">&quot;&quot;</span><span class="s1">);</span>
+							<span class="s1">}</span>
+							<span class="s3">return </span><span class="s2">&quot;&quot;</span><span class="s1">;</span>
+						<span class="s1">})</span>
+						<span class="s1">.filter(Boolean),</span>
+				<span class="s1">);</span>
+			<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+				<span class="s1">alias.push({ name: pattern, alias: absolutePaths });</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s3">if </span><span class="s1">(absoluteBaseUrl &amp;&amp; !modules.includes(absoluteBaseUrl)) {</span>
+		<span class="s1">modules.push(absoluteBaseUrl);</span>
+	<span class="s1">}</span>
+
+	<span class="s3">return </span><span class="s1">{</span>
+		<span class="s1">alias: compileAliasOptions(resolver, alias),</span>
+		<span class="s1">modules,</span>
+	<span class="s1">};</span>
+<span class="s1">}</span>
+
+<span class="s0">/** 
+ * Get the base context for the current project 
+ * @param {string} context the context 
+ * @param {Resolver} resolver resolver instance 
+ * @param {string=} baseUrl base URL for resolving paths 
+ * @returns {string} the base context 
+ */</span>
+<span class="s3">function </span><span class="s1">getAbsoluteBaseUrl(context, resolver, baseUrl) {</span>
+	<span class="s3">return </span><span class="s1">!baseUrl ? context : resolver.join(context, baseUrl);</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = class TsconfigPathsPlugin {</span>
+	<span class="s0">/** 
+     * @param {true | string | TsconfigOptions} configFileOrOptions tsconfig file path or options object 
+     */</span>
+	<span class="s1">constructor(configFileOrOptions) {</span>
+		<span class="s3">if </span><span class="s1">(</span>
+			<span class="s3">typeof </span><span class="s1">configFileOrOptions === </span><span class="s2">&quot;object&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">configFileOrOptions !== </span><span class="s3">null</span>
+		<span class="s1">) {</span>
+			<span class="s0">// Options object format</span>
+			<span class="s1">const { configFile } = configFileOrOptions;</span>
+			<span class="s0">/** @type {boolean} */</span>
+			<span class="s3">this</span><span class="s1">.isAutoConfigFile = </span><span class="s3">typeof </span><span class="s1">configFile !== </span><span class="s2">&quot;string&quot;</span><span class="s1">;</span>
+			<span class="s0">/** @type {string} */</span>
+			<span class="s3">this</span><span class="s1">.configFile = </span><span class="s3">this</span><span class="s1">.isAutoConfigFile</span>
+				<span class="s1">? DEFAULT_CONFIG_FILE</span>
+				<span class="s1">: </span><span class="s0">/** @type {string} */ </span><span class="s1">(configFile);</span>
+			<span class="s0">/** @type {string[] | &quot;auto&quot;} */</span>
+			<span class="s3">if </span><span class="s1">(Array.isArray(configFileOrOptions.references)) {</span>
+				<span class="s0">/** @type {TsconfigReference[] | &quot;auto&quot;} */</span>
+				<span class="s3">this</span><span class="s1">.references = configFileOrOptions.references.map((ref) =&gt; ({</span>
+					<span class="s1">path: ref,</span>
+				<span class="s1">}));</span>
+			<span class="s1">} </span><span class="s3">else if </span><span class="s1">(configFileOrOptions.references === </span><span class="s2">&quot;auto&quot;</span><span class="s1">) {</span>
+				<span class="s3">this</span><span class="s1">.references = </span><span class="s2">&quot;auto&quot;</span><span class="s1">;</span>
+			<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+				<span class="s3">this</span><span class="s1">.references = [];</span>
+			<span class="s1">}</span>
+			<span class="s0">/** @type {string | undefined} */</span>
+			<span class="s3">this</span><span class="s1">.baseUrl = configFileOrOptions.baseUrl;</span>
+		<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+			<span class="s0">/** @type {boolean} */</span>
+			<span class="s3">this</span><span class="s1">.isAutoConfigFile = configFileOrOptions === </span><span class="s3">true</span><span class="s1">;</span>
+			<span class="s0">/** @type {string} */</span>
+			<span class="s3">this</span><span class="s1">.configFile = </span><span class="s3">this</span><span class="s1">.isAutoConfigFile</span>
+				<span class="s1">? DEFAULT_CONFIG_FILE</span>
+				<span class="s1">: </span><span class="s0">/** @type {string} */ </span><span class="s1">(configFileOrOptions);</span>
+			<span class="s0">/** @type {TsconfigReference[] | &quot;auto&quot;} */</span>
+			<span class="s3">this</span><span class="s1">.references = [];</span>
+			<span class="s0">/** @type {string | undefined} */</span>
+			<span class="s3">this</span><span class="s1">.baseUrl = undefined;</span>
+		<span class="s1">}</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const aliasTarget = resolver.ensureHook(</span><span class="s2">&quot;internal-resolve&quot;</span><span class="s1">);</span>
+		<span class="s1">const moduleTarget = resolver.ensureHook(</span><span class="s2">&quot;module&quot;</span><span class="s1">);</span>
+
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s2">&quot;raw-resolve&quot;</span><span class="s1">)</span>
+			<span class="s1">.tapAsync(</span>
+				<span class="s2">&quot;TsconfigPathsPlugin&quot;</span><span class="s1">,</span>
+				<span class="s1">async (request, resolveContext, callback) =&gt; {</span>
+					<span class="s3">try </span><span class="s1">{</span>
+						<span class="s1">const tsconfigPathsMap = await </span><span class="s3">this</span><span class="s1">._getTsconfigPathsMap(</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">request,</span>
+							<span class="s1">resolveContext,</span>
+						<span class="s1">);</span>
+
+						<span class="s3">if </span><span class="s1">(!tsconfigPathsMap) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+						<span class="s1">const selectedData = </span><span class="s3">this</span><span class="s1">._selectPathsDataForContext(</span>
+							<span class="s1">request.path,</span>
+							<span class="s1">tsconfigPathsMap,</span>
+						<span class="s1">);</span>
+
+						<span class="s3">if </span><span class="s1">(!selectedData) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+						<span class="s1">aliasResolveHandler(</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">selectedData.alias,</span>
+							<span class="s1">aliasTarget,</span>
+							<span class="s1">request,</span>
+							<span class="s1">resolveContext,</span>
+							<span class="s1">callback,</span>
+						<span class="s1">);</span>
+					<span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+						<span class="s1">callback(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(err));</span>
+					<span class="s1">}</span>
+				<span class="s1">},</span>
+			<span class="s1">);</span>
+
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s2">&quot;raw-module&quot;</span><span class="s1">)</span>
+			<span class="s1">.tapAsync(</span>
+				<span class="s2">&quot;TsconfigPathsPlugin&quot;</span><span class="s1">,</span>
+				<span class="s1">async (request, resolveContext, callback) =&gt; {</span>
+					<span class="s3">try </span><span class="s1">{</span>
+						<span class="s1">const tsconfigPathsMap = await </span><span class="s3">this</span><span class="s1">._getTsconfigPathsMap(</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">request,</span>
+							<span class="s1">resolveContext,</span>
+						<span class="s1">);</span>
+
+						<span class="s3">if </span><span class="s1">(!tsconfigPathsMap) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+						<span class="s1">const selectedData = </span><span class="s3">this</span><span class="s1">._selectPathsDataForContext(</span>
+							<span class="s1">request.path,</span>
+							<span class="s1">tsconfigPathsMap,</span>
+						<span class="s1">);</span>
+
+						<span class="s3">if </span><span class="s1">(!selectedData) </span><span class="s3">return </span><span class="s1">callback();</span>
+
+						<span class="s1">modulesResolveHandler(</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">selectedData.modules,</span>
+							<span class="s1">moduleTarget,</span>
+							<span class="s1">request,</span>
+							<span class="s1">resolveContext,</span>
+							<span class="s1">callback,</span>
+						<span class="s1">);</span>
+					<span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+						<span class="s1">callback(</span><span class="s0">/** @type {Error} */ </span><span class="s1">(err));</span>
+					<span class="s1">}</span>
+				<span class="s1">},</span>
+			<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Get TsconfigPathsMap for the request (with caching) 
+     * @param {Resolver} resolver the resolver 
+     * @param {ResolveRequest} request the request 
+     * @param {ResolveContext} resolveContext the resolve context 
+     * @returns {Promise&lt;TsconfigPathsMap | null&gt;} the tsconfig paths map or null 
+     */</span>
+	<span class="s1">async _getTsconfigPathsMap(resolver, request, resolveContext) {</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">request.tsconfigPathsMap === </span><span class="s2">&quot;undefined&quot;</span><span class="s1">) {</span>
+			<span class="s3">try </span><span class="s1">{</span>
+				<span class="s1">const absTsconfigPath = resolver.join(</span>
+					<span class="s1">request.path || process.cwd(),</span>
+					<span class="s3">this</span><span class="s1">.configFile,</span>
+				<span class="s1">);</span>
+				<span class="s1">const result = await </span><span class="s3">this</span><span class="s1">._loadTsconfigPathsMap(</span>
+					<span class="s1">resolver,</span>
+					<span class="s1">absTsconfigPath,</span>
+				<span class="s1">);</span>
+
+				<span class="s1">request.tsconfigPathsMap = result;</span>
+			<span class="s1">} </span><span class="s3">catch </span><span class="s1">(err) {</span>
+				<span class="s1">request.tsconfigPathsMap = </span><span class="s3">null</span><span class="s1">;</span>
+				<span class="s3">if </span><span class="s1">(</span>
+					<span class="s3">this</span><span class="s1">.isAutoConfigFile &amp;&amp;</span>
+					<span class="s0">/** @type {NodeJS.ErrnoException} */ </span><span class="s1">(err).code === </span><span class="s2">&quot;ENOENT&quot;</span>
+				<span class="s1">) {</span>
+					<span class="s3">return null</span><span class="s1">;</span>
+				<span class="s1">}</span>
+				<span class="s3">throw </span><span class="s1">err;</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(!request.tsconfigPathsMap) {</span>
+			<span class="s3">return null</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s3">for </span><span class="s1">(const fileDependency of request.tsconfigPathsMap.fileDependencies) {</span>
+			<span class="s3">if </span><span class="s1">(resolveContext.fileDependencies) {</span>
+				<span class="s1">resolveContext.fileDependencies.add(fileDependency);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s3">return </span><span class="s1">request.tsconfigPathsMap;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Load tsconfig.json and build complete TsconfigPathsMap 
+     * Includes main project paths and all referenced projects 
+     * @param {Resolver} resolver the resolver 
+     * @param {string} absTsconfigPath absolute path to tsconfig.json 
+     * @returns {Promise&lt;TsconfigPathsMap&gt;} the complete tsconfig paths map 
+     */</span>
+	<span class="s1">async _loadTsconfigPathsMap(resolver, absTsconfigPath) {</span>
+		<span class="s0">/** @type {Set&lt;string&gt;} */</span>
+		<span class="s1">const fileDependencies = </span><span class="s3">new </span><span class="s1">Set();</span>
+		<span class="s1">const config = await </span><span class="s3">this</span><span class="s1">._loadTsconfig(</span>
+			<span class="s1">resolver,</span>
+			<span class="s1">absTsconfigPath,</span>
+			<span class="s1">fileDependencies,</span>
+		<span class="s1">);</span>
+
+		<span class="s1">const compilerOptions = config.compilerOptions || {};</span>
+		<span class="s1">const mainContext = resolver.dirname(absTsconfigPath);</span>
+
+		<span class="s1">const baseUrl =</span>
+			<span class="s3">this</span><span class="s1">.baseUrl !== undefined ? </span><span class="s3">this</span><span class="s1">.baseUrl : compilerOptions.baseUrl;</span>
+
+		<span class="s1">const main = tsconfigPathsToResolveOptions(</span>
+			<span class="s1">mainContext,</span>
+			<span class="s1">compilerOptions.paths || {},</span>
+			<span class="s1">resolver,</span>
+			<span class="s1">baseUrl,</span>
+		<span class="s1">);</span>
+		<span class="s0">/** @type {{ [baseUrl: string]: TsconfigPathsData }} */</span>
+		<span class="s1">const refs = {};</span>
+
+		<span class="s1">let referencesToUse = </span><span class="s3">null</span><span class="s1">;</span>
+		<span class="s3">if </span><span class="s1">(</span><span class="s3">this</span><span class="s1">.references === </span><span class="s2">&quot;auto&quot;</span><span class="s1">) {</span>
+			<span class="s1">referencesToUse = config.references;</span>
+		<span class="s1">} </span><span class="s3">else if </span><span class="s1">(Array.isArray(</span><span class="s3">this</span><span class="s1">.references)) {</span>
+			<span class="s1">referencesToUse = </span><span class="s3">this</span><span class="s1">.references;</span>
+		<span class="s1">}</span>
+
+		<span class="s3">if </span><span class="s1">(Array.isArray(referencesToUse)) {</span>
+			<span class="s1">await </span><span class="s3">this</span><span class="s1">._loadTsconfigReferences(</span>
+				<span class="s1">resolver,</span>
+				<span class="s1">mainContext,</span>
+				<span class="s1">referencesToUse,</span>
+				<span class="s1">fileDependencies,</span>
+				<span class="s1">refs,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const allContexts =</span>
+			<span class="s0">/** @type {{ [context: string]: TsconfigPathsData }} */ </span><span class="s1">({</span>
+				<span class="s1">[mainContext]: main,</span>
+				<span class="s1">...refs,</span>
+			<span class="s1">});</span>
+		<span class="s0">// Precompute the key list once per tsconfig load. `_selectPathsDataForContext`</span>
+		<span class="s0">// runs per resolve and otherwise would call `Object.entries(allContexts)`</span>
+		<span class="s0">// each time, allocating a fresh [key, value][] array.</span>
+		<span class="s1">const contextList = Object.keys(allContexts);</span>
+		<span class="s3">return </span><span class="s1">{</span>
+			<span class="s1">main,</span>
+			<span class="s1">mainContext,</span>
+			<span class="s1">refs,</span>
+			<span class="s1">allContexts,</span>
+			<span class="s1">contextList,</span>
+			<span class="s1">fileDependencies,</span>
+		<span class="s1">};</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Select the correct TsconfigPathsData based on request.path (context-aware) 
+     * Matches the behavior of tsconfig-paths-webpack-plugin 
+     * @param {string | false} requestPath the request path 
+     * @param {TsconfigPathsMap} tsconfigPathsMap the tsconfig paths map 
+     * @returns {TsconfigPathsData | null} the selected paths data 
+     */</span>
+	<span class="s1">_selectPathsDataForContext(requestPath, tsconfigPathsMap) {</span>
+		<span class="s1">const { main, allContexts, contextList } = tsconfigPathsMap;</span>
+		<span class="s3">if </span><span class="s1">(!requestPath) {</span>
+			<span class="s3">return </span><span class="s1">main;</span>
+		<span class="s1">}</span>
+		<span class="s1">let longestMatch = </span><span class="s3">null</span><span class="s1">;</span>
+		<span class="s1">let longestMatchLength = </span><span class="s4">0</span><span class="s1">;</span>
+		<span class="s0">// Iterate over the pre-computed key list + indexed access into</span>
+		<span class="s0">// `allContexts` — the previous `Object.entries(allContexts)` form</span>
+		<span class="s0">// allocated a fresh `[key, value][]` array on every resolve.</span>
+		<span class="s3">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; contextList.length; i++) {</span>
+			<span class="s1">const context = contextList[i];</span>
+			<span class="s1">const data = allContexts[context];</span>
+			<span class="s3">if </span><span class="s1">(context === requestPath) {</span>
+				<span class="s3">return </span><span class="s1">data;</span>
+			<span class="s1">}</span>
+			<span class="s3">if </span><span class="s1">(</span>
+				<span class="s1">isSubPath(context, requestPath) &amp;&amp;</span>
+				<span class="s1">context.length &gt; longestMatchLength</span>
+			<span class="s1">) {</span>
+				<span class="s1">longestMatch = data;</span>
+				<span class="s1">longestMatchLength = context.length;</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+		<span class="s3">if </span><span class="s1">(longestMatch) {</span>
+			<span class="s3">return </span><span class="s1">longestMatch;</span>
+		<span class="s1">}</span>
+		<span class="s3">return null</span><span class="s1">;</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Load tsconfig from extends path 
+     * @param {Resolver} resolver the resolver 
+     * @param {string} configFilePath current config file path 
+     * @param {string} extendedConfigValue extends value 
+     * @param {Set&lt;string&gt;} fileDependencies the file dependencies 
+     * @param {Set&lt;string&gt;} visitedConfigPaths config paths being loaded (for circular extends detection) 
+     * @returns {Promise&lt;Tsconfig&gt;} the extended tsconfig 
+     */</span>
+	<span class="s1">async _loadTsconfigFromExtends(</span>
+		<span class="s1">resolver,</span>
+		<span class="s1">configFilePath,</span>
+		<span class="s1">extendedConfigValue,</span>
+		<span class="s1">fileDependencies,</span>
+		<span class="s1">visitedConfigPaths,</span>
+	<span class="s1">) {</span>
+		<span class="s1">const { fileSystem } = resolver;</span>
+		<span class="s1">const currentDir = resolver.dirname(configFilePath);</span>
+
+		<span class="s0">// Substitute ${configDir} in extends path</span>
+		<span class="s1">extendedConfigValue = substituteConfigDir(extendedConfigValue, currentDir);</span>
+
+		<span class="s0">// Remember the original value before potentially appending .json</span>
+		<span class="s1">const originalExtendedConfigValue = extendedConfigValue;</span>
+
+		<span class="s3">if </span><span class="s1">(</span>
+			<span class="s3">typeof </span><span class="s1">extendedConfigValue === </span><span class="s2">&quot;string&quot; </span><span class="s1">&amp;&amp;</span>
+			<span class="s1">!extendedConfigValue.includes(</span><span class="s2">&quot;.json&quot;</span><span class="s1">)</span>
+		<span class="s1">) {</span>
+			<span class="s1">extendedConfigValue += </span><span class="s2">&quot;.json&quot;</span><span class="s1">;</span>
+		<span class="s1">}</span>
+
+		<span class="s1">let extendedConfigPath = resolver.join(currentDir, extendedConfigValue);</span>
+
+		<span class="s1">const exists = await </span><span class="s3">new </span><span class="s1">Promise((resolve) =&gt; {</span>
+			<span class="s1">fileSystem.readFile(extendedConfigPath, (err) =&gt; {</span>
+				<span class="s1">resolve(!err);</span>
+			<span class="s1">});</span>
+		<span class="s1">});</span>
+		<span class="s3">if </span><span class="s1">(!exists) {</span>
+			<span class="s0">// Handle scoped package extends like &quot;@scope/name&quot; (no sub-path):</span>
+			<span class="s0">// &quot;@scope/name&quot; should resolve to node_modules/@scope/name/tsconfig.json,</span>
+			<span class="s0">// not node_modules/@scope/name.json</span>
+			<span class="s0">// See: test/fixtures/tsconfig-paths/extends-pkg-entry/</span>
+			<span class="s3">if </span><span class="s1">(</span>
+				<span class="s3">typeof </span><span class="s1">originalExtendedConfigValue === </span><span class="s2">&quot;string&quot; </span><span class="s1">&amp;&amp;</span>
+				<span class="s1">originalExtendedConfigValue.startsWith(</span><span class="s2">&quot;@&quot;</span><span class="s1">) &amp;&amp;</span>
+				<span class="s1">originalExtendedConfigValue.split(</span><span class="s2">&quot;/&quot;</span><span class="s1">).length === </span><span class="s4">2</span>
+			<span class="s1">) {</span>
+				<span class="s1">extendedConfigPath = resolver.join(</span>
+					<span class="s1">currentDir,</span>
+					<span class="s1">normalize(</span>
+						<span class="s1">`node_modules/${originalExtendedConfigValue}/${DEFAULT_CONFIG_FILE}`,</span>
+					<span class="s1">),</span>
+				<span class="s1">);</span>
+			<span class="s1">} </span><span class="s3">else if </span><span class="s1">(extendedConfigValue.includes(</span><span class="s2">&quot;/&quot;</span><span class="s1">)) {</span>
+				<span class="s0">// Handle package sub-path extends like &quot;react/tsconfig&quot;:</span>
+				<span class="s0">// &quot;react/tsconfig&quot; resolves to node_modules/react/tsconfig.json</span>
+				<span class="s0">// See: test/fixtures/tsconfig-paths/extends-npm/</span>
+				<span class="s1">extendedConfigPath = resolver.join(</span>
+					<span class="s1">currentDir,</span>
+					<span class="s1">normalize(`node_modules/${extendedConfigValue}`),</span>
+				<span class="s1">);</span>
+			<span class="s1">}</span>
+		<span class="s1">}</span>
+
+		<span class="s1">const config = await </span><span class="s3">this</span><span class="s1">._loadTsconfig(</span>
+			<span class="s1">resolver,</span>
+			<span class="s1">extendedConfigPath,</span>
+			<span class="s1">fileDependencies,</span>
+			<span class="s1">visitedConfigPaths,</span>
+		<span class="s1">);</span>
+		<span class="s1">const compilerOptions = config.compilerOptions || { baseUrl: undefined };</span>
+
+		<span class="s3">if </span><span class="s1">(compilerOptions.baseUrl) {</span>
+			<span class="s1">const extendedConfigDir = resolver.dirname(extendedConfigPath);</span>
+			<span class="s1">compilerOptions.baseUrl = getAbsoluteBaseUrl(</span>
+				<span class="s1">extendedConfigDir,</span>
+				<span class="s1">resolver,</span>
+				<span class="s1">compilerOptions.baseUrl,</span>
+			<span class="s1">);</span>
+		<span class="s1">}</span>
+
+		<span class="s3">delete </span><span class="s1">config.references;</span>
+
+		<span class="s3">return </span><span class="s0">/** @type {Tsconfig} */ </span><span class="s1">(config);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Load referenced tsconfig projects and store in referenceMatchMap 
+     * Simple implementation matching tsconfig-paths-webpack-plugin: 
+     * Just load each reference and store independently 
+     * @param {Resolver} resolver the resolver 
+     * @param {string} context the context 
+     * @param {TsconfigReference[]} references array of references 
+     * @param {Set&lt;string&gt;} fileDependencies the file dependencies 
+     * @param {{ [baseUrl: string]: TsconfigPathsData }} referenceMatchMap the map to populate 
+     * @returns {Promise&lt;void&gt;} 
+     */</span>
+	<span class="s1">async _loadTsconfigReferences(</span>
+		<span class="s1">resolver,</span>
+		<span class="s1">context,</span>
+		<span class="s1">references,</span>
+		<span class="s1">fileDependencies,</span>
+		<span class="s1">referenceMatchMap,</span>
+	<span class="s1">) {</span>
+		<span class="s1">await Promise.all(</span>
+			<span class="s1">references.map(async (ref) =&gt; {</span>
+				<span class="s1">const refPath = substituteConfigDir(ref.path, context);</span>
+				<span class="s1">const refConfigPath = resolver.join(</span>
+					<span class="s1">resolver.join(context, refPath),</span>
+					<span class="s1">DEFAULT_CONFIG_FILE,</span>
+				<span class="s1">);</span>
+
+				<span class="s3">try </span><span class="s1">{</span>
+					<span class="s1">const refConfig = await </span><span class="s3">this</span><span class="s1">._loadTsconfig(</span>
+						<span class="s1">resolver,</span>
+						<span class="s1">refConfigPath,</span>
+						<span class="s1">fileDependencies,</span>
+					<span class="s1">);</span>
+
+					<span class="s3">if </span><span class="s1">(refConfig.compilerOptions &amp;&amp; refConfig.compilerOptions.paths) {</span>
+						<span class="s1">const refContext = resolver.dirname(refConfigPath);</span>
+
+						<span class="s1">referenceMatchMap[refContext] = tsconfigPathsToResolveOptions(</span>
+							<span class="s1">refContext,</span>
+							<span class="s1">refConfig.compilerOptions.paths || {},</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">refConfig.compilerOptions.baseUrl,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+
+					<span class="s3">if </span><span class="s1">(</span>
+						<span class="s3">this</span><span class="s1">.references === </span><span class="s2">&quot;auto&quot; </span><span class="s1">&amp;&amp;</span>
+						<span class="s1">Array.isArray(refConfig.references)</span>
+					<span class="s1">) {</span>
+						<span class="s1">await </span><span class="s3">this</span><span class="s1">._loadTsconfigReferences(</span>
+							<span class="s1">resolver,</span>
+							<span class="s1">resolver.dirname(refConfigPath),</span>
+							<span class="s1">refConfig.references,</span>
+							<span class="s1">fileDependencies,</span>
+							<span class="s1">referenceMatchMap,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+				<span class="s1">} </span><span class="s3">catch </span><span class="s1">(_err) {</span>
+					<span class="s0">// continue</span>
+				<span class="s1">}</span>
+			<span class="s1">}),</span>
+		<span class="s1">);</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * Load tsconfig.json with extends support 
+     * @param {Resolver} resolver the resolver 
+     * @param {string} configFilePath absolute path to tsconfig.json 
+     * @param {Set&lt;string&gt;} fileDependencies the file dependencies 
+     * @param {Set&lt;string&gt;=} visitedConfigPaths config paths being loaded (for circular extends detection) 
+     * @returns {Promise&lt;Tsconfig&gt;} the merged tsconfig 
+     */</span>
+	<span class="s1">async _loadTsconfig(</span>
+		<span class="s1">resolver,</span>
+		<span class="s1">configFilePath,</span>
+		<span class="s1">fileDependencies,</span>
+		<span class="s1">visitedConfigPaths = </span><span class="s3">new </span><span class="s1">Set(),</span>
+	<span class="s1">) {</span>
+		<span class="s3">if </span><span class="s1">(visitedConfigPaths.has(configFilePath)) {</span>
+			<span class="s3">return </span><span class="s0">/** @type {Tsconfig} */ </span><span class="s1">({});</span>
+		<span class="s1">}</span>
+		<span class="s1">visitedConfigPaths.add(configFilePath);</span>
+		<span class="s1">const config = await readJson(resolver.fileSystem, configFilePath, {</span>
+			<span class="s1">stripComments: </span><span class="s3">true</span><span class="s1">,</span>
+		<span class="s1">});</span>
+		<span class="s1">fileDependencies.add(configFilePath);</span>
+
+		<span class="s1">let result = config;</span>
+
+		<span class="s1">const extendedConfig = config.extends;</span>
+		<span class="s3">if </span><span class="s1">(extendedConfig) {</span>
+			<span class="s1">let base;</span>
+
+			<span class="s3">if </span><span class="s1">(Array.isArray(extendedConfig)) {</span>
+				<span class="s1">base = {};</span>
+				<span class="s3">for </span><span class="s1">(const extendedConfigElement of extendedConfig) {</span>
+					<span class="s1">const extendedTsconfig = await </span><span class="s3">this</span><span class="s1">._loadTsconfigFromExtends(</span>
+						<span class="s1">resolver,</span>
+						<span class="s1">configFilePath,</span>
+						<span class="s1">extendedConfigElement,</span>
+						<span class="s1">fileDependencies,</span>
+						<span class="s1">visitedConfigPaths,</span>
+					<span class="s1">);</span>
+					<span class="s1">base = mergeTsconfigs(base, extendedTsconfig);</span>
+				<span class="s1">}</span>
+			<span class="s1">} </span><span class="s3">else </span><span class="s1">{</span>
+				<span class="s1">base = await </span><span class="s3">this</span><span class="s1">._loadTsconfigFromExtends(</span>
+					<span class="s1">resolver,</span>
+					<span class="s1">configFilePath,</span>
+					<span class="s1">extendedConfig,</span>
+					<span class="s1">fileDependencies,</span>
+					<span class="s1">visitedConfigPaths,</span>
+				<span class="s1">);</span>
+			<span class="s1">}</span>
+
+			<span class="s1">result = </span><span class="s0">/** @type {Tsconfig} */ </span><span class="s1">(mergeTsconfigs(base, config));</span>
+		<span class="s1">}</span>
+
+		<span class="s3">return </span><span class="s1">result;</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

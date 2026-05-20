@@ -1,0 +1,549 @@
+<html>
+<head>
+<title>permessage-deflate.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #2aacb8;}
+.s3 { color: #7a7e85;}
+.s4 { color: #cf8e6d;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+permessage-deflate.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span><span class="s1">;</span>
+
+<span class="s1">const zlib = require(</span><span class="s0">'zlib'</span><span class="s1">);</span>
+
+<span class="s1">const bufferUtil = require(</span><span class="s0">'./buffer-util'</span><span class="s1">);</span>
+<span class="s1">const Limiter = require(</span><span class="s0">'./limiter'</span><span class="s1">);</span>
+<span class="s1">const { kStatusCode } = require(</span><span class="s0">'./constants'</span><span class="s1">);</span>
+
+<span class="s1">const FastBuffer = Buffer[Symbol.species];</span>
+<span class="s1">const TRAILER = Buffer.from([</span><span class="s2">0</span><span class="s1">x00, </span><span class="s2">0</span><span class="s1">x00, </span><span class="s2">0</span><span class="s1">xff, </span><span class="s2">0</span><span class="s1">xff]);</span>
+<span class="s1">const kPerMessageDeflate = Symbol(</span><span class="s0">'permessage-deflate'</span><span class="s1">);</span>
+<span class="s1">const kTotalLength = Symbol(</span><span class="s0">'total-length'</span><span class="s1">);</span>
+<span class="s1">const kCallback = Symbol(</span><span class="s0">'callback'</span><span class="s1">);</span>
+<span class="s1">const kBuffers = Symbol(</span><span class="s0">'buffers'</span><span class="s1">);</span>
+<span class="s1">const kError = Symbol(</span><span class="s0">'error'</span><span class="s1">);</span>
+
+<span class="s3">//</span>
+<span class="s3">// We limit zlib concurrency, which prevents severe memory fragmentation</span>
+<span class="s3">// as documented in https://github.com/nodejs/node/issues/8871#issuecomment-250915913</span>
+<span class="s3">// and https://github.com/websockets/ws/issues/1202</span>
+<span class="s3">//</span>
+<span class="s3">// Intentionally global; it's the global thread pool that's an issue.</span>
+<span class="s3">//</span>
+<span class="s1">let zlibLimiter;</span>
+
+<span class="s3">/** 
+ * permessage-deflate implementation. 
+ */</span>
+<span class="s1">class PerMessageDeflate {</span>
+  <span class="s3">/** 
+   * Creates a PerMessageDeflate instance. 
+   * 
+   * @param {Object} [options] Configuration options 
+   * @param {(Boolean|Number)} [options.clientMaxWindowBits] Advertise support 
+   *     for, or request, a custom client window size 
+   * @param {Boolean} [options.clientNoContextTakeover=false] Advertise/ 
+   *     acknowledge disabling of client context takeover 
+   * @param {Number} [options.concurrencyLimit=10] The number of concurrent 
+   *     calls to zlib 
+   * @param {Boolean} [options.isServer=false] Create the instance in either 
+   *     server or client mode 
+   * @param {Number} [options.maxPayload=0] The maximum allowed message length 
+   * @param {(Boolean|Number)} [options.serverMaxWindowBits] Request/confirm the 
+   *     use of a custom server window size 
+   * @param {Boolean} [options.serverNoContextTakeover=false] Request/accept 
+   *     disabling of server context takeover 
+   * @param {Number} [options.threshold=1024] Size (in bytes) below which 
+   *     messages should not be compressed if context takeover is disabled 
+   * @param {Object} [options.zlibDeflateOptions] Options to pass to zlib on 
+   *     deflate 
+   * @param {Object} [options.zlibInflateOptions] Options to pass to zlib on 
+   *     inflate 
+   */</span>
+  <span class="s1">constructor(options) {</span>
+    <span class="s4">this</span><span class="s1">._options = options || {};</span>
+    <span class="s4">this</span><span class="s1">._threshold =</span>
+      <span class="s4">this</span><span class="s1">._options.threshold !== undefined ? </span><span class="s4">this</span><span class="s1">._options.threshold : </span><span class="s2">1024</span><span class="s1">;</span>
+    <span class="s4">this</span><span class="s1">._maxPayload = </span><span class="s4">this</span><span class="s1">._options.maxPayload | </span><span class="s2">0</span><span class="s1">;</span>
+    <span class="s4">this</span><span class="s1">._isServer = !!</span><span class="s4">this</span><span class="s1">._options.isServer;</span>
+    <span class="s4">this</span><span class="s1">._deflate = </span><span class="s4">null</span><span class="s1">;</span>
+    <span class="s4">this</span><span class="s1">._inflate = </span><span class="s4">null</span><span class="s1">;</span>
+
+    <span class="s4">this</span><span class="s1">.params = </span><span class="s4">null</span><span class="s1">;</span>
+
+    <span class="s4">if </span><span class="s1">(!zlibLimiter) {</span>
+      <span class="s1">const concurrency =</span>
+        <span class="s4">this</span><span class="s1">._options.concurrencyLimit !== undefined</span>
+          <span class="s1">? </span><span class="s4">this</span><span class="s1">._options.concurrencyLimit</span>
+          <span class="s1">: </span><span class="s2">10</span><span class="s1">;</span>
+      <span class="s1">zlibLimiter = </span><span class="s4">new </span><span class="s1">Limiter(concurrency);</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * @type {String} 
+   */</span>
+  <span class="s1">static get extensionName() {</span>
+    <span class="s4">return </span><span class="s0">'permessage-deflate'</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Create an extension negotiation offer. 
+   * 
+   * @return {Object} Extension parameters 
+   * @public 
+   */</span>
+  <span class="s1">offer() {</span>
+    <span class="s1">const params = {};</span>
+
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._options.serverNoContextTakeover) {</span>
+      <span class="s1">params.server_no_context_takeover = </span><span class="s4">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._options.clientNoContextTakeover) {</span>
+      <span class="s1">params.client_no_context_takeover = </span><span class="s4">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._options.serverMaxWindowBits) {</span>
+      <span class="s1">params.server_max_window_bits = </span><span class="s4">this</span><span class="s1">._options.serverMaxWindowBits;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._options.clientMaxWindowBits) {</span>
+      <span class="s1">params.client_max_window_bits = </span><span class="s4">this</span><span class="s1">._options.clientMaxWindowBits;</span>
+    <span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._options.clientMaxWindowBits == </span><span class="s4">null</span><span class="s1">) {</span>
+      <span class="s1">params.client_max_window_bits = </span><span class="s4">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s4">return </span><span class="s1">params;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Accept an extension negotiation offer/response. 
+   * 
+   * @param {Array} configurations The extension negotiation offers/reponse 
+   * @return {Object} Accepted configuration 
+   * @public 
+   */</span>
+  <span class="s1">accept(configurations) {</span>
+    <span class="s1">configurations = </span><span class="s4">this</span><span class="s1">.normalizeParams(configurations);</span>
+
+    <span class="s4">this</span><span class="s1">.params = </span><span class="s4">this</span><span class="s1">._isServer</span>
+      <span class="s1">? </span><span class="s4">this</span><span class="s1">.acceptAsServer(configurations)</span>
+      <span class="s1">: </span><span class="s4">this</span><span class="s1">.acceptAsClient(configurations);</span>
+
+    <span class="s4">return this</span><span class="s1">.params;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Releases all resources used by the extension. 
+   * 
+   * @public 
+   */</span>
+  <span class="s1">cleanup() {</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._inflate) {</span>
+      <span class="s4">this</span><span class="s1">._inflate.close();</span>
+      <span class="s4">this</span><span class="s1">._inflate = </span><span class="s4">null</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._deflate) {</span>
+      <span class="s1">const callback = </span><span class="s4">this</span><span class="s1">._deflate[kCallback];</span>
+
+      <span class="s4">this</span><span class="s1">._deflate.close();</span>
+      <span class="s4">this</span><span class="s1">._deflate = </span><span class="s4">null</span><span class="s1">;</span>
+
+      <span class="s4">if </span><span class="s1">(callback) {</span>
+        <span class="s1">callback(</span>
+          <span class="s4">new </span><span class="s1">Error(</span>
+            <span class="s0">'The deflate stream was closed while data was being processed'</span>
+          <span class="s1">)</span>
+        <span class="s1">);</span>
+      <span class="s1">}</span>
+    <span class="s1">}</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   *  Accept an extension negotiation offer. 
+   * 
+   * @param {Array} offers The extension negotiation offers 
+   * @return {Object} Accepted configuration 
+   * @private 
+   */</span>
+  <span class="s1">acceptAsServer(offers) {</span>
+    <span class="s1">const opts = </span><span class="s4">this</span><span class="s1">._options;</span>
+    <span class="s1">const accepted = offers.find((params) =&gt; {</span>
+      <span class="s4">if </span><span class="s1">(</span>
+        <span class="s1">(opts.serverNoContextTakeover === </span><span class="s4">false </span><span class="s1">&amp;&amp;</span>
+          <span class="s1">params.server_no_context_takeover) ||</span>
+        <span class="s1">(params.server_max_window_bits &amp;&amp;</span>
+          <span class="s1">(opts.serverMaxWindowBits === </span><span class="s4">false </span><span class="s1">||</span>
+            <span class="s1">(</span><span class="s4">typeof </span><span class="s1">opts.serverMaxWindowBits === </span><span class="s0">'number' </span><span class="s1">&amp;&amp;</span>
+              <span class="s1">opts.serverMaxWindowBits &gt; params.server_max_window_bits))) ||</span>
+        <span class="s1">(</span><span class="s4">typeof </span><span class="s1">opts.clientMaxWindowBits === </span><span class="s0">'number' </span><span class="s1">&amp;&amp;</span>
+          <span class="s1">!params.client_max_window_bits)</span>
+      <span class="s1">) {</span>
+        <span class="s4">return false</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s4">return true</span><span class="s1">;</span>
+    <span class="s1">});</span>
+
+    <span class="s4">if </span><span class="s1">(!accepted) {</span>
+      <span class="s4">throw new </span><span class="s1">Error(</span><span class="s0">'None of the extension offers can be accepted'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s4">if </span><span class="s1">(opts.serverNoContextTakeover) {</span>
+      <span class="s1">accepted.server_no_context_takeover = </span><span class="s4">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(opts.clientNoContextTakeover) {</span>
+      <span class="s1">accepted.client_no_context_takeover = </span><span class="s4">true</span><span class="s1">;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">opts.serverMaxWindowBits === </span><span class="s0">'number'</span><span class="s1">) {</span>
+      <span class="s1">accepted.server_max_window_bits = opts.serverMaxWindowBits;</span>
+    <span class="s1">}</span>
+    <span class="s4">if </span><span class="s1">(</span><span class="s4">typeof </span><span class="s1">opts.clientMaxWindowBits === </span><span class="s0">'number'</span><span class="s1">) {</span>
+      <span class="s1">accepted.client_max_window_bits = opts.clientMaxWindowBits;</span>
+    <span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+      <span class="s1">accepted.client_max_window_bits === </span><span class="s4">true </span><span class="s1">||</span>
+      <span class="s1">opts.clientMaxWindowBits === </span><span class="s4">false</span>
+    <span class="s1">) {</span>
+      <span class="s4">delete </span><span class="s1">accepted.client_max_window_bits;</span>
+    <span class="s1">}</span>
+
+    <span class="s4">return </span><span class="s1">accepted;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Accept the extension negotiation response. 
+   * 
+   * @param {Array} response The extension negotiation response 
+   * @return {Object} Accepted configuration 
+   * @private 
+   */</span>
+  <span class="s1">acceptAsClient(response) {</span>
+    <span class="s1">const params = response[</span><span class="s2">0</span><span class="s1">];</span>
+
+    <span class="s4">if </span><span class="s1">(</span>
+      <span class="s4">this</span><span class="s1">._options.clientNoContextTakeover === </span><span class="s4">false </span><span class="s1">&amp;&amp;</span>
+      <span class="s1">params.client_no_context_takeover</span>
+    <span class="s1">) {</span>
+      <span class="s4">throw new </span><span class="s1">Error(</span><span class="s0">'Unexpected parameter &quot;client_no_context_takeover&quot;'</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s4">if </span><span class="s1">(!params.client_max_window_bits) {</span>
+      <span class="s4">if </span><span class="s1">(</span><span class="s4">typeof this</span><span class="s1">._options.clientMaxWindowBits === </span><span class="s0">'number'</span><span class="s1">) {</span>
+        <span class="s1">params.client_max_window_bits = </span><span class="s4">this</span><span class="s1">._options.clientMaxWindowBits;</span>
+      <span class="s1">}</span>
+    <span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+      <span class="s4">this</span><span class="s1">._options.clientMaxWindowBits === </span><span class="s4">false </span><span class="s1">||</span>
+      <span class="s1">(</span><span class="s4">typeof this</span><span class="s1">._options.clientMaxWindowBits === </span><span class="s0">'number' </span><span class="s1">&amp;&amp;</span>
+        <span class="s1">params.client_max_window_bits &gt; </span><span class="s4">this</span><span class="s1">._options.clientMaxWindowBits)</span>
+    <span class="s1">) {</span>
+      <span class="s4">throw new </span><span class="s1">Error(</span>
+        <span class="s0">'Unexpected or invalid parameter &quot;client_max_window_bits&quot;'</span>
+      <span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s4">return </span><span class="s1">params;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Normalize parameters. 
+   * 
+   * @param {Array} configurations The extension negotiation offers/reponse 
+   * @return {Array} The offers/response with normalized parameters 
+   * @private 
+   */</span>
+  <span class="s1">normalizeParams(configurations) {</span>
+    <span class="s1">configurations.forEach((params) =&gt; {</span>
+      <span class="s1">Object.keys(params).forEach((key) =&gt; {</span>
+        <span class="s1">let value = params[key];</span>
+
+        <span class="s4">if </span><span class="s1">(value.length &gt; </span><span class="s2">1</span><span class="s1">) {</span>
+          <span class="s4">throw new </span><span class="s1">Error(`Parameter </span><span class="s0">&quot;${key}&quot; </span><span class="s1">must have only a single value`);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">value = value[</span><span class="s2">0</span><span class="s1">];</span>
+
+        <span class="s4">if </span><span class="s1">(key === </span><span class="s0">'client_max_window_bits'</span><span class="s1">) {</span>
+          <span class="s4">if </span><span class="s1">(value !== </span><span class="s4">true</span><span class="s1">) {</span>
+            <span class="s1">const num = +value;</span>
+            <span class="s4">if </span><span class="s1">(!Number.isInteger(num) || num &lt; </span><span class="s2">8 </span><span class="s1">|| num &gt; </span><span class="s2">15</span><span class="s1">) {</span>
+              <span class="s4">throw new </span><span class="s1">TypeError(</span>
+                <span class="s1">`Invalid value </span><span class="s4">for </span><span class="s1">parameter </span><span class="s0">&quot;${key}&quot;</span><span class="s1">: ${value}`</span>
+              <span class="s1">);</span>
+            <span class="s1">}</span>
+            <span class="s1">value = num;</span>
+          <span class="s1">} </span><span class="s4">else if </span><span class="s1">(!</span><span class="s4">this</span><span class="s1">._isServer) {</span>
+            <span class="s4">throw new </span><span class="s1">TypeError(</span>
+              <span class="s1">`Invalid value </span><span class="s4">for </span><span class="s1">parameter </span><span class="s0">&quot;${key}&quot;</span><span class="s1">: ${value}`</span>
+            <span class="s1">);</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s4">else if </span><span class="s1">(key === </span><span class="s0">'server_max_window_bits'</span><span class="s1">) {</span>
+          <span class="s1">const num = +value;</span>
+          <span class="s4">if </span><span class="s1">(!Number.isInteger(num) || num &lt; </span><span class="s2">8 </span><span class="s1">|| num &gt; </span><span class="s2">15</span><span class="s1">) {</span>
+            <span class="s4">throw new </span><span class="s1">TypeError(</span>
+              <span class="s1">`Invalid value </span><span class="s4">for </span><span class="s1">parameter </span><span class="s0">&quot;${key}&quot;</span><span class="s1">: ${value}`</span>
+            <span class="s1">);</span>
+          <span class="s1">}</span>
+          <span class="s1">value = num;</span>
+        <span class="s1">} </span><span class="s4">else if </span><span class="s1">(</span>
+          <span class="s1">key === </span><span class="s0">'client_no_context_takeover' </span><span class="s1">||</span>
+          <span class="s1">key === </span><span class="s0">'server_no_context_takeover'</span>
+        <span class="s1">) {</span>
+          <span class="s4">if </span><span class="s1">(value !== </span><span class="s4">true</span><span class="s1">) {</span>
+            <span class="s4">throw new </span><span class="s1">TypeError(</span>
+              <span class="s1">`Invalid value </span><span class="s4">for </span><span class="s1">parameter </span><span class="s0">&quot;${key}&quot;</span><span class="s1">: ${value}`</span>
+            <span class="s1">);</span>
+          <span class="s1">}</span>
+        <span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+          <span class="s4">throw new </span><span class="s1">Error(`Unknown parameter </span><span class="s0">&quot;${key}&quot;</span><span class="s1">`);</span>
+        <span class="s1">}</span>
+
+        <span class="s1">params[key] = value;</span>
+      <span class="s1">});</span>
+    <span class="s1">});</span>
+
+    <span class="s4">return </span><span class="s1">configurations;</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Decompress data. Concurrency limited. 
+   * 
+   * @param {Buffer} data Compressed data 
+   * @param {Boolean} fin Specifies whether or not this is the last fragment 
+   * @param {Function} callback Callback 
+   * @public 
+   */</span>
+  <span class="s1">decompress(data, fin, callback) {</span>
+    <span class="s1">zlibLimiter.add((done) =&gt; {</span>
+      <span class="s4">this</span><span class="s1">._decompress(data, fin, (err, result) =&gt; {</span>
+        <span class="s1">done();</span>
+        <span class="s1">callback(err, result);</span>
+      <span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Compress data. Concurrency limited. 
+   * 
+   * @param {(Buffer|String)} data Data to compress 
+   * @param {Boolean} fin Specifies whether or not this is the last fragment 
+   * @param {Function} callback Callback 
+   * @public 
+   */</span>
+  <span class="s1">compress(data, fin, callback) {</span>
+    <span class="s1">zlibLimiter.add((done) =&gt; {</span>
+      <span class="s4">this</span><span class="s1">._compress(data, fin, (err, result) =&gt; {</span>
+        <span class="s1">done();</span>
+        <span class="s1">callback(err, result);</span>
+      <span class="s1">});</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Decompress data. 
+   * 
+   * @param {Buffer} data Compressed data 
+   * @param {Boolean} fin Specifies whether or not this is the last fragment 
+   * @param {Function} callback Callback 
+   * @private 
+   */</span>
+  <span class="s1">_decompress(data, fin, callback) {</span>
+    <span class="s1">const endpoint = </span><span class="s4">this</span><span class="s1">._isServer ? </span><span class="s0">'client' </span><span class="s1">: </span><span class="s0">'server'</span><span class="s1">;</span>
+
+    <span class="s4">if </span><span class="s1">(!</span><span class="s4">this</span><span class="s1">._inflate) {</span>
+      <span class="s1">const key = `${endpoint}_max_window_bits`;</span>
+      <span class="s1">const windowBits =</span>
+        <span class="s4">typeof this</span><span class="s1">.params[key] !== </span><span class="s0">'number'</span>
+          <span class="s1">? zlib.Z_DEFAULT_WINDOWBITS</span>
+          <span class="s1">: </span><span class="s4">this</span><span class="s1">.params[key];</span>
+
+      <span class="s4">this</span><span class="s1">._inflate = zlib.createInflateRaw({</span>
+        <span class="s1">...</span><span class="s4">this</span><span class="s1">._options.zlibInflateOptions,</span>
+        <span class="s1">windowBits</span>
+      <span class="s1">});</span>
+      <span class="s4">this</span><span class="s1">._inflate[kPerMessageDeflate] = </span><span class="s4">this</span><span class="s1">;</span>
+      <span class="s4">this</span><span class="s1">._inflate[kTotalLength] = </span><span class="s2">0</span><span class="s1">;</span>
+      <span class="s4">this</span><span class="s1">._inflate[kBuffers] = [];</span>
+      <span class="s4">this</span><span class="s1">._inflate.on(</span><span class="s0">'error'</span><span class="s1">, inflateOnError);</span>
+      <span class="s4">this</span><span class="s1">._inflate.on(</span><span class="s0">'data'</span><span class="s1">, inflateOnData);</span>
+    <span class="s1">}</span>
+
+    <span class="s4">this</span><span class="s1">._inflate[kCallback] = callback;</span>
+
+    <span class="s4">this</span><span class="s1">._inflate.write(data);</span>
+    <span class="s4">if </span><span class="s1">(fin) </span><span class="s4">this</span><span class="s1">._inflate.write(TRAILER);</span>
+
+    <span class="s4">this</span><span class="s1">._inflate.flush(() =&gt; {</span>
+      <span class="s1">const err = </span><span class="s4">this</span><span class="s1">._inflate[kError];</span>
+
+      <span class="s4">if </span><span class="s1">(err) {</span>
+        <span class="s4">this</span><span class="s1">._inflate.close();</span>
+        <span class="s4">this</span><span class="s1">._inflate = </span><span class="s4">null</span><span class="s1">;</span>
+        <span class="s1">callback(err);</span>
+        <span class="s4">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">const data = bufferUtil.concat(</span>
+        <span class="s4">this</span><span class="s1">._inflate[kBuffers],</span>
+        <span class="s4">this</span><span class="s1">._inflate[kTotalLength]</span>
+      <span class="s1">);</span>
+
+      <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">._inflate._readableState.endEmitted) {</span>
+        <span class="s4">this</span><span class="s1">._inflate.close();</span>
+        <span class="s4">this</span><span class="s1">._inflate = </span><span class="s4">null</span><span class="s1">;</span>
+      <span class="s1">} </span><span class="s4">else </span><span class="s1">{</span>
+        <span class="s4">this</span><span class="s1">._inflate[kTotalLength] = </span><span class="s2">0</span><span class="s1">;</span>
+        <span class="s4">this</span><span class="s1">._inflate[kBuffers] = [];</span>
+
+        <span class="s4">if </span><span class="s1">(fin &amp;&amp; </span><span class="s4">this</span><span class="s1">.params[`${endpoint}_no_context_takeover`]) {</span>
+          <span class="s4">this</span><span class="s1">._inflate.reset();</span>
+        <span class="s1">}</span>
+      <span class="s1">}</span>
+
+      <span class="s1">callback(</span><span class="s4">null</span><span class="s1">, data);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+
+  <span class="s3">/** 
+   * Compress data. 
+   * 
+   * @param {(Buffer|String)} data Data to compress 
+   * @param {Boolean} fin Specifies whether or not this is the last fragment 
+   * @param {Function} callback Callback 
+   * @private 
+   */</span>
+  <span class="s1">_compress(data, fin, callback) {</span>
+    <span class="s1">const endpoint = </span><span class="s4">this</span><span class="s1">._isServer ? </span><span class="s0">'server' </span><span class="s1">: </span><span class="s0">'client'</span><span class="s1">;</span>
+
+    <span class="s4">if </span><span class="s1">(!</span><span class="s4">this</span><span class="s1">._deflate) {</span>
+      <span class="s1">const key = `${endpoint}_max_window_bits`;</span>
+      <span class="s1">const windowBits =</span>
+        <span class="s4">typeof this</span><span class="s1">.params[key] !== </span><span class="s0">'number'</span>
+          <span class="s1">? zlib.Z_DEFAULT_WINDOWBITS</span>
+          <span class="s1">: </span><span class="s4">this</span><span class="s1">.params[key];</span>
+
+      <span class="s4">this</span><span class="s1">._deflate = zlib.createDeflateRaw({</span>
+        <span class="s1">...</span><span class="s4">this</span><span class="s1">._options.zlibDeflateOptions,</span>
+        <span class="s1">windowBits</span>
+      <span class="s1">});</span>
+
+      <span class="s4">this</span><span class="s1">._deflate[kTotalLength] = </span><span class="s2">0</span><span class="s1">;</span>
+      <span class="s4">this</span><span class="s1">._deflate[kBuffers] = [];</span>
+
+      <span class="s4">this</span><span class="s1">._deflate.on(</span><span class="s0">'data'</span><span class="s1">, deflateOnData);</span>
+    <span class="s1">}</span>
+
+    <span class="s4">this</span><span class="s1">._deflate[kCallback] = callback;</span>
+
+    <span class="s4">this</span><span class="s1">._deflate.write(data);</span>
+    <span class="s4">this</span><span class="s1">._deflate.flush(zlib.Z_SYNC_FLUSH, () =&gt; {</span>
+      <span class="s4">if </span><span class="s1">(!</span><span class="s4">this</span><span class="s1">._deflate) {</span>
+        <span class="s3">//</span>
+        <span class="s3">// The deflate stream was closed while data was being processed.</span>
+        <span class="s3">//</span>
+        <span class="s4">return</span><span class="s1">;</span>
+      <span class="s1">}</span>
+
+      <span class="s1">let data = bufferUtil.concat(</span>
+        <span class="s4">this</span><span class="s1">._deflate[kBuffers],</span>
+        <span class="s4">this</span><span class="s1">._deflate[kTotalLength]</span>
+      <span class="s1">);</span>
+
+      <span class="s4">if </span><span class="s1">(fin) {</span>
+        <span class="s1">data = </span><span class="s4">new </span><span class="s1">FastBuffer(data.buffer, data.byteOffset, data.length - </span><span class="s2">4</span><span class="s1">);</span>
+      <span class="s1">}</span>
+
+      <span class="s3">//</span>
+      <span class="s3">// Ensure that the callback will not be called again in</span>
+      <span class="s3">// `PerMessageDeflate#cleanup()`.</span>
+      <span class="s3">//</span>
+      <span class="s4">this</span><span class="s1">._deflate[kCallback] = </span><span class="s4">null</span><span class="s1">;</span>
+
+      <span class="s4">this</span><span class="s1">._deflate[kTotalLength] = </span><span class="s2">0</span><span class="s1">;</span>
+      <span class="s4">this</span><span class="s1">._deflate[kBuffers] = [];</span>
+
+      <span class="s4">if </span><span class="s1">(fin &amp;&amp; </span><span class="s4">this</span><span class="s1">.params[`${endpoint}_no_context_takeover`]) {</span>
+        <span class="s4">this</span><span class="s1">._deflate.reset();</span>
+      <span class="s1">}</span>
+
+      <span class="s1">callback(</span><span class="s4">null</span><span class="s1">, data);</span>
+    <span class="s1">});</span>
+  <span class="s1">}</span>
+<span class="s1">}</span>
+
+<span class="s1">module.exports = PerMessageDeflate;</span>
+
+<span class="s3">/** 
+ * The listener of the `zlib.DeflateRaw` stream `'data'` event. 
+ * 
+ * @param {Buffer} chunk A chunk of data 
+ * @private 
+ */</span>
+<span class="s4">function </span><span class="s1">deflateOnData(chunk) {</span>
+  <span class="s4">this</span><span class="s1">[kBuffers].push(chunk);</span>
+  <span class="s4">this</span><span class="s1">[kTotalLength] += chunk.length;</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * The listener of the `zlib.InflateRaw` stream `'data'` event. 
+ * 
+ * @param {Buffer} chunk A chunk of data 
+ * @private 
+ */</span>
+<span class="s4">function </span><span class="s1">inflateOnData(chunk) {</span>
+  <span class="s4">this</span><span class="s1">[kTotalLength] += chunk.length;</span>
+
+  <span class="s4">if </span><span class="s1">(</span>
+    <span class="s4">this</span><span class="s1">[kPerMessageDeflate]._maxPayload &lt; </span><span class="s2">1 </span><span class="s1">||</span>
+    <span class="s4">this</span><span class="s1">[kTotalLength] &lt;= </span><span class="s4">this</span><span class="s1">[kPerMessageDeflate]._maxPayload</span>
+  <span class="s1">) {</span>
+    <span class="s4">this</span><span class="s1">[kBuffers].push(chunk);</span>
+    <span class="s4">return</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s4">this</span><span class="s1">[kError] = </span><span class="s4">new </span><span class="s1">RangeError(</span><span class="s0">'Max payload size exceeded'</span><span class="s1">);</span>
+  <span class="s4">this</span><span class="s1">[kError].code = </span><span class="s0">'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH'</span><span class="s1">;</span>
+  <span class="s4">this</span><span class="s1">[kError][kStatusCode] = </span><span class="s2">1009</span><span class="s1">;</span>
+  <span class="s4">this</span><span class="s1">.removeListener(</span><span class="s0">'data'</span><span class="s1">, inflateOnData);</span>
+
+  <span class="s3">//</span>
+  <span class="s3">// The choice to employ `zlib.reset()` over `zlib.close()` is dictated by the</span>
+  <span class="s3">// fact that in Node.js versions prior to 13.10.0, the callback for</span>
+  <span class="s3">// `zlib.flush()` is not called if `zlib.close()` is used. Utilizing</span>
+  <span class="s3">// `zlib.reset()` ensures that either the callback is invoked or an error is</span>
+  <span class="s3">// emitted.</span>
+  <span class="s3">//</span>
+  <span class="s4">this</span><span class="s1">.reset();</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * The listener of the `zlib.InflateRaw` stream `'error'` event. 
+ * 
+ * @param {Error} err The emitted error 
+ * @private 
+ */</span>
+<span class="s4">function </span><span class="s1">inflateOnError(err) {</span>
+  <span class="s3">//</span>
+  <span class="s3">// There is no need to call `Zlib#close()` as the handle is automatically</span>
+  <span class="s3">// closed when an error is emitted.</span>
+  <span class="s3">//</span>
+  <span class="s4">this</span><span class="s1">[kPerMessageDeflate]._inflate = </span><span class="s4">null</span><span class="s1">;</span>
+
+  <span class="s4">if </span><span class="s1">(</span><span class="s4">this</span><span class="s1">[kError]) {</span>
+    <span class="s4">this</span><span class="s1">[kCallback](</span><span class="s4">this</span><span class="s1">[kError]);</span>
+    <span class="s4">return</span><span class="s1">;</span>
+  <span class="s1">}</span>
+
+  <span class="s1">err[kStatusCode] = </span><span class="s2">1007</span><span class="s1">;</span>
+  <span class="s4">this</span><span class="s1">[kCallback](err);</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

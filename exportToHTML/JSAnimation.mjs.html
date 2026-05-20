@@ -1,0 +1,414 @@
+<html>
+<head>
+<title>JSAnimation.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+JSAnimation.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ invariant, pipe, clamp, millisecondsToSeconds, secondsToMilliseconds } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ time } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/sync-time.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ activeAnimations } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../stats/animation-count.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ mix } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../utils/mix/index.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frameloopDriver } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./drivers/frame.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ inertia } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./generators/inertia.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ keyframes } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./generators/keyframes.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ calcGeneratorDuration } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./generators/utils/calc-duration.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getGeneratorVelocity } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./generators/utils/velocity.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ getFinalKeyframe } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./keyframes/get-final.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ replaceTransitionType } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/replace-transition-type.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ WithPromise } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/WithPromise.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s4">percentToProgress </span><span class="s2">= (percent) </span><span class="s0">=&gt; </span><span class="s2">percent / </span><span class="s5">100</span><span class="s2">;</span>
+<span class="s0">class </span><span class="s2">JSAnimation </span><span class="s0">extends </span><span class="s2">WithPromise {</span>
+    <span class="s0">constructor</span><span class="s2">(options) {</span>
+        <span class="s2">super</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">idle</span><span class="s2">&quot;;</span>
+        <span class="s2">this.startTime = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">this.isStopped = </span><span class="s6">false</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* The current time of the animation. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.currentTime = </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* The time at which the animation was paused. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.holdTime = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* Playback speed as a factor. 0 would be stopped, -1 reverse and 2 double speed. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.playbackSpeed = </span><span class="s5">1</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* Reusable state object for the delay phase to avoid 
+         * allocating a new object every frame. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.delayState = {</span>
+            <span class="s1">done</span><span class="s2">: </span><span class="s6">false</span><span class="s2">,</span>
+            <span class="s1">value</span><span class="s2">: </span><span class="s6">undefined</span><span class="s2">,</span>
+        <span class="s2">};</span>
+        <span class="s2">/**</span>
+         <span class="s7">* This method is bound to the instance to fix a pattern where 
+         * animation.stop is returned as a reference from a useEffect. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.</span><span class="s4">stop </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">{ motionValue } = this.options;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">motionValue &amp;&amp; motionValue.updatedAt !== time.</span><span class="s4">now</span><span class="s1">()) </span><span class="s2">{</span>
+                <span class="s2">this.</span><span class="s4">tick</span><span class="s1">(</span><span class="s2">time.</span><span class="s4">now</span><span class="s1">())</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">this.isStopped = </span><span class="s6">true</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">idle</span><span class="s2">&quot;</span><span class="s1">)</span>
+                <span class="s0">return</span><span class="s2">;</span>
+            <span class="s2">this.</span><span class="s4">teardown</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">this.options.</span><span class="s4">onStop</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s2">activeAnimations.mainThread++;</span>
+        <span class="s2">this.options = options;</span>
+        <span class="s2">this.</span><span class="s4">initAnimation</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s4">play</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">options.autoplay === </span><span class="s6">false</span><span class="s1">)</span>
+            <span class="s2">this.</span><span class="s4">pause</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">initAnimation</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">{ options } = this;</span>
+        <span class="s4">replaceTransitionType</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ type = keyframes, repeat = </span><span class="s5">0</span><span class="s2">, repeatDelay = </span><span class="s5">0</span><span class="s2">, repeatType, velocity = </span><span class="s5">0</span><span class="s2">, } = options;</span>
+        <span class="s0">let </span><span class="s2">{ keyframes: keyframes$1 } = options;</span>
+        <span class="s0">const </span><span class="s2">generatorFactory = type || keyframes;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">process.env.NODE_ENV !== &quot;</span><span class="s3">production</span><span class="s2">&quot; &amp;&amp;</span>
+            <span class="s2">generatorFactory !== keyframes</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s4">invariant</span><span class="s1">(</span><span class="s2">keyframes$1.</span><span class="s1">length </span><span class="s2">&lt;= </span><span class="s5">2</span><span class="s2">, `</span><span class="s3">Only two keyframes currently supported with spring and inertia animations. Trying to animate </span><span class="s2">${keyframes$1}`, &quot;</span><span class="s3">spring-two-frames</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">generatorFactory !== keyframes &amp;&amp;</span>
+            <span class="s2">typeof keyframes$1</span><span class="s1">[</span><span class="s5">0</span><span class="s1">] </span><span class="s2">!== &quot;</span><span class="s3">number</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.mixKeyframes = </span><span class="s4">pipe</span><span class="s1">(</span><span class="s2">percentToProgress, </span><span class="s4">mix</span><span class="s1">(</span><span class="s2">keyframes$1</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">, keyframes$1</span><span class="s1">[</span><span class="s5">1</span><span class="s1">]))</span><span class="s2">;</span>
+            <span class="s2">keyframes$1 = </span><span class="s1">[</span><span class="s5">0</span><span class="s2">, </span><span class="s5">100</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">generator = </span><span class="s4">generatorFactory</span><span class="s1">(</span><span class="s2">{ ...options, </span><span class="s1">keyframes</span><span class="s2">: keyframes$1 }</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* If we have a mirror repeat type we need to create a second generator that outputs the 
+         * mirrored (not reversed) animation and later ping pong between the two generators. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">repeatType === &quot;</span><span class="s3">mirror</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.mirroredGenerator = </span><span class="s4">generatorFactory</span><span class="s1">(</span><span class="s2">{</span>
+                <span class="s2">...options,</span>
+                <span class="s1">keyframes</span><span class="s2">: </span><span class="s1">[</span><span class="s2">...keyframes$1</span><span class="s1">]</span><span class="s2">.</span><span class="s4">reverse</span><span class="s1">()</span><span class="s2">,</span>
+                <span class="s1">velocity</span><span class="s2">: -velocity,</span>
+            <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s7">* If duration is undefined and we have repeat options, 
+         * we need to calculate a duration from the generator. 
+         * 
+         * We set it to the generator itself to cache the duration. 
+         * Any timeline resolver will need to have already precalculated 
+         * the duration by this step. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">generator.calculatedDuration === </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">generator.calculatedDuration = </span><span class="s4">calcGeneratorDuration</span><span class="s1">(</span><span class="s2">generator</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">{ calculatedDuration } = generator;</span>
+        <span class="s2">this.calculatedDuration = calculatedDuration;</span>
+        <span class="s2">this.resolvedDuration = calculatedDuration + repeatDelay;</span>
+        <span class="s2">this.totalDuration = this.resolvedDuration * </span><span class="s1">(</span><span class="s2">repeat + </span><span class="s5">1</span><span class="s1">) </span><span class="s2">- repeatDelay;</span>
+        <span class="s2">this.generator = generator;</span>
+    <span class="s2">}</span>
+    <span class="s4">updateTime</span><span class="s2">(timestamp) {</span>
+        <span class="s0">const </span><span class="s2">animationTime = Math.</span><span class="s4">round</span><span class="s1">(</span><span class="s2">timestamp - this.startTime</span><span class="s1">) </span><span class="s2">* this.playbackSpeed;</span>
+        <span class="s2">// </span><span class="s7">Update currentTime</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.holdTime !== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.currentTime = this.holdTime;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">// </span><span class="s7">Rounding the time because floating point arithmetic is not always accurate, e.g. 3000.367 - 1000.367 =</span>
+            <span class="s2">// </span><span class="s7">2000.0000000000002. This is a problem when we are comparing the currentTime with the duration, for</span>
+            <span class="s2">// </span><span class="s7">example.</span>
+            <span class="s2">this.currentTime = animationTime;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s4">tick</span><span class="s2">(timestamp, sample = </span><span class="s6">false</span><span class="s2">) {</span>
+        <span class="s0">const </span><span class="s2">{ generator, totalDuration, mixKeyframes, mirroredGenerator, resolvedDuration, calculatedDuration, } = this;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.startTime === </span><span class="s6">null</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">generator.</span><span class="s4">next</span><span class="s1">(</span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ delay = </span><span class="s5">0</span><span class="s2">, keyframes, repeat, repeatType, repeatDelay, type, onUpdate, finalKeyframe, } = this.options;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* requestAnimationFrame timestamps can come through as lower than 
+         * the startTime as set by performance.now(). Here we prevent this, 
+         * though in the future it could be possible to make setting startTime 
+         * a pending operation that gets resolved here. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.speed &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">this.startTime, timestamp</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">this.speed &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">timestamp - totalDuration / this.speed, this.startTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">sample</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.currentTime = timestamp;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">updateTime</span><span class="s1">(</span><span class="s2">timestamp</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s7">Rebase on delay</span>
+        <span class="s0">const </span><span class="s2">timeWithoutDelay = this.currentTime - delay * </span><span class="s1">(</span><span class="s2">this.playbackSpeed &gt;= </span><span class="s5">0 </span><span class="s2">? </span><span class="s5">1 </span><span class="s2">: -</span><span class="s5">1</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">isInDelayPhase = this.playbackSpeed &gt;= </span><span class="s5">0</span>
+            <span class="s2">? timeWithoutDelay &lt; </span><span class="s5">0</span>
+            <span class="s2">: timeWithoutDelay &gt; totalDuration;</span>
+        <span class="s2">this.currentTime = Math.</span><span class="s4">max</span><span class="s1">(</span><span class="s2">timeWithoutDelay, </span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s7">If this animation has finished, set the current time  to the total duration.</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">finished</span><span class="s2">&quot; &amp;&amp; this.holdTime === </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.currentTime = totalDuration;</span>
+        <span class="s2">}</span>
+        <span class="s0">let </span><span class="s2">elapsed = this.currentTime;</span>
+        <span class="s0">let </span><span class="s2">frameGenerator = generator;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">repeat</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">/**</span>
+             <span class="s7">* Get the current progress (0-1) of the animation. If t is &gt; 
+             * than duration we'll get values like 2.5 (midway through the 
+             * third iteration) 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">progress = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">this.currentTime, totalDuration</span><span class="s1">) </span><span class="s2">/ resolvedDuration;</span>
+            <span class="s2">/**</span>
+             <span class="s7">* Get the current iteration (0 indexed). For instance the floor of 
+             * 2.5 is 2. 
+             </span><span class="s2">*/</span>
+            <span class="s0">let </span><span class="s2">currentIteration = Math.</span><span class="s4">floor</span><span class="s1">(</span><span class="s2">progress</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s7">* Get the current progress of the iteration by taking the remainder 
+             * so 2.5 is 0.5 through iteration 2 
+             </span><span class="s2">*/</span>
+            <span class="s0">let </span><span class="s2">iterationProgress = progress % </span><span class="s5">1.0</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s7">* If iteration progress is 1 we count that as the end 
+             * of the previous iteration. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!iterationProgress &amp;&amp; progress &gt;= </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">iterationProgress = </span><span class="s5">1</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">iterationProgress === </span><span class="s5">1 </span><span class="s2">&amp;&amp; currentIteration--;</span>
+            <span class="s2">currentIteration = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">currentIteration, repeat + </span><span class="s5">1</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s7">* Reverse progress if we're not running in &quot;normal&quot; direction 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">isOddIteration = </span><span class="s4">Boolean</span><span class="s1">(</span><span class="s2">currentIteration % </span><span class="s5">2</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">isOddIteration</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">repeatType === &quot;</span><span class="s3">reverse</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">iterationProgress = </span><span class="s5">1 </span><span class="s2">- iterationProgress;</span>
+                    <span class="s0">if </span><span class="s1">(</span><span class="s2">repeatDelay</span><span class="s1">) </span><span class="s2">{</span>
+                        <span class="s2">iterationProgress -= repeatDelay / resolvedDuration;</span>
+                    <span class="s2">}</span>
+                <span class="s2">}</span>
+                <span class="s0">else if </span><span class="s1">(</span><span class="s2">repeatType === &quot;</span><span class="s3">mirror</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">frameGenerator = mirroredGenerator;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+            <span class="s2">elapsed = </span><span class="s4">clamp</span><span class="s1">(</span><span class="s5">0</span><span class="s2">, </span><span class="s5">1</span><span class="s2">, iterationProgress</span><span class="s1">) </span><span class="s2">* resolvedDuration;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s7">* If we're in negative time, set state as the initial keyframe. 
+         * This prevents delay: x, duration: 0 animations from finishing 
+         * instantly. 
+         </span><span class="s2">*/</span>
+        <span class="s0">let </span><span class="s2">state;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isInDelayPhase</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.delayState.value = keyframes</span><span class="s1">[</span><span class="s5">0</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">state = this.delayState;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">state = frameGenerator.</span><span class="s4">next</span><span class="s1">(</span><span class="s2">elapsed</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">mixKeyframes &amp;&amp; !isInDelayPhase</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">state.value = </span><span class="s4">mixKeyframes</span><span class="s1">(</span><span class="s2">state.value</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">let </span><span class="s2">{ done } = state;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!isInDelayPhase &amp;&amp; calculatedDuration !== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">done =</span>
+                <span class="s2">this.playbackSpeed &gt;= </span><span class="s5">0</span>
+                    <span class="s2">? this.currentTime &gt;= totalDuration</span>
+                    <span class="s2">: this.currentTime &lt;= </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">const </span><span class="s2">isAnimationFinished = this.holdTime === </span><span class="s6">null </span><span class="s2">&amp;&amp;</span>
+            <span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">finished</span><span class="s2">&quot; || </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">running</span><span class="s2">&quot; &amp;&amp; done</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s7">TODO: The exception for inertia could be cleaner here</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isAnimationFinished &amp;&amp; type !== inertia</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">state.value = </span><span class="s4">getFinalKeyframe</span><span class="s1">(</span><span class="s2">keyframes, this.options, finalKeyframe, this.speed</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">onUpdate</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s4">onUpdate</span><span class="s1">(</span><span class="s2">state.value</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isAnimationFinished</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">finish</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s2">state;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s7">* Allows the returned animation to be awaited or promise-chained. Currently 
+     * resolves when the animation finishes at all but in a future update could/should 
+     * reject if its cancels. 
+     </span><span class="s2">*/</span>
+    <span class="s4">then</span><span class="s2">(resolve, reject) {</span>
+        <span class="s0">return </span><span class="s2">this.finished.</span><span class="s4">then</span><span class="s1">(</span><span class="s2">resolve, reject</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s4">duration</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s4">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">this.calculatedDuration</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s4">iterationDuration</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">{ delay = </span><span class="s5">0 </span><span class="s2">} = this.options || {};</span>
+        <span class="s0">return </span><span class="s2">this.duration + </span><span class="s4">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">delay</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s4">time</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s4">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">this.currentTime</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">set </span><span class="s4">time</span><span class="s2">(newTime) {</span>
+        <span class="s2">newTime = </span><span class="s4">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">newTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.currentTime = newTime;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.startTime === </span><span class="s6">null </span><span class="s2">||</span>
+            <span class="s2">this.holdTime !== </span><span class="s6">null </span><span class="s2">||</span>
+            <span class="s2">this.playbackSpeed === </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.holdTime = newTime;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">this.driver</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = this.driver.</span><span class="s4">now</span><span class="s1">() </span><span class="s2">- newTime / this.playbackSpeed;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.driver</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.driver.</span><span class="s4">start</span><span class="s1">(</span><span class="s6">false</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">this.startTime = </span><span class="s5">0</span><span class="s2">;</span>
+            <span class="s2">this.state = &quot;</span><span class="s3">paused</span><span class="s2">&quot;;</span>
+            <span class="s2">this.holdTime = newTime;</span>
+            <span class="s2">this.</span><span class="s4">tick</span><span class="s1">(</span><span class="s2">newTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s7">* Returns the generator's velocity at the current time in units/second. 
+     * Uses the analytical derivative when available (springs), avoiding 
+     * the MotionValue's frame-dependent velocity estimation. 
+     </span><span class="s2">*/</span>
+    <span class="s4">getGeneratorVelocity</span><span class="s2">() {</span>
+        <span class="s0">const </span><span class="s2">t = this.currentTime;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">t &lt;= </span><span class="s5">0</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s2">this.options.velocity || </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.generator.velocity</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">return </span><span class="s2">this.generator.</span><span class="s4">velocity</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s7">Fallback: finite difference</span>
+        <span class="s0">const </span><span class="s2">current = this.generator.</span><span class="s4">next</span><span class="s1">(</span><span class="s2">t</span><span class="s1">)</span><span class="s2">.value;</span>
+        <span class="s0">return </span><span class="s4">getGeneratorVelocity</span><span class="s1">(</span><span class="s2">(s) </span><span class="s0">=&gt; </span><span class="s2">this.generator.</span><span class="s4">next</span><span class="s1">(</span><span class="s2">s</span><span class="s1">)</span><span class="s2">.value, t, current</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s0">get </span><span class="s4">speed</span><span class="s2">() {</span>
+        <span class="s0">return </span><span class="s2">this.playbackSpeed;</span>
+    <span class="s2">}</span>
+    <span class="s0">set </span><span class="s4">speed</span><span class="s2">(newSpeed) {</span>
+        <span class="s0">const </span><span class="s2">hasChanged = this.playbackSpeed !== newSpeed;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">hasChanged &amp;&amp; this.driver</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">updateTime</span><span class="s1">(</span><span class="s2">time.</span><span class="s4">now</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.playbackSpeed = newSpeed;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">hasChanged &amp;&amp; this.driver</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.time = </span><span class="s4">millisecondsToSeconds</span><span class="s1">(</span><span class="s2">this.currentTime</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+    <span class="s4">play</span><span class="s2">() {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.isStopped</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">{ driver = frameloopDriver, startTime } = this.options;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.driver</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.driver = </span><span class="s4">driver</span><span class="s1">(</span><span class="s2">(timestamp) </span><span class="s0">=&gt; </span><span class="s2">this.</span><span class="s4">tick</span><span class="s1">(</span><span class="s2">timestamp</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.options.</span><span class="s4">onPlay</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">now = this.driver.</span><span class="s4">now</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">finished</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">updateFinished</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">this.startTime = now;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">this.holdTime !== </span><span class="s6">null</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = now - this.holdTime;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">!this.startTime</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime = startTime ?? now;</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state === &quot;</span><span class="s3">finished</span><span class="s2">&quot; &amp;&amp; this.speed &lt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.startTime += this.calculatedDuration;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.holdTime = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s7">* Set playState to running only after we've used it in 
+         * the previous logic. 
+         </span><span class="s2">*/</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">running</span><span class="s2">&quot;;</span>
+        <span class="s2">this.driver.</span><span class="s4">start</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">pause</span><span class="s2">() {</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">paused</span><span class="s2">&quot;;</span>
+        <span class="s2">this.</span><span class="s4">updateTime</span><span class="s1">(</span><span class="s2">time.</span><span class="s4">now</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s2">this.holdTime = this.currentTime;</span>
+    <span class="s2">}</span>
+    <span class="s4">complete</span><span class="s2">() {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.state !== &quot;</span><span class="s3">running</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.</span><span class="s4">play</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">finished</span><span class="s2">&quot;;</span>
+        <span class="s2">this.holdTime = </span><span class="s6">null</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">finish</span><span class="s2">() {</span>
+        <span class="s2">this.</span><span class="s4">notifyFinished</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s4">teardown</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">finished</span><span class="s2">&quot;;</span>
+        <span class="s2">this.options.</span><span class="s4">onComplete</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">cancel</span><span class="s2">() {</span>
+        <span class="s2">this.holdTime = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">this.startTime = </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s4">tick</span><span class="s1">(</span><span class="s5">0</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">this.</span><span class="s4">teardown</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.options.</span><span class="s4">onCancel</span><span class="s2">?.</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">teardown</span><span class="s2">() {</span>
+        <span class="s2">this.state = &quot;</span><span class="s3">idle</span><span class="s2">&quot;;</span>
+        <span class="s2">this.</span><span class="s4">stopDriver</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.startTime = this.holdTime = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">activeAnimations.mainThread--;</span>
+    <span class="s2">}</span>
+    <span class="s4">stopDriver</span><span class="s2">() {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!this.driver</span><span class="s1">)</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">this.driver.</span><span class="s4">stop</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">this.driver = </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">sample</span><span class="s2">(sampleTime) {</span>
+        <span class="s2">this.startTime = </span><span class="s5">0</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">this.</span><span class="s4">tick</span><span class="s1">(</span><span class="s2">sampleTime, </span><span class="s6">true</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+    <span class="s4">attachTimeline</span><span class="s2">(timeline) {</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">this.options.allowFlatten</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">this.options.type = &quot;</span><span class="s3">keyframes</span><span class="s2">&quot;;</span>
+            <span class="s2">this.options.ease = &quot;</span><span class="s3">linear</span><span class="s2">&quot;;</span>
+            <span class="s2">this.</span><span class="s4">initAnimation</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">this.driver?.</span><span class="s4">stop</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">timeline.</span><span class="s4">observe</span><span class="s1">(</span><span class="s2">this</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+<span class="s2">// </span><span class="s7">Legacy function support</span>
+<span class="s0">function </span><span class="s4">animateValue</span><span class="s2">(options) {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s4">JSAnimation</span><span class="s1">(</span><span class="s2">options</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ JSAnimation, animateValue };</span>
+<span class="s2">//</span><span class="s7"># sourceMappingURL=JSAnimation.mjs.map</span>
+</pre>
+</body>
+</html>

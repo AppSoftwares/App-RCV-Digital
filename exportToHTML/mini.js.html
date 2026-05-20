@@ -1,0 +1,174 @@
+<html>
+<head>
+<title>mini.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+mini.js</font>
+</center></td></tr></table>
+<pre><span class="s0">'use strict'</span><span class="s1">;</span>
+
+<span class="s1">Object.defineProperty(exports, </span><span class="s0">'__esModule'</span><span class="s1">, { value: </span><span class="s2">true </span><span class="s1">});</span>
+
+<span class="s2">var </span><span class="s1">react = require(</span><span class="s0">'react'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">motionDom = require(</span><span class="s0">'motion-dom'</span><span class="s1">);</span>
+<span class="s2">var </span><span class="s1">motionUtils = require(</span><span class="s0">'motion-utils'</span><span class="s1">);</span>
+
+<span class="s3">/** 
+ * Creates a constant value over the lifecycle of a component. 
+ * 
+ * Even if `useMemo` is provided an empty array as its final argument, it doesn't offer 
+ * a guarantee that it won't re-run for performance reasons later on. By using `useConstant` 
+ * you can ensure that initialisers don't execute twice or more. 
+ */</span>
+<span class="s2">function </span><span class="s1">useConstant(init) {</span>
+    <span class="s1">const ref = react.useRef(</span><span class="s2">null</span><span class="s1">);</span>
+    <span class="s2">if </span><span class="s1">(ref.current === </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s1">ref.current = init();</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">ref.current;</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">useUnmountEffect(callback) {</span>
+    <span class="s2">return </span><span class="s1">react.useEffect(() =&gt; () =&gt; callback(), []);</span>
+<span class="s1">}</span>
+
+<span class="s2">function </span><span class="s1">animateElements(elementOrSelector, keyframes, options, scope) {</span>
+    <span class="s3">// Gracefully handle null/undefined elements (e.g., from querySelector returning null)</span>
+    <span class="s2">if </span><span class="s1">(elementOrSelector == </span><span class="s2">null</span><span class="s1">) {</span>
+        <span class="s2">return </span><span class="s1">[];</span>
+    <span class="s1">}</span>
+    <span class="s1">const elements = motionDom.resolveElements(elementOrSelector, scope);</span>
+    <span class="s1">const numElements = elements.length;</span>
+    <span class="s1">motionUtils.invariant(Boolean(numElements), </span><span class="s0">&quot;No valid elements provided.&quot;</span><span class="s1">, </span><span class="s0">&quot;no-valid-elements&quot;</span><span class="s1">);</span>
+    <span class="s3">/** 
+     * WAAPI doesn't support interrupting animations. 
+     * 
+     * Therefore, starting animations requires a three-step process: 
+     * 1. Stop existing animations (write styles to DOM) 
+     * 2. Resolve keyframes (read styles from DOM) 
+     * 3. Create new animations (write styles to DOM) 
+     * 
+     * The hybrid `animate()` function uses AsyncAnimation to resolve 
+     * keyframes before creating new animations, which removes style 
+     * thrashing. Here, we have much stricter filesize constraints. 
+     * Therefore we do this in a synchronous way that ensures that 
+     * at least within `animate()` calls there is no style thrashing. 
+     * 
+     * In the motion-native-animate-mini-interrupt benchmark this 
+     * was 80% faster than a single loop. 
+     */</span>
+    <span class="s1">const animationDefinitions = [];</span>
+    <span class="s3">/** 
+     * Step 1: Build options and stop existing animations (write) 
+     */</span>
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; numElements; i++) {</span>
+        <span class="s1">const element = elements[i];</span>
+        <span class="s1">const elementTransition = { ...options };</span>
+        <span class="s3">/** 
+         * Resolve stagger function if provided. 
+         */</span>
+        <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">elementTransition.delay === </span><span class="s0">&quot;function&quot;</span><span class="s1">) {</span>
+            <span class="s1">elementTransition.delay = elementTransition.delay(i, numElements);</span>
+        <span class="s1">}</span>
+        <span class="s2">for </span><span class="s1">(const valueName </span><span class="s2">in </span><span class="s1">keyframes) {</span>
+            <span class="s1">let valueKeyframes = keyframes[valueName];</span>
+            <span class="s2">if </span><span class="s1">(!Array.isArray(valueKeyframes)) {</span>
+                <span class="s1">valueKeyframes = [valueKeyframes];</span>
+            <span class="s1">}</span>
+            <span class="s1">const valueOptions = {</span>
+                <span class="s1">...motionDom.getValueTransition(elementTransition, valueName),</span>
+            <span class="s1">};</span>
+            <span class="s1">valueOptions.duration &amp;&amp; (valueOptions.duration = motionUtils.secondsToMilliseconds(valueOptions.duration));</span>
+            <span class="s1">valueOptions.delay &amp;&amp; (valueOptions.delay = motionUtils.secondsToMilliseconds(valueOptions.delay));</span>
+            <span class="s3">/** 
+             * If there's an existing animation playing on this element then stop it 
+             * before creating a new one. 
+             */</span>
+            <span class="s1">const map = motionDom.getAnimationMap(element);</span>
+            <span class="s1">const key = motionDom.animationMapKey(valueName, valueOptions.pseudoElement || </span><span class="s0">&quot;&quot;</span><span class="s1">);</span>
+            <span class="s1">const currentAnimation = map.get(key);</span>
+            <span class="s1">currentAnimation &amp;&amp; currentAnimation.stop();</span>
+            <span class="s1">animationDefinitions.push({</span>
+                <span class="s1">map,</span>
+                <span class="s1">key,</span>
+                <span class="s1">unresolvedKeyframes: valueKeyframes,</span>
+                <span class="s1">options: {</span>
+                    <span class="s1">...valueOptions,</span>
+                    <span class="s1">element,</span>
+                    <span class="s1">name: valueName,</span>
+                    <span class="s1">allowFlatten: !elementTransition.type &amp;&amp; !elementTransition.ease,</span>
+                <span class="s1">},</span>
+            <span class="s1">});</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+    <span class="s3">/** 
+     * Step 2: Resolve keyframes (read) 
+     */</span>
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; animationDefinitions.length; i++) {</span>
+        <span class="s1">const { unresolvedKeyframes, options: animationOptions } = animationDefinitions[i];</span>
+        <span class="s1">const { element, name, pseudoElement } = animationOptions;</span>
+        <span class="s2">if </span><span class="s1">(!pseudoElement &amp;&amp; unresolvedKeyframes[</span><span class="s4">0</span><span class="s1">] === </span><span class="s2">null</span><span class="s1">) {</span>
+            <span class="s1">unresolvedKeyframes[</span><span class="s4">0</span><span class="s1">] = motionDom.getComputedStyle(element, name);</span>
+        <span class="s1">}</span>
+        <span class="s1">motionDom.fillWildcards(unresolvedKeyframes);</span>
+        <span class="s1">motionDom.applyPxDefaults(unresolvedKeyframes, name);</span>
+        <span class="s3">/** 
+         * If we only have one keyframe, explicitly read the initial keyframe 
+         * from the computed style. This is to ensure consistency with WAAPI behaviour 
+         * for restarting animations, for instance .play() after finish, when it 
+         * has one vs two keyframes. 
+         */</span>
+        <span class="s2">if </span><span class="s1">(!pseudoElement &amp;&amp; unresolvedKeyframes.length &lt; </span><span class="s4">2</span><span class="s1">) {</span>
+            <span class="s1">unresolvedKeyframes.unshift(motionDom.getComputedStyle(element, name));</span>
+        <span class="s1">}</span>
+        <span class="s1">animationOptions.keyframes = unresolvedKeyframes;</span>
+    <span class="s1">}</span>
+    <span class="s3">/** 
+     * Step 3: Create new animations (write) 
+     */</span>
+    <span class="s1">const animations = [];</span>
+    <span class="s2">for </span><span class="s1">(let i = </span><span class="s4">0</span><span class="s1">; i &lt; animationDefinitions.length; i++) {</span>
+        <span class="s1">const { map, key, options: animationOptions } = animationDefinitions[i];</span>
+        <span class="s1">const animation = </span><span class="s2">new </span><span class="s1">motionDom.NativeAnimation(animationOptions);</span>
+        <span class="s1">map.set(key, animation);</span>
+        <span class="s1">animation.finished.</span><span class="s2">finally</span><span class="s1">(() =&gt; map.</span><span class="s2">delete</span><span class="s1">(key));</span>
+        <span class="s1">animations.push(animation);</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">animations;</span>
+<span class="s1">}</span>
+
+<span class="s1">const createScopedWaapiAnimate = (scope) =&gt; {</span>
+    <span class="s2">function </span><span class="s1">scopedAnimate(elementOrSelector, keyframes, options) {</span>
+        <span class="s2">return new </span><span class="s1">motionDom.GroupAnimationWithThen(animateElements(elementOrSelector, keyframes, options, scope));</span>
+    <span class="s1">}</span>
+    <span class="s2">return </span><span class="s1">scopedAnimate;</span>
+<span class="s1">};</span>
+
+<span class="s2">function </span><span class="s1">useAnimateMini() {</span>
+    <span class="s1">const scope = useConstant(() =&gt; ({</span>
+        <span class="s1">current: </span><span class="s2">null</span><span class="s1">, </span><span class="s3">// Will be hydrated by React</span>
+        <span class="s1">animations: [],</span>
+    <span class="s1">}));</span>
+    <span class="s1">const animate = useConstant(() =&gt; createScopedWaapiAnimate(scope));</span>
+    <span class="s1">useUnmountEffect(() =&gt; {</span>
+        <span class="s1">scope.animations.forEach((animation) =&gt; animation.stop());</span>
+    <span class="s1">});</span>
+    <span class="s2">return </span><span class="s1">[scope, animate];</span>
+<span class="s1">}</span>
+
+<span class="s1">exports.useAnimate = useAnimateMini;</span>
+<span class="s3">//# sourceMappingURL=mini.js.map</span>
+</pre>
+</body>
+</html>

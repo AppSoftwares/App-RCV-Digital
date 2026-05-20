@@ -1,0 +1,163 @@
+<html>
+<head>
+<title>service.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+service.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = Service;</span>
+
+<span class="s2">var </span><span class="s1">util = require(</span><span class="s0">&quot;../util/minimal&quot;</span><span class="s1">);</span>
+
+<span class="s3">// Extends EventEmitter</span>
+<span class="s1">(Service.prototype = Object.create(util.EventEmitter.prototype)).constructor = Service;</span>
+
+<span class="s3">/** 
+ * A service method callback as used by {@link rpc.ServiceMethod|ServiceMethod}. 
+ * 
+ * Differs from {@link RPCImplCallback} in that it is an actual callback of a service method which may not return `response = null`. 
+ * @typedef rpc.ServiceMethodCallback 
+ * @template TRes extends Message&lt;TRes&gt; 
+ * @type {function} 
+ * @param {Error|null} error Error, if any 
+ * @param {TRes} [response] Response message 
+ * @returns {undefined} 
+ */</span>
+
+<span class="s3">/** 
+ * A service method part of a {@link rpc.Service} as created by {@link Service.create}. 
+ * @typedef rpc.ServiceMethod 
+ * @template TReq extends Message&lt;TReq&gt; 
+ * @template TRes extends Message&lt;TRes&gt; 
+ * @type {function} 
+ * @param {TReq|Properties&lt;TReq&gt;} request Request message or plain object 
+ * @param {rpc.ServiceMethodCallback&lt;TRes&gt;} [callback] Node-style callback called with the error, if any, and the response message 
+ * @returns {Promise&lt;Message&lt;TRes&gt;&gt;} Promise if `callback` has been omitted, otherwise `undefined` 
+ */</span>
+
+<span class="s3">/** 
+ * Constructs a new RPC service instance. 
+ * @classdesc An RPC service as returned by {@link Service#create}. 
+ * @exports rpc.Service 
+ * @extends util.EventEmitter 
+ * @constructor 
+ * @param {RPCImpl} rpcImpl RPC implementation 
+ * @param {boolean} [requestDelimited=false] Whether requests are length-delimited 
+ * @param {boolean} [responseDelimited=false] Whether responses are length-delimited 
+ */</span>
+<span class="s2">function </span><span class="s1">Service(rpcImpl, requestDelimited, responseDelimited) {</span>
+
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">typeof </span><span class="s1">rpcImpl !== </span><span class="s0">&quot;function&quot;</span><span class="s1">)</span>
+        <span class="s2">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;rpcImpl must be a function&quot;</span><span class="s1">);</span>
+
+    <span class="s1">util.EventEmitter.call(</span><span class="s2">this</span><span class="s1">);</span>
+
+    <span class="s3">/** 
+     * RPC implementation. Becomes `null` once the service is ended. 
+     * @type {RPCImpl|null} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.rpcImpl = rpcImpl;</span>
+
+    <span class="s3">/** 
+     * Whether requests are length-delimited. 
+     * @type {boolean} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.requestDelimited = Boolean(requestDelimited);</span>
+
+    <span class="s3">/** 
+     * Whether responses are length-delimited. 
+     * @type {boolean} 
+     */</span>
+    <span class="s2">this</span><span class="s1">.responseDelimited = Boolean(responseDelimited);</span>
+<span class="s1">}</span>
+
+<span class="s3">/** 
+ * Calls a service method through {@link rpc.Service#rpcImpl|rpcImpl}. 
+ * @param {Method|rpc.ServiceMethod&lt;TReq,TRes&gt;} method Reflected or static method 
+ * @param {Constructor&lt;TReq&gt;} requestCtor Request constructor 
+ * @param {Constructor&lt;TRes&gt;} responseCtor Response constructor 
+ * @param {TReq|Properties&lt;TReq&gt;} request Request message or plain object 
+ * @param {rpc.ServiceMethodCallback&lt;TRes&gt;} callback Service callback 
+ * @returns {undefined} 
+ * @template TReq extends Message&lt;TReq&gt; 
+ * @template TRes extends Message&lt;TRes&gt; 
+ */</span>
+<span class="s1">Service.prototype.rpcCall = </span><span class="s2">function </span><span class="s1">rpcCall(method, requestCtor, responseCtor, request, callback) {</span>
+
+    <span class="s2">if </span><span class="s1">(!request)</span>
+        <span class="s2">throw </span><span class="s1">TypeError(</span><span class="s0">&quot;request must be specified&quot;</span><span class="s1">);</span>
+
+    <span class="s2">var </span><span class="s1">self = </span><span class="s2">this</span><span class="s1">;</span>
+    <span class="s2">if </span><span class="s1">(!callback)</span>
+        <span class="s2">return </span><span class="s1">util.asPromise(rpcCall, self, method, requestCtor, responseCtor, request);</span>
+
+    <span class="s2">if </span><span class="s1">(!self.rpcImpl) {</span>
+        <span class="s1">setTimeout(</span><span class="s2">function</span><span class="s1">() { callback(Error(</span><span class="s0">&quot;already ended&quot;</span><span class="s1">)); }, </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s2">return </span><span class="s1">undefined;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">try </span><span class="s1">{</span>
+        <span class="s2">return </span><span class="s1">self.rpcImpl(</span>
+            <span class="s1">method,</span>
+            <span class="s1">requestCtor[self.requestDelimited ? </span><span class="s0">&quot;encodeDelimited&quot; </span><span class="s1">: </span><span class="s0">&quot;encode&quot;</span><span class="s1">](request).finish(),</span>
+            <span class="s2">function </span><span class="s1">rpcCallback(err, response) {</span>
+
+                <span class="s2">if </span><span class="s1">(err) {</span>
+                    <span class="s1">self.emit(</span><span class="s0">&quot;error&quot;</span><span class="s1">, err, method);</span>
+                    <span class="s2">return </span><span class="s1">callback(err);</span>
+                <span class="s1">}</span>
+
+                <span class="s2">if </span><span class="s1">(response === </span><span class="s2">null</span><span class="s1">) {</span>
+                    <span class="s1">self.end(</span><span class="s3">/* endedByRPC */ </span><span class="s2">true</span><span class="s1">);</span>
+                    <span class="s2">return </span><span class="s1">undefined;</span>
+                <span class="s1">}</span>
+
+                <span class="s2">if </span><span class="s1">(!(response </span><span class="s2">instanceof </span><span class="s1">responseCtor)) {</span>
+                    <span class="s2">try </span><span class="s1">{</span>
+                        <span class="s1">response = responseCtor[self.responseDelimited ? </span><span class="s0">&quot;decodeDelimited&quot; </span><span class="s1">: </span><span class="s0">&quot;decode&quot;</span><span class="s1">](response);</span>
+                    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+                        <span class="s1">self.emit(</span><span class="s0">&quot;error&quot;</span><span class="s1">, err, method);</span>
+                        <span class="s2">return </span><span class="s1">callback(err);</span>
+                    <span class="s1">}</span>
+                <span class="s1">}</span>
+
+                <span class="s1">self.emit(</span><span class="s0">&quot;data&quot;</span><span class="s1">, response, method);</span>
+                <span class="s2">return </span><span class="s1">callback(</span><span class="s2">null</span><span class="s1">, response);</span>
+            <span class="s1">}</span>
+        <span class="s1">);</span>
+    <span class="s1">} </span><span class="s2">catch </span><span class="s1">(err) {</span>
+        <span class="s1">self.emit(</span><span class="s0">&quot;error&quot;</span><span class="s1">, err, method);</span>
+        <span class="s1">setTimeout(</span><span class="s2">function</span><span class="s1">() { callback(err); }, </span><span class="s4">0</span><span class="s1">);</span>
+        <span class="s2">return </span><span class="s1">undefined;</span>
+    <span class="s1">}</span>
+<span class="s1">};</span>
+
+<span class="s3">/** 
+ * Ends this service and emits the `end` event. 
+ * @param {boolean} [endedByRPC=false] Whether the service has been ended by the RPC implementation. 
+ * @returns {rpc.Service} `this` 
+ */</span>
+<span class="s1">Service.prototype.end = </span><span class="s2">function </span><span class="s1">end(endedByRPC) {</span>
+    <span class="s2">if </span><span class="s1">(</span><span class="s2">this</span><span class="s1">.rpcImpl) {</span>
+        <span class="s2">if </span><span class="s1">(!endedByRPC) </span><span class="s3">// signal end to rpcImpl</span>
+            <span class="s2">this</span><span class="s1">.rpcImpl(</span><span class="s2">null</span><span class="s1">, </span><span class="s2">null</span><span class="s1">, </span><span class="s2">null</span><span class="s1">);</span>
+        <span class="s2">this</span><span class="s1">.rpcImpl = </span><span class="s2">null</span><span class="s1">;</span>
+        <span class="s2">this</span><span class="s1">.emit(</span><span class="s0">&quot;end&quot;</span><span class="s1">).off();</span>
+    <span class="s1">}</span>
+    <span class="s2">return this</span><span class="s1">;</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>

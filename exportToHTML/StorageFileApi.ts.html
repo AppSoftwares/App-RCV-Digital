@@ -1,0 +1,1448 @@
+<html>
+<head>
+<title>StorageFileApi.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8; font-style: italic;}
+.s5 { color: #c77dbb; font-style: italic;}
+.s6 { color: #7a7e85;}
+.s7 { color: #56a8f5;}
+.s8 { color: #cf8e6d; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+StorageFileApi.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">StorageApiError,</span>
+  <span class="s2">StorageError,</span>
+  <span class="s2">StorageUnknownError,</span>
+  <span class="s2">isStorageError,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/errors</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ get, head, post, put, remove, Fetch } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/fetch</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ setHeader } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/headers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ recursiveToCamel } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/helpers</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">BaseApiClient </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/common/BaseApiClient</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">FileObject,</span>
+  <span class="s2">FileOptions,</span>
+  <span class="s2">SearchOptions,</span>
+  <span class="s2">FetchParameters,</span>
+  <span class="s2">TransformOptions,</span>
+  <span class="s2">DestinationOptions,</span>
+  <span class="s2">FileObjectV2,</span>
+  <span class="s2">Camelize,</span>
+  <span class="s2">SearchV2Options,</span>
+  <span class="s2">SearchV2Result,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../lib/types</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">BlobDownloadBuilder </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./BlobDownloadBuilder</span><span class="s2">'</span>
+
+<span class="s0">const </span><span class="s2">DEFAULT_SEARCH_OPTIONS = {</span>
+  <span class="s1">limit</span><span class="s2">: </span><span class="s4">100</span><span class="s2">,</span>
+  <span class="s1">offset</span><span class="s2">: </span><span class="s4">0</span><span class="s2">,</span>
+  <span class="s1">sortBy</span><span class="s2">: {</span>
+    <span class="s1">column</span><span class="s2">: '</span><span class="s3">name</span><span class="s2">',</span>
+    <span class="s1">order</span><span class="s2">: '</span><span class="s3">asc</span><span class="s2">',</span>
+  <span class="s2">},</span>
+<span class="s2">}</span>
+
+<span class="s0">const </span><span class="s2">DEFAULT_FILE_OPTIONS: FileOptions = {</span>
+  <span class="s1">cacheControl</span><span class="s2">: '</span><span class="s3">3600</span><span class="s2">',</span>
+  <span class="s1">contentType</span><span class="s2">: '</span><span class="s3">text/plain;charset=UTF-8</span><span class="s2">',</span>
+  <span class="s1">upsert</span><span class="s2">: </span><span class="s5">false</span><span class="s2">,</span>
+<span class="s2">}</span>
+
+<span class="s0">type </span><span class="s2">FileBody =</span>
+  <span class="s2">| ArrayBuffer</span>
+  <span class="s2">| ArrayBufferView</span>
+  <span class="s2">| Blob</span>
+  <span class="s2">| Buffer</span>
+  <span class="s2">| File</span>
+  <span class="s2">| FormData</span>
+  <span class="s2">| NodeJS.ReadableStream</span>
+  <span class="s2">| ReadableStream&lt;Uint8Array&gt;</span>
+  <span class="s2">| URLSearchParams</span>
+  <span class="s2">| string</span>
+
+<span class="s0">export default class </span><span class="s2">StorageFileApi </span><span class="s0">extends </span><span class="s2">BaseApiClient&lt;StorageError&gt; {</span>
+  <span class="s0">protected </span><span class="s2">bucketId: string | undefined</span>
+
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: string,</span>
+    <span class="s2">headers: { </span><span class="s1">[</span><span class="s2">key: string</span><span class="s1">]</span><span class="s2">: string } = {},</span>
+    <span class="s2">bucketId?: string,</span>
+    <span class="s2">fetch?: Fetch</span>
+  <span class="s2">) {</span>
+    <span class="s2">super</span><span class="s1">(</span><span class="s2">url, headers, fetch, '</span><span class="s3">storage</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">this.bucketId = bucketId</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Uploads a file to an existing bucket or replaces an existing file at the specified path with a new one. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">method </span><span class="s6">HTTP method. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileBody </span><span class="s6">The body of the file to be stored in the bucket. 
+   </span><span class="s2">*/</span>
+  <span class="s0">private async </span><span class="s7">uploadOrUpdate</span><span class="s2">(</span>
+    <span class="s2">method: '</span><span class="s3">POST</span><span class="s2">' | '</span><span class="s3">PUT</span><span class="s2">',</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">fileBody: FileBody,</span>
+    <span class="s2">fileOptions?: FileOptions</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { id: string; path: string; fullPath: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">let </span><span class="s2">body</span>
+      <span class="s0">const </span><span class="s2">options = { ...DEFAULT_FILE_OPTIONS, ...fileOptions }</span>
+      <span class="s0">let </span><span class="s2">headers: Record&lt;string, string&gt; = {</span>
+        <span class="s2">...this.headers,</span>
+        <span class="s2">...</span><span class="s1">(</span><span class="s2">method === '</span><span class="s3">POST</span><span class="s2">' &amp;&amp; { '</span><span class="s3">x-upsert</span><span class="s2">': </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.upsert </span><span class="s0">as </span><span class="s2">boolean</span><span class="s1">) </span><span class="s2">}</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">metadata = options.metadata</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof Blob !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; fileBody instanceof Blob</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">body = new </span><span class="s7">FormData</span><span class="s1">()</span>
+        <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">', options.cacheControl </span><span class="s0">as </span><span class="s2">string</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">', this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+        <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'', fileBody</span><span class="s1">)</span>
+      <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">typeof FormData !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; fileBody instanceof FormData</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">body = fileBody</span>
+        <span class="s2">// </span><span class="s6">Only append if not already present</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!body.</span><span class="s7">has</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">', options.cacheControl </span><span class="s0">as </span><span class="s2">string</span><span class="s1">)</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata &amp;&amp; !body.</span><span class="s7">has</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">', this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">body = fileBody</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">cache-control</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= `</span><span class="s3">max-age=</span><span class="s2">${options.cacheControl}`</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">content-type</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= options.contentType </span><span class="s0">as </span><span class="s2">string</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">x-metadata</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= this.</span><span class="s7">toBase64</span><span class="s1">(</span><span class="s2">this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+
+        <span class="s2">// </span><span class="s6">Node.js streams require duplex option for fetch in Node 20+</span>
+        <span class="s2">// </span><span class="s6">Check for both web ReadableStream and Node.js streams</span>
+        <span class="s0">const </span><span class="s2">isStream =</span>
+          <span class="s1">(</span><span class="s2">typeof ReadableStream !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; body instanceof ReadableStream</span><span class="s1">) </span><span class="s2">||</span>
+          <span class="s1">(</span><span class="s2">body &amp;&amp; typeof body === '</span><span class="s3">object</span><span class="s2">' &amp;&amp; '</span><span class="s3">pipe</span><span class="s2">' in body &amp;&amp; typeof body.pipe === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isStream &amp;&amp; !options.duplex</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">options.duplex = '</span><span class="s3">half</span><span class="s2">'</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">fileOptions?.headers</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">[key, value] of Object.</span><span class="s7">entries</span><span class="s1">(</span><span class="s2">fileOptions.headers</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">headers = </span><span class="s7">setHeader</span><span class="s1">(</span><span class="s2">headers, key, value</span><span class="s1">)</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">cleanPath = this.</span><span class="s7">_removeEmptyFolders</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+      <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">cleanPath</span><span class="s1">)</span>
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s1">(</span><span class="s2">method == '</span><span class="s3">PUT</span><span class="s2">' ? put : post</span><span class="s1">)(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/</span><span class="s2">${_path}`,</span>
+        <span class="s2">body </span><span class="s0">as </span><span class="s2">object,</span>
+        <span class="s2">{ headers, ...</span><span class="s1">(</span><span class="s2">options?.duplex ? { </span><span class="s1">duplex</span><span class="s2">: options.duplex } : {}</span><span class="s1">) </span><span class="s2">}</span>
+      <span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">path</span><span class="s2">: cleanPath, </span><span class="s1">id</span><span class="s2">: data.Id, </span><span class="s1">fullPath</span><span class="s2">: data.Key }</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Uploads a file to an existing bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the file name. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileBody </span><span class="s6">The body of the file to be stored in the bucket. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileOptions </span><span class="s6">Optional file upload options including cacheControl, contentType, upsert, and metadata. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing file path, id, and fullPath or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upload file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const avatarFile = event.target.files[0] 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.upload('public/avatar1.png', avatarFile, { 
+   </span><span class="s6">*     </span><span class="s1">cacheControl: '3600', 
+   </span><span class="s6">*     </span><span class="s1">upsert: false 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;path&quot;: &quot;public/avatar1.png&quot;, 
+   </span><span class="s6">*     </span><span class="s1">&quot;fullPath&quot;: &quot;avatars/public/avatar1.png&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upload file using `ArrayBuffer` from base64 file data 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">import { decode } from 'base64-arraybuffer' 
+   </span><span class="s6">* 
+   * </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.upload('public/avatar1.png', decode('base64FileData'), { 
+   </span><span class="s6">*     </span><span class="s1">contentType: 'image/png' 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: only `insert` when you are uploading new files and `select`, `insert` and `update` when you are upserting files 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Upload file using `ArrayBuffer` from base64 file data instead, see example below. 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">upload</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">fileBody: FileBody,</span>
+    <span class="s2">fileOptions?: FileOptions</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { id: string; path: string; fullPath: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">uploadOrUpdate</span><span class="s1">(</span><span class="s2">'</span><span class="s3">POST</span><span class="s2">', path, fileBody, fileOptions</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Upload a file with a token generated from `createSignedUploadUrl`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the file name. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to upload. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">token </span><span class="s6">The token generated from `createSignedUploadUrl` 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileBody </span><span class="s6">The body of the file to be stored in the bucket. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileOptions </span><span class="s6">HTTP headers (cacheControl, contentType, etc.). 
+   * **Note:** The `upsert` option has no effect here. To enable upsert behavior, 
+   * pass `{ upsert: true }` when calling `createSignedUploadUrl()` instead. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing file path and fullPath or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Upload to a signed URL 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.uploadToSignedUrl('folder/cat.jpg', 'token-from-createSignedUploadUrl', file) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;path&quot;: &quot;folder/cat.jpg&quot;, 
+   </span><span class="s6">*     </span><span class="s1">&quot;fullPath&quot;: &quot;avatars/folder/cat.jpg&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">uploadToSignedUrl</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">token: string,</span>
+    <span class="s2">fileBody: FileBody,</span>
+    <span class="s2">fileOptions?: FileOptions</span>
+  <span class="s2">) {</span>
+    <span class="s0">const </span><span class="s2">cleanPath = this.</span><span class="s7">_removeEmptyFolders</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">cleanPath</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">url = new </span><span class="s7">URL</span><span class="s1">(</span><span class="s2">this.url + `</span><span class="s3">/object/upload/sign/</span><span class="s2">${_path}`</span><span class="s1">)</span>
+    <span class="s2">url.searchParams.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">token</span><span class="s2">', token</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">let </span><span class="s2">body</span>
+      <span class="s0">const </span><span class="s2">options = { ...DEFAULT_FILE_OPTIONS, ...fileOptions }</span>
+      <span class="s0">let </span><span class="s2">headers: Record&lt;string, string&gt; = {</span>
+        <span class="s2">...this.headers,</span>
+        <span class="s2">...{ '</span><span class="s3">x-upsert</span><span class="s2">': </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.upsert </span><span class="s0">as </span><span class="s2">boolean</span><span class="s1">) </span><span class="s2">},</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">metadata = options.metadata</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof Blob !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; fileBody instanceof Blob</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">body = new </span><span class="s7">FormData</span><span class="s1">()</span>
+        <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">', options.cacheControl </span><span class="s0">as </span><span class="s2">string</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">', this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+        <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'', fileBody</span><span class="s1">)</span>
+      <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">typeof FormData !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; fileBody instanceof FormData</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">body = fileBody</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">!body.</span><span class="s7">has</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheControl</span><span class="s2">', options.cacheControl </span><span class="s0">as </span><span class="s2">string</span><span class="s1">)</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata &amp;&amp; !body.</span><span class="s7">has</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">'</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">body.</span><span class="s7">append</span><span class="s1">(</span><span class="s2">'</span><span class="s3">metadata</span><span class="s2">', this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+      <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+        <span class="s2">body = fileBody</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">cache-control</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= `</span><span class="s3">max-age=</span><span class="s2">${options.cacheControl}`</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">content-type</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= options.contentType </span><span class="s0">as </span><span class="s2">string</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">x-metadata</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= this.</span><span class="s7">toBase64</span><span class="s1">(</span><span class="s2">this.</span><span class="s7">encodeMetadata</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">))</span>
+        <span class="s2">}</span>
+
+        <span class="s0">const </span><span class="s2">isStream =</span>
+          <span class="s1">(</span><span class="s2">typeof ReadableStream !== '</span><span class="s3">undefined</span><span class="s2">' &amp;&amp; body instanceof ReadableStream</span><span class="s1">) </span><span class="s2">||</span>
+          <span class="s1">(</span><span class="s2">body &amp;&amp; typeof body === '</span><span class="s3">object</span><span class="s2">' &amp;&amp; '</span><span class="s3">pipe</span><span class="s2">' in body &amp;&amp; typeof body.pipe === '</span><span class="s3">function</span><span class="s2">'</span><span class="s1">)</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">isStream &amp;&amp; !options.duplex</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">options.duplex = '</span><span class="s3">half</span><span class="s2">'</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">fileOptions?.headers</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">[key, value] of Object.</span><span class="s7">entries</span><span class="s1">(</span><span class="s2">fileOptions.headers</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s2">headers = </span><span class="s7">setHeader</span><span class="s1">(</span><span class="s2">headers, key, value</span><span class="s1">)</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">put</span><span class="s1">(</span><span class="s2">this.fetch, url.</span><span class="s7">toString</span><span class="s1">()</span><span class="s2">, body </span><span class="s0">as </span><span class="s2">object, {</span>
+        <span class="s2">headers,</span>
+        <span class="s2">...</span><span class="s1">(</span><span class="s2">options?.duplex ? { </span><span class="s1">duplex</span><span class="s2">: options.duplex } : {}</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">path</span><span class="s2">: cleanPath, </span><span class="s1">fullPath</span><span class="s2">: data.Key }</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Creates a signed upload URL. 
+   * Signed upload URLs can be used to upload files to the bucket without further authentication. 
+   * They are valid for 2 hours. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the current file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.upsert </span><span class="s6">If set to true, allows the file to be overwritten if it already exists. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing signed upload URL, token, and path or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create Signed Upload URL 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.createSignedUploadUrl('folder/cat.jpg') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;signedUrl&quot;: &quot;https://example.supabase.co/storage/v1/object/upload/sign/avatars/folder/cat.jpg?token=&lt;TOKEN&gt;&quot;, 
+   </span><span class="s6">*     </span><span class="s1">&quot;path&quot;: &quot;folder/cat.jpg&quot;, 
+   </span><span class="s6">*     </span><span class="s1">&quot;token&quot;: &quot;&lt;TOKEN&gt;&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `insert` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">createSignedUploadUrl</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">options?: { upsert: boolean }</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { signedUrl: string; token: string; path: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">let </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">headers = { ...this.headers }</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.upsert</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">headers</span><span class="s1">[</span><span class="s2">'</span><span class="s3">x-upsert</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= '</span><span class="s3">true</span><span class="s2">'</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/upload/sign/</span><span class="s2">${_path}`,</span>
+        <span class="s2">{},</span>
+        <span class="s2">{ headers }</span>
+      <span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">url = new </span><span class="s7">URL</span><span class="s1">(</span><span class="s2">this.url + data.url</span><span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">token = url.searchParams.</span><span class="s7">get</span><span class="s1">(</span><span class="s2">'</span><span class="s3">token</span><span class="s2">'</span><span class="s1">)</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">!token</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">throw </span><span class="s2">new </span><span class="s7">StorageError</span><span class="s1">(</span><span class="s2">'</span><span class="s3">No token returned by API</span><span class="s2">'</span><span class="s1">)</span>
+      <span class="s2">}</span>
+
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">signedUrl</span><span class="s2">: url.</span><span class="s7">toString</span><span class="s1">()</span><span class="s2">, path, token }</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Replaces an existing file at the specified path with a new one. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The relative file path. Should be of the format `folder/subfolder/filename.png`. The bucket must already exist before attempting to update. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileBody </span><span class="s6">The body of the file to be stored in the bucket. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fileOptions </span><span class="s6">Optional file upload options including cacheControl, contentType, and metadata. 
+   * **Note:** The `upsert` option has no effect here. `update()` always replaces the 
+   * file at the given path, so the `x-upsert` header is not sent. To control upsert 
+   * behavior, use `upload()` instead. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing file path, id, and fullPath or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Update file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const avatarFile = event.target.files[0] 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.update('public/avatar1.png', avatarFile, { 
+   </span><span class="s6">*     </span><span class="s1">cacheControl: '3600' 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;path&quot;: &quot;public/avatar1.png&quot;, 
+   </span><span class="s6">*     </span><span class="s1">&quot;fullPath&quot;: &quot;avatars/public/avatar1.png&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Update file using `ArrayBuffer` from base64 file data 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">import {decode} from 'base64-arraybuffer' 
+   </span><span class="s6">* 
+   * </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.update('public/avatar1.png', decode('base64FileData'), { 
+   </span><span class="s6">*     </span><span class="s1">contentType: 'image/png' 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `update` and `select` 
+   * - `update()` always replaces the file at the given path regardless of the `upsert` option. 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   * - For React Native, using either `Blob`, `File` or `FormData` does not work as intended. Update file using `ArrayBuffer` from base64 file data instead, see example below. 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">update</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">fileBody:</span>
+      <span class="s2">| ArrayBuffer</span>
+      <span class="s2">| ArrayBufferView</span>
+      <span class="s2">| Blob</span>
+      <span class="s2">| Buffer</span>
+      <span class="s2">| File</span>
+      <span class="s2">| FormData</span>
+      <span class="s2">| NodeJS.ReadableStream</span>
+      <span class="s2">| ReadableStream&lt;Uint8Array&gt;</span>
+      <span class="s2">| URLSearchParams</span>
+      <span class="s2">| string,</span>
+    <span class="s2">fileOptions?: FileOptions</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { id: string; path: string; fullPath: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">uploadOrUpdate</span><span class="s1">(</span><span class="s2">'</span><span class="s3">PUT</span><span class="s2">', path, fileBody, fileOptions</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Moves an existing file to a new path in the same bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fromPath </span><span class="s6">The original file path, including the current file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">toPath </span><span class="s6">The new file path, including the new file name. For example `folder/image-new.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s6">The destination options. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing success message or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Move file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.move('public/avatar1.png', 'private/avatar2.png') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;message&quot;: &quot;Successfully moved&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `update` and `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">move</span><span class="s2">(</span>
+    <span class="s2">fromPath: string,</span>
+    <span class="s2">toPath: string,</span>
+    <span class="s2">options?: DestinationOptions</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { message: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/move</span><span class="s2">`,</span>
+        <span class="s2">{</span>
+          <span class="s1">bucketId</span><span class="s2">: this.bucketId,</span>
+          <span class="s1">sourceKey</span><span class="s2">: fromPath,</span>
+          <span class="s1">destinationKey</span><span class="s2">: toPath,</span>
+          <span class="s1">destinationBucket</span><span class="s2">: options?.destinationBucket,</span>
+        <span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Copies an existing file to a new path in the same bucket. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fromPath </span><span class="s6">The original file path, including the current file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">toPath </span><span class="s6">The new file path, including the new file name. For example `folder/image-copy.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s6">The destination options. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing copied file path or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Copy file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.copy('public/avatar1.png', 'private/avatar2.png') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;path&quot;: &quot;avatars/private/avatar2.png&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `insert` and `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">copy</span><span class="s2">(</span>
+    <span class="s2">fromPath: string,</span>
+    <span class="s2">toPath: string,</span>
+    <span class="s2">options?: DestinationOptions</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { path: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/copy</span><span class="s2">`,</span>
+        <span class="s2">{</span>
+          <span class="s1">bucketId</span><span class="s2">: this.bucketId,</span>
+          <span class="s1">sourceKey</span><span class="s2">: fromPath,</span>
+          <span class="s1">destinationKey</span><span class="s2">: toPath,</span>
+          <span class="s1">destinationBucket</span><span class="s2">: options?.destinationBucket,</span>
+        <span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">path</span><span class="s2">: data.Key }</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Creates a signed URL. Use a signed URL to share a file for a fixed amount of time. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the current file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">expiresIn </span><span class="s6">The number of seconds until the signed URL expires. For example, `60` for a URL which is valid for one minute. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.download </span><span class="s6">triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.transform </span><span class="s6">Transform the asset before serving it to the client. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.cacheNonce </span><span class="s6">Append a cache nonce parameter to the URL to invalidate the cache. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing signed URL or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create Signed URL 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.createSignedUrl('folder/avatar1.png', 60) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;signedUrl&quot;: &quot;https://example.supabase.co/storage/v1/object/sign/avatars/folder/avatar1.png?token=&lt;TOKEN&gt;&quot; 
+   </span><span class="s6">*   </span><span class="s1">}, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create a signed URL for an asset with transformations 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.createSignedUrl('folder/avatar1.png', 60, { 
+   </span><span class="s6">*     </span><span class="s1">transform: { 
+   </span><span class="s6">*       </span><span class="s1">width: 100, 
+   </span><span class="s6">*       </span><span class="s1">height: 100, 
+   </span><span class="s6">*     </span><span class="s1">} 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create a signed URL which triggers the download of the asset 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.createSignedUrl('folder/avatar1.png', 60, { 
+   </span><span class="s6">*     </span><span class="s1">download: true, 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">createSignedUrl</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">expiresIn: number,</span>
+    <span class="s2">options?: {</span>
+      <span class="s2">download?: string | boolean</span>
+      <span class="s2">transform?: TransformOptions</span>
+      <span class="s2">cacheNonce?: string</span>
+    <span class="s2">}</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { signedUrl: string }</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">let </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">hasTransform =</span>
+        <span class="s2">typeof options?.transform === '</span><span class="s3">object</span><span class="s2">' &amp;&amp;</span>
+        <span class="s2">options.transform !== </span><span class="s5">null </span><span class="s2">&amp;&amp;</span>
+        <span class="s2">Object.</span><span class="s7">keys</span><span class="s1">(</span><span class="s2">options.transform</span><span class="s1">)</span><span class="s2">.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s4">0</span>
+
+      <span class="s0">let </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/sign/</span><span class="s2">${_path}`,</span>
+        <span class="s2">{ expiresIn, ...</span><span class="s1">(</span><span class="s2">hasTransform ? { </span><span class="s1">transform</span><span class="s2">: options!.transform } : {}</span><span class="s1">) </span><span class="s2">},</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">query = new </span><span class="s7">URLSearchParams</span><span class="s1">()</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.download</span><span class="s1">)</span>
+        <span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">download</span><span class="s2">', options.download === </span><span class="s5">true </span><span class="s2">? '' : options.download</span><span class="s1">)</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.cacheNonce != </span><span class="s5">null</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheNonce</span><span class="s2">', </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.cacheNonce</span><span class="s1">))</span>
+      <span class="s0">const </span><span class="s2">queryString = query.</span><span class="s7">toString</span><span class="s1">()</span>
+
+      <span class="s2">// </span><span class="s6">`data.signedURL` contains a `token` query parameter, so append extra params with `&amp;`</span>
+      <span class="s2">// </span><span class="s6">only when we actually have something to add.</span>
+      <span class="s0">const </span><span class="s2">signedUrl = </span><span class="s7">encodeURI</span><span class="s1">(</span>
+        <span class="s2">`${this.url}${data.signedURL}${queryString ? `</span><span class="s3">&amp;</span><span class="s2">${queryString}` : ''}`</span>
+      <span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">{ signedUrl }</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Creates multiple signed URLs. Use a signed URL to share a file for a fixed amount of time. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">paths </span><span class="s6">The file paths to be downloaded, including the current file names. For example `['folder/image.png', 'folder2/image2.png']`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">expiresIn </span><span class="s6">The number of seconds until the signed URLs expire. For example, `60` for URLs which are valid for one minute. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.download </span><span class="s6">triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.cacheNonce </span><span class="s6">Append a cache nonce parameter to the URL to invalidate the cache. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing array of objects with signedUrl, path, and error or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Create Signed URLs 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.createSignedUrls(['folder/avatar1.png', 'folder/avatar2.png'], 60) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: [ 
+   </span><span class="s6">*     </span><span class="s1">{ 
+   </span><span class="s6">*       </span><span class="s1">&quot;error&quot;: null, 
+   </span><span class="s6">*       </span><span class="s1">&quot;path&quot;: &quot;folder/avatar1.png&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;signedURL&quot;: &quot;/object/sign/avatars/folder/avatar1.png?token=&lt;TOKEN&gt;&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;signedUrl&quot;: &quot;https://example.supabase.co/storage/v1/object/sign/avatars/folder/avatar1.png?token=&lt;TOKEN&gt;&quot; 
+   </span><span class="s6">*     </span><span class="s1">}, 
+   </span><span class="s6">*     </span><span class="s1">{ 
+   </span><span class="s6">*       </span><span class="s1">&quot;error&quot;: null, 
+   </span><span class="s6">*       </span><span class="s1">&quot;path&quot;: &quot;folder/avatar2.png&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;signedURL&quot;: &quot;/object/sign/avatars/folder/avatar2.png?token=&lt;TOKEN&gt;&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;signedUrl&quot;: &quot;https://example.supabase.co/storage/v1/object/sign/avatars/folder/avatar2.png?token=&lt;TOKEN&gt;&quot; 
+   </span><span class="s6">*     </span><span class="s1">} 
+   </span><span class="s6">*   </span><span class="s1">], 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">createSignedUrls</span><span class="s2">(</span>
+    <span class="s2">paths: string</span><span class="s1">[]</span><span class="s2">,</span>
+    <span class="s2">expiresIn: number,</span>
+    <span class="s2">options?: { download?: string | boolean; cacheNonce?: string }</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: { error: string | null; path: string | null; signedUrl: string | null }</span><span class="s1">[]</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/sign/</span><span class="s2">${this.bucketId}`,</span>
+        <span class="s2">{ expiresIn, paths },</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+
+      <span class="s0">const </span><span class="s2">query = new </span><span class="s7">URLSearchParams</span><span class="s1">()</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.download</span><span class="s1">)</span>
+        <span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">download</span><span class="s2">', options.download === </span><span class="s5">true </span><span class="s2">? '' : options.download</span><span class="s1">)</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.cacheNonce != </span><span class="s5">null</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheNonce</span><span class="s2">', </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.cacheNonce</span><span class="s1">))</span>
+
+      <span class="s0">const </span><span class="s2">queryString = query.</span><span class="s7">toString</span><span class="s1">()</span>
+
+      <span class="s0">return </span><span class="s2">data.</span><span class="s7">map</span><span class="s1">(</span><span class="s2">(datum: { signedURL: string }) </span><span class="s0">=&gt; </span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s2">...datum,</span>
+        <span class="s1">signedUrl</span><span class="s2">: datum.signedURL</span>
+          <span class="s2">? </span><span class="s7">encodeURI</span><span class="s1">(</span><span class="s2">`${this.url}${datum.signedURL}${queryString ? `</span><span class="s3">&amp;</span><span class="s2">${queryString}` : ''}`</span><span class="s1">)</span>
+          <span class="s2">: </span><span class="s5">null</span><span class="s2">,</span>
+      <span class="s2">}</span><span class="s1">))</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Downloads a file from a private bucket. For public buckets, make a request to the URL returned from `getPublicUrl` instead. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The full path and file name of the file to be downloaded. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.transform </span><span class="s6">Transform the asset before serving it to the client. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.cacheNonce </span><span class="s6">Append a cache nonce parameter to the URL to invalidate the cache. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">parameters </span><span class="s6">Additional fetch parameters like signal for cancellation. Supports standard fetch options including cache control. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">BlobDownloadBuilder instance for downloading the file 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Download file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.download('folder/avatar1.png') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: &lt;BLOB&gt;, 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Download file with transformations 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.download('folder/avatar1.png', { 
+   </span><span class="s6">*     </span><span class="s1">transform: { 
+   </span><span class="s6">*       </span><span class="s1">width: 100, 
+   </span><span class="s6">*       </span><span class="s1">height: 100, 
+   </span><span class="s6">*       </span><span class="s1">quality: 80 
+   </span><span class="s6">*     </span><span class="s1">} 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Download with cache control (useful in Edge Functions) 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.download('folder/avatar1.png', {}, { cache: 'no-store' }) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Download with abort signal 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const controller = new AbortController() 
+   </span><span class="s6">* </span><span class="s1">setTimeout(() =&gt; controller.abort(), 5000) 
+   </span><span class="s6">* 
+   * </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.download('folder/avatar1.png', {}, { signal: controller.signal }) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s7">download</span><span class="s2">&lt;Options </span><span class="s0">extends </span><span class="s2">{ transform?: TransformOptions; cacheNonce?: string }&gt;(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">options?: Options,</span>
+    <span class="s2">parameters?: FetchParameters</span>
+  <span class="s2">): BlobDownloadBuilder {</span>
+    <span class="s0">const </span><span class="s2">wantsTransformation =</span>
+      <span class="s2">typeof options?.transform === '</span><span class="s3">object</span><span class="s2">' &amp;&amp;</span>
+      <span class="s2">options.transform !== </span><span class="s5">null </span><span class="s2">&amp;&amp;</span>
+      <span class="s2">Object.</span><span class="s7">keys</span><span class="s1">(</span><span class="s2">options.transform</span><span class="s1">)</span><span class="s2">.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s4">0</span>
+    <span class="s0">const </span><span class="s2">renderPath = wantsTransformation ? '</span><span class="s3">render/image/authenticated</span><span class="s2">' : '</span><span class="s3">object</span><span class="s2">'</span>
+
+    <span class="s0">const </span><span class="s2">query = new </span><span class="s7">URLSearchParams</span><span class="s1">()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.transform</span><span class="s1">) </span><span class="s2">this.</span><span class="s7">applyTransformOptsToQuery</span><span class="s1">(</span><span class="s2">query, options.transform</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.cacheNonce != </span><span class="s5">null</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheNonce</span><span class="s2">', </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.cacheNonce</span><span class="s1">))</span>
+    <span class="s0">const </span><span class="s2">queryString = query.</span><span class="s7">toString</span><span class="s1">()</span>
+
+    <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+    <span class="s0">const </span><span class="s7">downloadFn </span><span class="s2">= () </span><span class="s0">=&gt;</span>
+      <span class="s7">get</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/</span><span class="s2">${renderPath}</span><span class="s3">/</span><span class="s2">${_path}${queryString ? `</span><span class="s3">?</span><span class="s2">${queryString}` : ''}`,</span>
+        <span class="s2">{</span>
+          <span class="s1">headers</span><span class="s2">: this.headers,</span>
+          <span class="s1">noResolveJson</span><span class="s2">: </span><span class="s5">true</span><span class="s2">,</span>
+        <span class="s2">},</span>
+        <span class="s2">parameters</span>
+      <span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s7">BlobDownloadBuilder</span><span class="s1">(</span><span class="s2">downloadFn, this.shouldThrowOnError</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Retrieves the details of an existing file. 
+   * 
+   * Returns detailed file metadata including size, content type, and timestamps. 
+   * Note: The API returns `last_modified` field, not `updated_at`. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing file metadata or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Get file info 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.info('folder/avatar1.png') 
+   </span><span class="s6">* 
+   * </span><span class="s1">if (data) { 
+   </span><span class="s6">*   </span><span class="s1">console.log('Last modified:', data.lastModified) 
+   </span><span class="s6">*   </span><span class="s1">console.log('Size:', data.size) 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">info</span><span class="s2">(path: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: Camelize&lt;FileObjectV2&gt;</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">data = </span><span class="s0">await </span><span class="s7">get</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/object/info/</span><span class="s2">${_path}`, {</span>
+        <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s7">recursiveToCamel</span><span class="s1">(</span><span class="s2">data</span><span class="s1">) </span><span class="s0">as </span><span class="s2">Camelize&lt;FileObjectV2&gt;</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Checks the existence of a file. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The file path, including the file name. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing boolean indicating file existence or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Check file existence 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.exists('folder/avatar1.png') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">exists</span><span class="s2">(path: string): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: boolean</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: boolean</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+
+    <span class="s0">try </span><span class="s2">{</span>
+      <span class="s0">await </span><span class="s7">head</span><span class="s1">(</span><span class="s2">this.fetch, `${this.url}</span><span class="s3">/object/</span><span class="s2">${_path}`, {</span>
+        <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s2">}</span><span class="s1">)</span>
+
+      <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s5">true</span><span class="s2">, </span><span class="s1">error</span><span class="s2">: </span><span class="s5">null </span><span class="s2">}</span>
+    <span class="s2">} </span><span class="s0">catch </span><span class="s1">(</span><span class="s2">error</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">this.shouldThrowOnError</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">throw </span><span class="s2">error</span>
+      <span class="s2">}</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s7">isStorageError</span><span class="s1">(</span><span class="s2">error</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s2">// </span><span class="s6">HEAD requests produce StorageApiError (via handleError) or StorageUnknownError (legacy)</span>
+        <span class="s0">const </span><span class="s2">status =</span>
+          <span class="s2">error instanceof StorageApiError</span>
+            <span class="s2">? error.status</span>
+            <span class="s2">: error instanceof StorageUnknownError</span>
+              <span class="s2">? </span><span class="s1">(</span><span class="s2">error.originalError </span><span class="s0">as </span><span class="s2">{ status: number }</span><span class="s1">)</span><span class="s2">?.status</span>
+              <span class="s2">: </span><span class="s5">undefined</span>
+
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">status !== </span><span class="s5">undefined </span><span class="s2">&amp;&amp; </span><span class="s1">[</span><span class="s4">400</span><span class="s2">, </span><span class="s4">404</span><span class="s1">]</span><span class="s2">.</span><span class="s7">includes</span><span class="s1">(</span><span class="s2">status</span><span class="s1">)) </span><span class="s2">{</span>
+          <span class="s0">return </span><span class="s2">{ </span><span class="s1">data</span><span class="s2">: </span><span class="s5">false</span><span class="s2">, error }</span>
+        <span class="s2">}</span>
+      <span class="s2">}</span>
+
+      <span class="s0">throw </span><span class="s2">error</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* A simple convenience function to get the URL for an asset in a public bucket. If you do not want to use this function, you can construct the public URL by concatenating the bucket URL with the path to the asset. 
+   * This function does not verify if the bucket is public. If a public URL is created for a bucket which is not public, you will not be able to download the asset. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The path and name of the file to generate the public URL for. For example `folder/image.png`. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.download </span><span class="s6">Triggers the file as a download if set to true. Set this parameter as the name of the file if you want to trigger the download with a different filename. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.transform </span><span class="s6">Transform the asset before serving it to the client. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.cacheNonce </span><span class="s6">Append a cache nonce parameter to the URL to invalidate the cache. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Object with public URL 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Returns the URL for an asset in a public bucket 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data } = supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('public-bucket') 
+   </span><span class="s6">*   </span><span class="s1">.getPublicUrl('folder/avatar1.png') 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: { 
+   </span><span class="s6">*     </span><span class="s1">&quot;publicUrl&quot;: &quot;https://example.supabase.co/storage/v1/object/public/public-bucket/folder/avatar1.png&quot; 
+   </span><span class="s6">*   </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Returns the URL for an asset in a public bucket with transformations 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data } = supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('public-bucket') 
+   </span><span class="s6">*   </span><span class="s1">.getPublicUrl('folder/avatar1.png', { 
+   </span><span class="s6">*     </span><span class="s1">transform: { 
+   </span><span class="s6">*       </span><span class="s1">width: 100, 
+   </span><span class="s6">*       </span><span class="s1">height: 100, 
+   </span><span class="s6">*     </span><span class="s1">} 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Returns the URL which triggers the download of an asset in a public bucket 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data } = supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('public-bucket') 
+   </span><span class="s6">*   </span><span class="s1">.getPublicUrl('folder/avatar1.png', { 
+   </span><span class="s6">*     </span><span class="s1">download: true, 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - The bucket needs to be set to public, either via [updateBucket()](/docs/reference/javascript/storage-updatebucket) or by going to Storage on [supabase.com/dashboard](https://supabase.com/dashboard), clicking the overflow menu on a bucket and choosing &quot;Make public&quot; 
+   * - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: none 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s7">getPublicUrl</span><span class="s2">(</span>
+    <span class="s2">path: string,</span>
+    <span class="s2">options?: {</span>
+      <span class="s2">download?: string | boolean</span>
+      <span class="s2">transform?: TransformOptions</span>
+      <span class="s2">cacheNonce?: string</span>
+    <span class="s2">}</span>
+  <span class="s2">): { data: { publicUrl: string } } {</span>
+    <span class="s0">const </span><span class="s2">_path = this.</span><span class="s7">_getFinalPath</span><span class="s1">(</span><span class="s2">path</span><span class="s1">)</span>
+
+    <span class="s0">const </span><span class="s2">query = new </span><span class="s7">URLSearchParams</span><span class="s1">()</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.download</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">download</span><span class="s2">', options.download === </span><span class="s5">true </span><span class="s2">? '' : options.download</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.transform</span><span class="s1">) </span><span class="s2">this.</span><span class="s7">applyTransformOptsToQuery</span><span class="s1">(</span><span class="s2">query, options.transform</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">options?.cacheNonce != </span><span class="s5">null</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">cacheNonce</span><span class="s2">', </span><span class="s7">String</span><span class="s1">(</span><span class="s2">options.cacheNonce</span><span class="s1">))</span>
+    <span class="s0">const </span><span class="s2">queryString = query.</span><span class="s7">toString</span><span class="s1">()</span>
+
+    <span class="s0">const </span><span class="s2">wantsTransformation =</span>
+      <span class="s2">typeof options?.transform === '</span><span class="s3">object</span><span class="s2">' &amp;&amp;</span>
+      <span class="s2">options.transform !== </span><span class="s5">null </span><span class="s2">&amp;&amp;</span>
+      <span class="s2">Object.</span><span class="s7">keys</span><span class="s1">(</span><span class="s2">options.transform</span><span class="s1">)</span><span class="s2">.</span><span class="s1">length </span><span class="s2">&gt; </span><span class="s4">0</span>
+    <span class="s0">const </span><span class="s2">renderPath = wantsTransformation ? '</span><span class="s3">render/image</span><span class="s2">' : '</span><span class="s3">object</span><span class="s2">'</span>
+
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">data</span><span class="s2">: {</span>
+        <span class="s1">publicUrl</span><span class="s2">:</span>
+          <span class="s7">encodeURI</span><span class="s1">(</span><span class="s2">`${this.url}</span><span class="s3">/</span><span class="s2">${renderPath}</span><span class="s3">/public/</span><span class="s2">${_path}`</span><span class="s1">) </span><span class="s2">+</span>
+          <span class="s1">(</span><span class="s2">queryString ? `</span><span class="s3">?</span><span class="s2">${queryString}` : ''</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s2">},</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Deletes files within the same bucket 
+   * 
+   * Returns an array of FileObject entries for the deleted files. Note that deprecated 
+   * fields like `bucket_id` may or may not be present in the response - do not rely on them. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">paths </span><span class="s6">An array of files to delete, including the path and file name. For example [`'folder/image.png'`]. 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing array of deleted file objects or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Delete file 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.remove(['folder/avatar1.png']) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: [], 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `delete` and `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">remove</span><span class="s2">(paths: string</span><span class="s1">[]</span><span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: FileObject</span><span class="s1">[]</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">return await </span><span class="s7">remove</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/</span><span class="s2">${this.bucketId}`,</span>
+        <span class="s2">{ </span><span class="s1">prefixes</span><span class="s2">: paths },</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers }</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Get file metadata 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s6">the file id to retrieve metadata 
+   </span><span class="s2">*/</span>
+  <span class="s2">// </span><span class="s6">async getMetadata(</span>
+  <span class="s2">//   </span><span class="s6">id: string</span>
+  <span class="s2">// </span><span class="s6">): Promise&lt;</span>
+  <span class="s2">//   </span><span class="s6">| {</span>
+  <span class="s2">//       </span><span class="s6">data: Metadata</span>
+  <span class="s2">//       </span><span class="s6">error: null</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+  <span class="s2">//   </span><span class="s6">| {</span>
+  <span class="s2">//       </span><span class="s6">data: null</span>
+  <span class="s2">//       </span><span class="s6">error: StorageError</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+  <span class="s2">// </span><span class="s6">&gt; {</span>
+  <span class="s2">//   </span><span class="s6">try {</span>
+  <span class="s2">//     </span><span class="s6">const data = await get(this.fetch, `${this.url}/metadata/${id}`, { headers: this.headers })</span>
+  <span class="s2">//     </span><span class="s6">return { data, error: null }</span>
+  <span class="s2">//   </span><span class="s6">} catch (error) {</span>
+  <span class="s2">//     </span><span class="s6">if (isStorageError(error)) {</span>
+  <span class="s2">//       </span><span class="s6">return { data: null, error }</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+
+  <span class="s2">//     </span><span class="s6">throw error</span>
+  <span class="s2">//   </span><span class="s6">}</span>
+  <span class="s2">// </span><span class="s6">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Update file metadata 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">id </span><span class="s6">the file id to update metadata 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">meta </span><span class="s6">the new file metadata 
+   </span><span class="s2">*/</span>
+  <span class="s2">// </span><span class="s6">async updateMetadata(</span>
+  <span class="s2">//   </span><span class="s6">id: string,</span>
+  <span class="s2">//   </span><span class="s6">meta: Metadata</span>
+  <span class="s2">// </span><span class="s6">): Promise&lt;</span>
+  <span class="s2">//   </span><span class="s6">| {</span>
+  <span class="s2">//       </span><span class="s6">data: Metadata</span>
+  <span class="s2">//       </span><span class="s6">error: null</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+  <span class="s2">//   </span><span class="s6">| {</span>
+  <span class="s2">//       </span><span class="s6">data: null</span>
+  <span class="s2">//       </span><span class="s6">error: StorageError</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+  <span class="s2">// </span><span class="s6">&gt; {</span>
+  <span class="s2">//   </span><span class="s6">try {</span>
+  <span class="s2">//     </span><span class="s6">const data = await post(</span>
+  <span class="s2">//       </span><span class="s6">this.fetch,</span>
+  <span class="s2">//       </span><span class="s6">`${this.url}/metadata/${id}`,</span>
+  <span class="s2">//       </span><span class="s6">{ ...meta },</span>
+  <span class="s2">//       </span><span class="s6">{ headers: this.headers }</span>
+  <span class="s2">//     </span><span class="s6">)</span>
+  <span class="s2">//     </span><span class="s6">return { data, error: null }</span>
+  <span class="s2">//   </span><span class="s6">} catch (error) {</span>
+  <span class="s2">//     </span><span class="s6">if (isStorageError(error)) {</span>
+  <span class="s2">//       </span><span class="s6">return { data: null, error }</span>
+  <span class="s2">//     </span><span class="s6">}</span>
+
+  <span class="s2">//     </span><span class="s6">throw error</span>
+  <span class="s2">//   </span><span class="s6">}</span>
+  <span class="s2">// </span><span class="s6">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Lists all the files and folders within a path of the bucket. 
+   * 
+   * **Important:** For folder entries, fields like `id`, `updated_at`, `created_at`, 
+   * `last_accessed_at`, and `metadata` will be `null`. Only files have these fields populated. 
+   * Additionally, deprecated fields like `bucket_id`, `owner`, and `buckets` are NOT returned 
+   * by this method. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">path </span><span class="s6">The folder path. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s6">Search options including limit (defaults to 100), offset, sortBy, and search 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">parameters </span><span class="s6">Optional fetch parameters including signal for cancellation 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing array of files/folders or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List files in a bucket 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.list('folder', { 
+   </span><span class="s6">*     </span><span class="s1">limit: 100, 
+   </span><span class="s6">*     </span><span class="s1">offset: 0, 
+   </span><span class="s6">*     </span><span class="s1">sortBy: { column: 'name', order: 'asc' }, 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* 
+   * </span><span class="s1">// Handle files vs folders 
+   </span><span class="s6">* </span><span class="s1">data?.forEach(item =&gt; { 
+   </span><span class="s6">*   </span><span class="s1">if (item.id !== null) { 
+   </span><span class="s6">*     </span><span class="s1">// It's a file 
+   </span><span class="s6">*     </span><span class="s1">console.log('File:', item.name, 'Size:', item.metadata?.size) 
+   </span><span class="s6">*   </span><span class="s1">} else { 
+   </span><span class="s6">*     </span><span class="s1">// It's a folder 
+   </span><span class="s6">*     </span><span class="s1">console.log('Folder:', item.name) 
+   </span><span class="s6">*   </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s1">Response: 
+   </span><span class="s6">* </span><span class="s1">```json 
+   </span><span class="s6">* </span><span class="s1">{ 
+   </span><span class="s6">*   </span><span class="s1">&quot;data&quot;: [ 
+   </span><span class="s6">*     </span><span class="s1">{ 
+   </span><span class="s6">*       </span><span class="s1">&quot;name&quot;: &quot;avatar1.png&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;id&quot;: &quot;e668cf7f-821b-4a2f-9dce-7dfa5dd1cfd2&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;updated_at&quot;: &quot;2024-05-22T23:06:05.580Z&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;created_at&quot;: &quot;2024-05-22T23:04:34.443Z&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;last_accessed_at&quot;: &quot;2024-05-22T23:04:34.443Z&quot;, 
+   </span><span class="s6">*       </span><span class="s1">&quot;metadata&quot;: { 
+   </span><span class="s6">*         </span><span class="s1">&quot;eTag&quot;: &quot;\&quot;c5e8c553235d9af30ef4f6e280790b92\&quot;&quot;, 
+   </span><span class="s6">*         </span><span class="s1">&quot;size&quot;: 32175, 
+   </span><span class="s6">*         </span><span class="s1">&quot;mimetype&quot;: &quot;image/png&quot;, 
+   </span><span class="s6">*         </span><span class="s1">&quot;cacheControl&quot;: &quot;max-age=3600&quot;, 
+   </span><span class="s6">*         </span><span class="s1">&quot;lastModified&quot;: &quot;2024-05-22T23:06:05.574Z&quot;, 
+   </span><span class="s6">*         </span><span class="s1">&quot;contentLength&quot;: 32175, 
+   </span><span class="s6">*         </span><span class="s1">&quot;httpStatusCode&quot;: 200 
+   </span><span class="s6">*       </span><span class="s1">} 
+   </span><span class="s6">*     </span><span class="s1">} 
+   </span><span class="s6">*   </span><span class="s1">], 
+   </span><span class="s6">*   </span><span class="s1">&quot;error&quot;: null 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Search files in a bucket 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.list('folder', { 
+   </span><span class="s6">*     </span><span class="s1">limit: 100, 
+   </span><span class="s6">*     </span><span class="s1">offset: 0, 
+   </span><span class="s6">*     </span><span class="s1">sortBy: { column: 'name', order: 'asc' }, 
+   </span><span class="s6">*     </span><span class="s1">search: 'jon' 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s6">* 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s6">* - RLS policy permissions required: 
+   *   - `buckets` table permissions: none 
+   *   - `objects` table permissions: `select` 
+   * - Refer to the [Storage guide](/docs/guides/storage/security/access-control) on how access control works 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">list</span><span class="s2">(</span>
+    <span class="s2">path?: string,</span>
+    <span class="s2">options?: SearchOptions,</span>
+    <span class="s2">parameters?: FetchParameters</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: FileObject</span><span class="s1">[]</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">body = { ...DEFAULT_SEARCH_OPTIONS, ...options, </span><span class="s1">prefix</span><span class="s2">: path || '' }</span>
+      <span class="s0">return await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/list/</span><span class="s2">${this.bucketId}`,</span>
+        <span class="s2">body,</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers },</span>
+        <span class="s2">parameters</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s6">* Lists all the files and folders within a bucket using the V2 API with pagination support. 
+   * 
+   * **Important:** Folder entries in the `folders` array only contain `name` and optionally `key` — 
+   * they have no `id`, timestamps, or `metadata` fields. Full file metadata is only available 
+   * on entries in the `objects` array. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">experimental </span><span class="s6">this method signature might change in the future 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s6">Storage 
+   * </span><span class="s2">@</span><span class="s0">subcategory </span><span class="s6">File Buckets 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s6">Search options including prefix, cursor for pagination, limit, with_delimiter 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">parameters </span><span class="s6">Optional fetch parameters including signal for cancellation 
+   * </span><span class="s2">@</span><span class="s0">returns </span><span class="s6">Promise with response containing folders/objects arrays with pagination info or error 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">List files with pagination 
+   </span><span class="s6">* </span><span class="s1">```js 
+   </span><span class="s6">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s6">*   </span><span class="s1">.storage 
+   </span><span class="s6">*   </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*   </span><span class="s1">.listV2({ 
+   </span><span class="s6">*     </span><span class="s1">prefix: 'folder/', 
+   </span><span class="s6">*     </span><span class="s1">limit: 100, 
+   </span><span class="s6">*   </span><span class="s1">}) 
+   </span><span class="s6">* 
+   * </span><span class="s1">// Handle pagination 
+   </span><span class="s6">* </span><span class="s1">if (data?.hasNext) { 
+   </span><span class="s6">*   </span><span class="s1">const nextPage = await supabase 
+   </span><span class="s6">*     </span><span class="s1">.storage 
+   </span><span class="s6">*     </span><span class="s1">.from('avatars') 
+   </span><span class="s6">*     </span><span class="s1">.listV2({ 
+   </span><span class="s6">*       </span><span class="s1">prefix: 'folder/', 
+   </span><span class="s6">*       </span><span class="s1">cursor: data.nextCursor, 
+   </span><span class="s6">*     </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">} 
+   </span><span class="s6">* 
+   * </span><span class="s1">// Handle files vs folders 
+   </span><span class="s6">* </span><span class="s1">data?.objects.forEach(file =&gt; { 
+   </span><span class="s6">*   </span><span class="s1">if (file.id !== null) { 
+   </span><span class="s6">*     </span><span class="s1">console.log('File:', file.name, 'Size:', file.metadata?.size) 
+   </span><span class="s6">*   </span><span class="s1">} 
+   </span><span class="s6">* </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">data?.folders.forEach(folder =&gt; { 
+   </span><span class="s6">*   </span><span class="s1">console.log('Folder:', folder.name) 
+   </span><span class="s6">* </span><span class="s1">}) 
+   </span><span class="s6">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s7">listV2</span><span class="s2">(</span>
+    <span class="s2">options?: SearchV2Options,</span>
+    <span class="s2">parameters?: FetchParameters</span>
+  <span class="s2">): Promise&lt;</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: SearchV2Result</span>
+        <span class="s2">error: null</span>
+      <span class="s2">}</span>
+    <span class="s2">| {</span>
+        <span class="s2">data: null</span>
+        <span class="s2">error: StorageError</span>
+      <span class="s2">}</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">this.</span><span class="s7">handleOperation</span><span class="s1">(</span><span class="s0">async </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">body = { ...options }</span>
+      <span class="s0">return await </span><span class="s7">post</span><span class="s1">(</span>
+        <span class="s2">this.fetch,</span>
+        <span class="s2">`${this.url}</span><span class="s3">/object/list-v2/</span><span class="s2">${this.bucketId}`,</span>
+        <span class="s2">body,</span>
+        <span class="s2">{ </span><span class="s1">headers</span><span class="s2">: this.headers },</span>
+        <span class="s2">parameters</span>
+      <span class="s1">)</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">protected </span><span class="s7">encodeMetadata</span><span class="s2">(metadata: Record&lt;string, any&gt;) {</span>
+    <span class="s0">return </span><span class="s2">JSON.</span><span class="s7">stringify</span><span class="s1">(</span><span class="s2">metadata</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s7">toBase64</span><span class="s2">(data: string) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof Buffer !== '</span><span class="s3">undefined</span><span class="s2">'</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">return </span><span class="s2">Buffer.</span><span class="s7">from</span><span class="s1">(</span><span class="s2">data</span><span class="s1">)</span><span class="s2">.</span><span class="s7">toString</span><span class="s1">(</span><span class="s2">'</span><span class="s3">base64</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s7">btoa</span><span class="s1">(</span><span class="s2">data</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s7">_getFinalPath</span><span class="s2">(path: string) {</span>
+    <span class="s0">return </span><span class="s2">`${this.bucketId}</span><span class="s3">/</span><span class="s2">${path.</span><span class="s7">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s0">^</span><span class="s8">\/</span><span class="s2">+/, ''</span><span class="s1">)</span><span class="s2">}`</span>
+  <span class="s2">}</span>
+
+  <span class="s0">private </span><span class="s7">_removeEmptyFolders</span><span class="s2">(path: string) {</span>
+    <span class="s0">return </span><span class="s2">path.</span><span class="s7">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s0">^</span><span class="s8">\/</span><span class="s2">|</span><span class="s8">\/</span><span class="s0">$</span><span class="s2">/</span><span class="s0">g</span><span class="s2">, ''</span><span class="s1">)</span><span class="s2">.</span><span class="s7">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s8">\/</span><span class="s2">+/</span><span class="s0">g</span><span class="s2">, '</span><span class="s3">/</span><span class="s2">'</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/** </span><span class="s6">Modifies the `query`, appending values the from `transform` </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s7">applyTransformOptsToQuery</span><span class="s2">(</span>
+    <span class="s2">query: URLSearchParams,</span>
+    <span class="s2">transform: TransformOptions</span>
+  <span class="s2">): URLSearchParams {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transform.width</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">width</span><span class="s2">', transform.width.</span><span class="s7">toString</span><span class="s1">())</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transform.height</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">height</span><span class="s2">', transform.height.</span><span class="s7">toString</span><span class="s1">())</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transform.resize</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">resize</span><span class="s2">', transform.resize</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transform.format</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">format</span><span class="s2">', transform.format</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">transform.quality</span><span class="s1">) </span><span class="s2">query.</span><span class="s7">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">quality</span><span class="s2">', transform.quality.</span><span class="s7">toString</span><span class="s1">())</span>
+
+    <span class="s0">return </span><span class="s2">query</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

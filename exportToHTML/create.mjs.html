@@ -1,0 +1,284 @@
+<html>
+<head>
+<title>create.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #2aacb8; font-style: italic;}
+.s5 { color: #56a8f5;}
+.s6 { color: #7a7e85;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+create.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ isMotionValue, defaultOffset, isGenerator, createGeneratorEasing, fillOffset } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-dom</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ progress, secondsToMilliseconds, invariant, getEasingForSegment } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">motion-utils</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ resolveSubjects } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animate/resolve-subjects.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ calculateRepeatDuration } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/calc-repeat-duration.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ calcNextTime } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/calc-time.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ addKeyframes } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/edit.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ normalizeTimes } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/normalize-times.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ compareByTime } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/sort.mjs</span><span class="s2">';</span>
+
+<span class="s0">const </span><span class="s2">defaultSegmentEasing = &quot;</span><span class="s3">easeInOut</span><span class="s2">&quot;;</span>
+<span class="s0">const </span><span class="s2">MAX_REPEAT = </span><span class="s4">20</span><span class="s2">;</span>
+<span class="s0">function </span><span class="s5">createAnimationsFromSequence</span><span class="s2">(sequence, { defaultTransition = {}, ...sequenceTransition } = {}, scope, generators) {</span>
+    <span class="s0">const </span><span class="s2">defaultDuration = defaultTransition.duration || </span><span class="s4">0.3</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">animationDefinitions = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">sequences = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">elementCache = {};</span>
+    <span class="s0">const </span><span class="s2">timeLabels = new </span><span class="s5">Map</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">prevTime = </span><span class="s4">0</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">currentTime = </span><span class="s4">0</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">totalDuration = </span><span class="s4">0</span><span class="s2">;</span>
+    <span class="s2">/**</span>
+     <span class="s6">* Build the timeline by mapping over the sequence array and converting 
+     * the definitions into keyframes and offsets with absolute time values. 
+     * These will later get converted into relative offsets in a second pass. 
+     </span><span class="s2">*/</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s4">0</span><span class="s2">; i &lt; sequence.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">segment = sequence</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* If this is a timeline label, mark it and skip the rest of this iteration. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">typeof segment === &quot;</span><span class="s3">string</span><span class="s2">&quot;</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">timeLabels.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">segment, currentTime</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">continue</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else if </span><span class="s1">(</span><span class="s2">!Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">segment</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s2">timeLabels.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">segment.name, </span><span class="s5">calcNextTime</span><span class="s1">(</span><span class="s2">currentTime, segment.at, prevTime, timeLabels</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s0">continue</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">let </span><span class="s2">[subject, keyframes, transition = {}] = segment;</span>
+        <span class="s2">/**</span>
+         <span class="s6">* If a relative or absolute time value has been specified we need to resolve 
+         * it in relation to the currentTime. 
+         </span><span class="s2">*/</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">transition.at !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">currentTime = </span><span class="s5">calcNextTime</span><span class="s1">(</span><span class="s2">currentTime, transition.at, prevTime, timeLabels</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">/**</span>
+         <span class="s6">* Keep track of the maximum duration in this definition. This will be 
+         * applied to currentTime once the definition has been parsed. 
+         </span><span class="s2">*/</span>
+        <span class="s0">let </span><span class="s2">maxDuration = </span><span class="s4">0</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s5">resolveValueSequence </span><span class="s2">= (valueKeyframes, valueTransition, valueSequence, elementIndex = </span><span class="s4">0</span><span class="s2">, numSubjects = </span><span class="s4">0</span><span class="s2">) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">valueKeyframesAsList = </span><span class="s5">keyframesAsList</span><span class="s1">(</span><span class="s2">valueKeyframes</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">{ delay = </span><span class="s4">0</span><span class="s2">, times = </span><span class="s5">defaultOffset</span><span class="s1">(</span><span class="s2">valueKeyframesAsList</span><span class="s1">)</span><span class="s2">, type = defaultTransition.type || &quot;</span><span class="s3">keyframes</span><span class="s2">&quot;, repeat, repeatType, repeatDelay = </span><span class="s4">0</span><span class="s2">, ...remainingTransition } = valueTransition;</span>
+            <span class="s0">let </span><span class="s2">{ ease = defaultTransition.ease || &quot;</span><span class="s3">easeOut</span><span class="s2">&quot;, duration } = valueTransition;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Resolve stagger() if defined. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">calculatedDelay = typeof delay === &quot;</span><span class="s3">function</span><span class="s2">&quot;</span>
+                <span class="s2">? </span><span class="s5">delay</span><span class="s1">(</span><span class="s2">elementIndex, numSubjects</span><span class="s1">)</span>
+                <span class="s2">: delay;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If this animation should and can use a spring, generate a spring easing function. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">numKeyframes = valueKeyframesAsList.</span><span class="s1">length</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">createGenerator = </span><span class="s5">isGenerator</span><span class="s1">(</span><span class="s2">type</span><span class="s1">)</span>
+                <span class="s2">? type</span>
+                <span class="s2">: generators?.</span><span class="s1">[</span><span class="s2">type || &quot;</span><span class="s3">keyframes</span><span class="s2">&quot;</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">numKeyframes &lt;= </span><span class="s4">2 </span><span class="s2">&amp;&amp; createGenerator</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">/**</span>
+                 <span class="s6">* As we're creating an easing function from a spring, 
+                 * ideally we want to generate it using the real distance 
+                 * between the two keyframes. However this isn't always 
+                 * possible - in these situations we use 0-100. 
+                 </span><span class="s2">*/</span>
+                <span class="s0">let </span><span class="s2">absoluteDelta = </span><span class="s4">100</span><span class="s2">;</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">numKeyframes === </span><span class="s4">2 </span><span class="s2">&amp;&amp;</span>
+                    <span class="s5">isNumberKeyframesArray</span><span class="s1">(</span><span class="s2">valueKeyframesAsList</span><span class="s1">)) </span><span class="s2">{</span>
+                    <span class="s0">const </span><span class="s2">delta = valueKeyframesAsList</span><span class="s1">[</span><span class="s4">1</span><span class="s1">] </span><span class="s2">- valueKeyframesAsList</span><span class="s1">[</span><span class="s4">0</span><span class="s1">]</span><span class="s2">;</span>
+                    <span class="s2">absoluteDelta = Math.</span><span class="s5">abs</span><span class="s1">(</span><span class="s2">delta</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s0">const </span><span class="s2">springTransition = {</span>
+                    <span class="s2">...defaultTransition,</span>
+                    <span class="s2">...remainingTransition,</span>
+                <span class="s2">};</span>
+                <span class="s0">if </span><span class="s1">(</span><span class="s2">duration !== </span><span class="s7">undefined</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">springTransition.duration = </span><span class="s5">secondsToMilliseconds</span><span class="s1">(</span><span class="s2">duration</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+                <span class="s0">const </span><span class="s2">springEasing = </span><span class="s5">createGeneratorEasing</span><span class="s1">(</span><span class="s2">springTransition, absoluteDelta, createGenerator</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">ease = springEasing.ease;</span>
+                <span class="s2">duration = springEasing.duration;</span>
+            <span class="s2">}</span>
+            <span class="s2">duration ?? </span><span class="s1">(</span><span class="s2">duration = defaultDuration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">startTime = currentTime + calculatedDelay;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If there's only one time offset of 0, fill in a second with length 1 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">times.</span><span class="s1">length </span><span class="s2">=== </span><span class="s4">1 </span><span class="s2">&amp;&amp; times</span><span class="s1">[</span><span class="s4">0</span><span class="s1">] </span><span class="s2">=== </span><span class="s4">0</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">times</span><span class="s1">[</span><span class="s4">1</span><span class="s1">] </span><span class="s2">= </span><span class="s4">1</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Fill out if offset if fewer offsets than keyframes 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">remainder = times.</span><span class="s1">length </span><span class="s2">- valueKeyframesAsList.</span><span class="s1">length</span><span class="s2">;</span>
+            <span class="s2">remainder &gt; </span><span class="s4">0 </span><span class="s2">&amp;&amp; </span><span class="s5">fillOffset</span><span class="s1">(</span><span class="s2">times, remainder</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If only one value has been set, ie [1], push a null to the start of 
+             * the keyframe array. This will let us mark a keyframe at this point 
+             * that will later be hydrated with the previous value. 
+             </span><span class="s2">*/</span>
+            <span class="s2">valueKeyframesAsList.</span><span class="s1">length </span><span class="s2">=== </span><span class="s4">1 </span><span class="s2">&amp;&amp;</span>
+                <span class="s2">valueKeyframesAsList.</span><span class="s5">unshift</span><span class="s1">(</span><span class="s7">null</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Handle repeat options 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">repeat</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s5">invariant</span><span class="s1">(</span><span class="s2">repeat &lt; MAX_REPEAT, &quot;</span><span class="s3">Repeat count too high, must be less than 20</span><span class="s2">&quot;, &quot;</span><span class="s3">repeat-count-high</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">duration = </span><span class="s5">calculateRepeatDuration</span><span class="s1">(</span><span class="s2">duration, repeat</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">originalKeyframes = </span><span class="s1">[</span><span class="s2">...valueKeyframesAsList</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">originalTimes = </span><span class="s1">[</span><span class="s2">...times</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s2">ease = Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">ease</span><span class="s1">) </span><span class="s2">? </span><span class="s1">[</span><span class="s2">...ease</span><span class="s1">] </span><span class="s2">: </span><span class="s1">[</span><span class="s2">ease</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">originalEase = </span><span class="s1">[</span><span class="s2">...ease</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">repeatIndex = </span><span class="s4">0</span><span class="s2">; repeatIndex &lt; repeat; repeatIndex++</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s2">valueKeyframesAsList.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">...originalKeyframes</span><span class="s1">)</span><span class="s2">;</span>
+                    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">keyframeIndex = </span><span class="s4">0</span><span class="s2">; keyframeIndex &lt; originalKeyframes.</span><span class="s1">length</span><span class="s2">; keyframeIndex++</span><span class="s1">) </span><span class="s2">{</span>
+                        <span class="s2">times.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">originalTimes</span><span class="s1">[</span><span class="s2">keyframeIndex</span><span class="s1">] </span><span class="s2">+ </span><span class="s1">(</span><span class="s2">repeatIndex + </span><span class="s4">1</span><span class="s1">))</span><span class="s2">;</span>
+                        <span class="s2">ease.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">keyframeIndex === </span><span class="s4">0</span>
+                            <span class="s2">? &quot;</span><span class="s3">linear</span><span class="s2">&quot;</span>
+                            <span class="s2">: </span><span class="s5">getEasingForSegment</span><span class="s1">(</span><span class="s2">originalEase, keyframeIndex - </span><span class="s4">1</span><span class="s1">))</span><span class="s2">;</span>
+                    <span class="s2">}</span>
+                <span class="s2">}</span>
+                <span class="s5">normalizeTimes</span><span class="s1">(</span><span class="s2">times, repeat</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">targetTime = startTime + duration;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Add keyframes, mapping offsets to absolute time. 
+             </span><span class="s2">*/</span>
+            <span class="s5">addKeyframes</span><span class="s1">(</span><span class="s2">valueSequence, valueKeyframesAsList, ease, times, startTime, targetTime</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">maxDuration = Math.</span><span class="s5">max</span><span class="s1">(</span><span class="s2">calculatedDelay + duration, maxDuration</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">totalDuration = Math.</span><span class="s5">max</span><span class="s1">(</span><span class="s2">targetTime, totalDuration</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">};</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">subject</span><span class="s1">)) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">subjectSequence = </span><span class="s5">getSubjectSequence</span><span class="s1">(</span><span class="s2">subject, sequences</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s5">resolveValueSequence</span><span class="s1">(</span><span class="s2">keyframes, transition, </span><span class="s5">getValueSequence</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">default</span><span class="s2">&quot;, subjectSequence</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s0">else </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">subjects = </span><span class="s5">resolveSubjects</span><span class="s1">(</span><span class="s2">subject, keyframes, scope, elementCache</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">numSubjects = subjects.</span><span class="s1">length</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* For every element in this segment, process the defined values. 
+             </span><span class="s2">*/</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">subjectIndex = </span><span class="s4">0</span><span class="s2">; subjectIndex &lt; numSubjects; subjectIndex++</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">/**</span>
+                 <span class="s6">* Cast necessary, but we know these are of this type 
+                 </span><span class="s2">*/</span>
+                <span class="s2">keyframes = keyframes;</span>
+                <span class="s2">transition = transition;</span>
+                <span class="s0">const </span><span class="s2">thisSubject = subjects</span><span class="s1">[</span><span class="s2">subjectIndex</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s0">const </span><span class="s2">subjectSequence = </span><span class="s5">getSubjectSequence</span><span class="s1">(</span><span class="s2">thisSubject, sequences</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in keyframes</span><span class="s1">) </span><span class="s2">{</span>
+                    <span class="s5">resolveValueSequence</span><span class="s1">(</span><span class="s2">keyframes</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">, </span><span class="s5">getValueTransition</span><span class="s1">(</span><span class="s2">transition, key</span><span class="s1">)</span><span class="s2">, </span><span class="s5">getValueSequence</span><span class="s1">(</span><span class="s2">key, subjectSequence</span><span class="s1">)</span><span class="s2">, subjectIndex, numSubjects</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span>
+        <span class="s2">prevTime = currentTime;</span>
+        <span class="s2">currentTime += maxDuration;</span>
+    <span class="s2">}</span>
+    <span class="s2">/**</span>
+     <span class="s6">* For every element and value combination create a new animation. 
+     </span><span class="s2">*/</span>
+    <span class="s2">sequences.</span><span class="s5">forEach</span><span class="s1">(</span><span class="s2">(valueSequences, element) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">for </span><span class="s1">(</span><span class="s0">const </span><span class="s2">key in valueSequences</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s0">const </span><span class="s2">valueSequence = valueSequences</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Arrange all the keyframes in ascending time order. 
+             </span><span class="s2">*/</span>
+            <span class="s2">valueSequence.</span><span class="s5">sort</span><span class="s1">(</span><span class="s2">compareByTime</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">keyframes = </span><span class="s1">[]</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">valueOffset = </span><span class="s1">[]</span><span class="s2">;</span>
+            <span class="s0">const </span><span class="s2">valueEasing = </span><span class="s1">[]</span><span class="s2">;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* For each keyframe, translate absolute times into 
+             * relative offsets based on the total duration of the timeline. 
+             </span><span class="s2">*/</span>
+            <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s4">0</span><span class="s2">; i &lt; valueSequence.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s0">const </span><span class="s2">{ at, value, easing } = valueSequence</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+                <span class="s2">keyframes.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">value</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">valueOffset.</span><span class="s5">push</span><span class="s1">(</span><span class="s5">progress</span><span class="s1">(</span><span class="s4">0</span><span class="s2">, totalDuration, at</span><span class="s1">))</span><span class="s2">;</span>
+                <span class="s2">valueEasing.</span><span class="s5">push</span><span class="s1">(</span><span class="s2">easing || &quot;</span><span class="s3">easeOut</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If the first keyframe doesn't land on offset: 0 
+             * provide one by duplicating the initial keyframe. This ensures 
+             * it snaps to the first keyframe when the animation starts. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">valueOffset</span><span class="s1">[</span><span class="s4">0</span><span class="s1">] </span><span class="s2">!== </span><span class="s4">0</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">valueOffset.</span><span class="s5">unshift</span><span class="s1">(</span><span class="s4">0</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">keyframes.</span><span class="s5">unshift</span><span class="s1">(</span><span class="s2">keyframes</span><span class="s1">[</span><span class="s4">0</span><span class="s1">])</span><span class="s2">;</span>
+                <span class="s2">valueEasing.</span><span class="s5">unshift</span><span class="s1">(</span><span class="s2">defaultSegmentEasing</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s2">/**</span>
+             <span class="s6">* If the last keyframe doesn't land on offset: 1 
+             * provide one with a null wildcard value. This will ensure it 
+             * stays static until the end of the animation. 
+             </span><span class="s2">*/</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">valueOffset</span><span class="s1">[</span><span class="s2">valueOffset.</span><span class="s1">length </span><span class="s2">- </span><span class="s4">1</span><span class="s1">] </span><span class="s2">!== </span><span class="s4">1</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">valueOffset.</span><span class="s5">push</span><span class="s1">(</span><span class="s4">1</span><span class="s1">)</span><span class="s2">;</span>
+                <span class="s2">keyframes.</span><span class="s5">push</span><span class="s1">(</span><span class="s7">null</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">!animationDefinitions.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)) </span><span class="s2">{</span>
+                <span class="s2">animationDefinitions.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">element, {</span>
+                    <span class="s1">keyframes</span><span class="s2">: {},</span>
+                    <span class="s1">transition</span><span class="s2">: {},</span>
+                <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">const </span><span class="s2">definition = animationDefinitions.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">element</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">definition.keyframes</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= keyframes;</span>
+            <span class="s2">/**</span>
+             <span class="s6">* Exclude `type` from defaultTransition since springs have been 
+             * converted to duration-based easing functions in resolveValueSequence. 
+             * Including `type: &quot;spring&quot;` would cause JSAnimation to error when 
+             * the merged keyframes array has more than 2 keyframes. 
+             </span><span class="s2">*/</span>
+            <span class="s0">const </span><span class="s2">{ type: _type, ...remainingDefaultTransition } = defaultTransition;</span>
+            <span class="s2">definition.transition</span><span class="s1">[</span><span class="s2">key</span><span class="s1">] </span><span class="s2">= {</span>
+                <span class="s2">...remainingDefaultTransition,</span>
+                <span class="s1">duration</span><span class="s2">: totalDuration,</span>
+                <span class="s1">ease</span><span class="s2">: valueEasing,</span>
+                <span class="s1">times</span><span class="s2">: valueOffset,</span>
+                <span class="s2">...sequenceTransition,</span>
+            <span class="s2">};</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">animationDefinitions;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">getSubjectSequence</span><span class="s2">(subject, sequences) {</span>
+    <span class="s2">!sequences.</span><span class="s5">has</span><span class="s1">(</span><span class="s2">subject</span><span class="s1">) </span><span class="s2">&amp;&amp; sequences.</span><span class="s5">set</span><span class="s1">(</span><span class="s2">subject, {}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">sequences.</span><span class="s5">get</span><span class="s1">(</span><span class="s2">subject</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">getValueSequence</span><span class="s2">(name, sequences) {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!sequences</span><span class="s1">[</span><span class="s2">name</span><span class="s1">])</span>
+        <span class="s2">sequences</span><span class="s1">[</span><span class="s2">name</span><span class="s1">] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">sequences</span><span class="s1">[</span><span class="s2">name</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">keyframesAsList</span><span class="s2">(keyframes) {</span>
+    <span class="s0">return </span><span class="s2">Array.</span><span class="s5">isArray</span><span class="s1">(</span><span class="s2">keyframes</span><span class="s1">) </span><span class="s2">? keyframes : </span><span class="s1">[</span><span class="s2">keyframes</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">getValueTransition</span><span class="s2">(transition, key) {</span>
+    <span class="s0">return </span><span class="s2">transition &amp;&amp; transition</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span>
+        <span class="s2">? {</span>
+            <span class="s2">...transition,</span>
+            <span class="s2">...transition</span><span class="s1">[</span><span class="s2">key</span><span class="s1">]</span><span class="s2">,</span>
+        <span class="s2">}</span>
+        <span class="s2">: { ...transition };</span>
+<span class="s2">}</span>
+<span class="s0">const </span><span class="s5">isNumber </span><span class="s2">= (keyframe) </span><span class="s0">=&gt; </span><span class="s2">typeof keyframe === &quot;</span><span class="s3">number</span><span class="s2">&quot;;</span>
+<span class="s0">const </span><span class="s5">isNumberKeyframesArray </span><span class="s2">= (keyframes) </span><span class="s0">=&gt; </span><span class="s2">keyframes.</span><span class="s5">every</span><span class="s1">(</span><span class="s2">isNumber</span><span class="s1">)</span><span class="s2">;</span>
+
+<span class="s0">export </span><span class="s2">{ createAnimationsFromSequence, getValueTransition };</span>
+<span class="s2">//</span><span class="s6"># sourceMappingURL=create.mjs.map</span>
+</pre>
+</body>
+</html>

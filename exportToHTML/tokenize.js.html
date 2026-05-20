@@ -1,0 +1,437 @@
+<html>
+<head>
+<title>tokenize.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #6aab73;}
+.s1 { color: #bcbec4;}
+.s2 { color: #cf8e6d;}
+.s3 { color: #7a7e85;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+tokenize.js</font>
+</center></td></tr></table>
+<pre><span class="s0">&quot;use strict&quot;</span><span class="s1">;</span>
+<span class="s1">module.exports = tokenize;</span>
+
+<span class="s2">var </span><span class="s1">delimRe        = /[\s{}=;:[\],</span><span class="s0">'&quot;()&lt;&gt;]/g,</span>
+    <span class="s1">stringDoubleRe = /(?:</span><span class="s0">&quot;([^&quot;</span><span class="s1">\\]*(?:\\.[^</span><span class="s0">&quot;</span><span class="s2">\\</span><span class="s0">]*)*)&quot;</span><span class="s1">)/g,</span>
+    <span class="s1">stringSingleRe = /(?:</span><span class="s0">'([^'</span><span class="s1">\\]*(?:\\.[^</span><span class="s0">'</span><span class="s2">\\</span><span class="s0">]*)*)'</span><span class="s1">)/g;</span>
+
+<span class="s2">var </span><span class="s1">setCommentRe = /^ *[*/]+ */,</span>
+    <span class="s1">setCommentAltRe = /^\s*\*?\</span><span class="s3">/*/, 
+    setCommentSplitRe = /\n/g, 
+    whitespaceRe = /\s/, 
+    unescapeRe = /\\(.?)/g; 
+ 
+var unescapeMap = { 
+    &quot;0&quot;: &quot;\0&quot;, 
+    &quot;r&quot;: &quot;\r&quot;, 
+    &quot;n&quot;: &quot;\n&quot;, 
+    &quot;t&quot;: &quot;\t&quot; 
+}; 
+ 
+/** 
+ * Unescapes a string. 
+ * @param {string} str String to unescape 
+ * @returns {string} Unescaped string 
+ * @property {Object.&lt;string,string&gt;} map Special characters map 
+ * @memberof tokenize 
+ */</span>
+<span class="s2">function </span><span class="s1">unescape(str) {</span>
+    <span class="s2">return </span><span class="s1">str.replace(unescapeRe, </span><span class="s2">function</span><span class="s1">($0, $1) {</span>
+        <span class="s2">switch </span><span class="s1">($1) {</span>
+            <span class="s2">case </span><span class="s0">&quot;</span><span class="s2">\\</span><span class="s0">&quot;</span><span class="s1">:</span>
+            <span class="s2">case </span><span class="s0">&quot;&quot;</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">$1;</span>
+            <span class="s2">default</span><span class="s1">:</span>
+                <span class="s2">return </span><span class="s1">unescapeMap[$1] || </span><span class="s0">&quot;&quot;</span><span class="s1">;</span>
+        <span class="s1">}</span>
+    <span class="s1">});</span>
+<span class="s1">}</span>
+
+<span class="s1">tokenize.unescape = unescape;</span>
+
+<span class="s3">/** 
+ * Gets the next token and advances. 
+ * @typedef TokenizerHandleNext 
+ * @type {function} 
+ * @returns {string|null} Next token or `null` on eof 
+ */</span>
+
+<span class="s3">/** 
+ * Peeks for the next token. 
+ * @typedef TokenizerHandlePeek 
+ * @type {function} 
+ * @returns {string|null} Next token or `null` on eof 
+ */</span>
+
+<span class="s3">/** 
+ * Pushes a token back to the stack. 
+ * @typedef TokenizerHandlePush 
+ * @type {function} 
+ * @param {string} token Token 
+ * @returns {undefined} 
+ */</span>
+
+<span class="s3">/** 
+ * Skips the next token. 
+ * @typedef TokenizerHandleSkip 
+ * @type {function} 
+ * @param {string} expected Expected token 
+ * @param {boolean} [optional=false] If optional 
+ * @returns {boolean} Whether the token matched 
+ * @throws {Error} If the token didn't match and is not optional 
+ */</span>
+
+<span class="s3">/** 
+ * Gets the comment on the previous line or, alternatively, the line comment on the specified line. 
+ * @typedef TokenizerHandleCmnt 
+ * @type {function} 
+ * @param {number} [line] Line number 
+ * @returns {string|null} Comment text or `null` if none 
+ */</span>
+
+<span class="s3">/** 
+ * Handle object returned from {@link tokenize}. 
+ * @interface ITokenizerHandle 
+ * @property {TokenizerHandleNext} next Gets the next token and advances (`null` on eof) 
+ * @property {TokenizerHandlePeek} peek Peeks for the next token (`null` on eof) 
+ * @property {TokenizerHandlePush} push Pushes a token back to the stack 
+ * @property {TokenizerHandleSkip} skip Skips a token, returns its presence and advances or, if non-optional and not present, throws 
+ * @property {TokenizerHandleCmnt} cmnt Gets the comment on the previous line or the line comment on the specified line, if any 
+ * @property {number} line Current line number 
+ */</span>
+
+<span class="s3">/** 
+ * Tokenizes the given .proto source and returns an object with useful utility functions. 
+ * @param {string} source Source contents 
+ * @param {boolean} alternateCommentMode Whether we should activate alternate comment parsing mode. 
+ * @returns {ITokenizerHandle} Tokenizer handle 
+ */</span>
+<span class="s2">function </span><span class="s1">tokenize(source, alternateCommentMode) {</span>
+    <span class="s3">/* eslint-disable callback-return */</span>
+    <span class="s1">source = source.toString();</span>
+
+    <span class="s2">var </span><span class="s1">offset = </span><span class="s4">0</span><span class="s1">,</span>
+        <span class="s1">length = source.length,</span>
+        <span class="s1">line = </span><span class="s4">1</span><span class="s1">,</span>
+        <span class="s1">lastCommentLine = </span><span class="s4">0</span><span class="s1">,</span>
+        <span class="s1">comments = {};</span>
+
+    <span class="s2">var </span><span class="s1">stack = [];</span>
+
+    <span class="s2">var </span><span class="s1">stringDelim = </span><span class="s2">null</span><span class="s1">;</span>
+
+    <span class="s3">/* istanbul ignore next */</span>
+    <span class="s3">/** 
+     * Creates an error for illegal syntax. 
+     * @param {string} subject Subject 
+     * @returns {Error} Error created 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">illegal(subject) {</span>
+        <span class="s2">return </span><span class="s1">Error(</span><span class="s0">&quot;illegal &quot; </span><span class="s1">+ subject + </span><span class="s0">&quot; (line &quot; </span><span class="s1">+ line + </span><span class="s0">&quot;)&quot;</span><span class="s1">);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Reads a string till its end. 
+     * @returns {string} String read 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">readString() {</span>
+        <span class="s2">var </span><span class="s1">re = stringDelim === </span><span class="s0">&quot;'&quot; </span><span class="s1">? stringSingleRe : stringDoubleRe;</span>
+        <span class="s1">re.lastIndex = offset - </span><span class="s4">1</span><span class="s1">;</span>
+        <span class="s2">var </span><span class="s1">match = re.exec(source);</span>
+        <span class="s2">if </span><span class="s1">(!match)</span>
+            <span class="s2">throw </span><span class="s1">illegal(</span><span class="s0">&quot;string&quot;</span><span class="s1">);</span>
+        <span class="s1">offset = re.lastIndex;</span>
+        <span class="s1">push(stringDelim);</span>
+        <span class="s1">stringDelim = </span><span class="s2">null</span><span class="s1">;</span>
+        <span class="s2">return </span><span class="s1">unescape(match[</span><span class="s4">1</span><span class="s1">]);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Gets the character at `pos` within the source. 
+     * @param {number} pos Position 
+     * @returns {string} Character 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">charAt(pos) {</span>
+        <span class="s2">return </span><span class="s1">source.charAt(pos);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Sets the current comment text. 
+     * @param {number} start Start offset 
+     * @param {number} end End offset 
+     * @param {boolean} isLeading set if a leading comment 
+     * @returns {undefined} 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">setComment(start, end, isLeading) {</span>
+        <span class="s2">var </span><span class="s1">comment = {</span>
+            <span class="s1">type: source.charAt(start++),</span>
+            <span class="s1">lineEmpty: </span><span class="s2">false</span><span class="s1">,</span>
+            <span class="s1">leading: isLeading,</span>
+        <span class="s1">};</span>
+        <span class="s2">var </span><span class="s1">lookback;</span>
+        <span class="s2">if </span><span class="s1">(alternateCommentMode) {</span>
+            <span class="s1">lookback = </span><span class="s4">2</span><span class="s1">;  </span><span class="s3">// alternate comment parsing: &quot;//&quot; or &quot;/*&quot;</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s1">lookback = </span><span class="s4">3</span><span class="s1">;  </span><span class="s3">// &quot;///&quot; or &quot;/**&quot;</span>
+        <span class="s1">}</span>
+        <span class="s2">var </span><span class="s1">commentOffset = start - lookback,</span>
+            <span class="s1">c;</span>
+        <span class="s2">do </span><span class="s1">{</span>
+            <span class="s2">if </span><span class="s1">(--commentOffset &lt; </span><span class="s4">0 </span><span class="s1">||</span>
+                    <span class="s1">(c = source.charAt(commentOffset)) === </span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">) {</span>
+                <span class="s1">comment.lineEmpty = </span><span class="s2">true</span><span class="s1">;</span>
+                <span class="s2">break</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">while </span><span class="s1">(c === </span><span class="s0">&quot; &quot; </span><span class="s1">|| c === </span><span class="s0">&quot;</span><span class="s2">\t</span><span class="s0">&quot;</span><span class="s1">);</span>
+        <span class="s2">var </span><span class="s1">lines = source</span>
+            <span class="s1">.substring(start, end)</span>
+            <span class="s1">.split(setCommentSplitRe);</span>
+        <span class="s2">for </span><span class="s1">(</span><span class="s2">var </span><span class="s1">i = </span><span class="s4">0</span><span class="s1">; i &lt; lines.length; ++i)</span>
+            <span class="s1">lines[i] = lines[i]</span>
+                <span class="s1">.replace(alternateCommentMode ? setCommentAltRe : setCommentRe, </span><span class="s0">&quot;&quot;</span><span class="s1">)</span>
+                <span class="s1">.trim();</span>
+        <span class="s1">comment.text = lines</span>
+            <span class="s1">.join(</span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">)</span>
+            <span class="s1">.trim();</span>
+
+        <span class="s1">comments[line] = comment;</span>
+        <span class="s1">lastCommentLine = line;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">function </span><span class="s1">isDoubleSlashCommentLine(startOffset) {</span>
+        <span class="s2">var </span><span class="s1">endOffset = findEndOfLine(startOffset);</span>
+
+        <span class="s3">// see if remaining line matches comment pattern</span>
+        <span class="s2">var </span><span class="s1">lineText = source.substring(startOffset, endOffset);</span>
+        <span class="s2">var </span><span class="s1">isComment = /^\s*\/\</span><span class="s3">//.test(lineText);</span>
+        <span class="s2">return </span><span class="s1">isComment;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">function </span><span class="s1">findEndOfLine(cursor) {</span>
+        <span class="s3">// find end of cursor's line</span>
+        <span class="s2">var </span><span class="s1">endOffset = cursor;</span>
+        <span class="s2">while </span><span class="s1">(endOffset &lt; length &amp;&amp; charAt(endOffset) !== </span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">) {</span>
+            <span class="s1">endOffset++;</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">endOffset;</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Obtains the next token. 
+     * @returns {string|null} Next token or `null` on eof 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">next() {</span>
+        <span class="s2">if </span><span class="s1">(stack.length &gt; </span><span class="s4">0</span><span class="s1">)</span>
+            <span class="s2">return </span><span class="s1">stack.shift();</span>
+        <span class="s2">if </span><span class="s1">(stringDelim)</span>
+            <span class="s2">return </span><span class="s1">readString();</span>
+        <span class="s2">var </span><span class="s1">repeat,</span>
+            <span class="s1">prev,</span>
+            <span class="s1">curr,</span>
+            <span class="s1">start,</span>
+            <span class="s1">isDoc,</span>
+            <span class="s1">isLeadingComment = offset === </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">do </span><span class="s1">{</span>
+            <span class="s2">if </span><span class="s1">(offset === length)</span>
+                <span class="s2">return null</span><span class="s1">;</span>
+            <span class="s1">repeat = </span><span class="s2">false</span><span class="s1">;</span>
+            <span class="s2">while </span><span class="s1">(whitespaceRe.test(curr = charAt(offset))) {</span>
+                <span class="s2">if </span><span class="s1">(curr === </span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">) {</span>
+                    <span class="s1">isLeadingComment = </span><span class="s2">true</span><span class="s1">;</span>
+                    <span class="s1">++line;</span>
+                <span class="s1">}</span>
+                <span class="s2">if </span><span class="s1">(++offset === length)</span>
+                    <span class="s2">return null</span><span class="s1">;</span>
+            <span class="s1">}</span>
+
+            <span class="s2">if </span><span class="s1">(charAt(offset) === </span><span class="s0">&quot;/&quot;</span><span class="s1">) {</span>
+                <span class="s2">if </span><span class="s1">(++offset === length) {</span>
+                    <span class="s2">throw </span><span class="s1">illegal(</span><span class="s0">&quot;comment&quot;</span><span class="s1">);</span>
+                <span class="s1">}</span>
+                <span class="s2">if </span><span class="s1">(charAt(offset) === </span><span class="s0">&quot;/&quot;</span><span class="s1">) { </span><span class="s3">// Line</span>
+                    <span class="s2">if </span><span class="s1">(!alternateCommentMode) {</span>
+                        <span class="s3">// check for triple-slash comment</span>
+                        <span class="s1">isDoc = charAt(start = offset + </span><span class="s4">1</span><span class="s1">) === </span><span class="s0">&quot;/&quot;</span><span class="s1">;</span>
+
+                        <span class="s2">while </span><span class="s1">(charAt(++offset) !== </span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">) {</span>
+                            <span class="s2">if </span><span class="s1">(offset === length) {</span>
+                                <span class="s2">return null</span><span class="s1">;</span>
+                            <span class="s1">}</span>
+                        <span class="s1">}</span>
+                        <span class="s1">++offset;</span>
+                        <span class="s2">if </span><span class="s1">(isDoc) {</span>
+                            <span class="s1">setComment(start, offset - </span><span class="s4">1</span><span class="s1">, isLeadingComment);</span>
+                            <span class="s3">// Trailing comment cannot not be multi-line,</span>
+                            <span class="s3">// so leading comment state should be reset to handle potential next comments</span>
+                            <span class="s1">isLeadingComment = </span><span class="s2">true</span><span class="s1">;</span>
+                        <span class="s1">}</span>
+                        <span class="s1">++line;</span>
+                        <span class="s1">repeat = </span><span class="s2">true</span><span class="s1">;</span>
+                    <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                        <span class="s3">// check for double-slash comments, consolidating consecutive lines</span>
+                        <span class="s1">start = offset;</span>
+                        <span class="s1">isDoc = </span><span class="s2">false</span><span class="s1">;</span>
+                        <span class="s2">if </span><span class="s1">(isDoubleSlashCommentLine(offset - </span><span class="s4">1</span><span class="s1">)) {</span>
+                            <span class="s1">isDoc = </span><span class="s2">true</span><span class="s1">;</span>
+                            <span class="s2">do </span><span class="s1">{</span>
+                                <span class="s1">offset = findEndOfLine(offset);</span>
+                                <span class="s2">if </span><span class="s1">(offset === length) {</span>
+                                    <span class="s2">break</span><span class="s1">;</span>
+                                <span class="s1">}</span>
+                                <span class="s1">offset++;</span>
+                                <span class="s2">if </span><span class="s1">(!isLeadingComment) {</span>
+                                    <span class="s3">// Trailing comment cannot not be multi-line</span>
+                                    <span class="s2">break</span><span class="s1">;</span>
+                                <span class="s1">}</span>
+                            <span class="s1">} </span><span class="s2">while </span><span class="s1">(isDoubleSlashCommentLine(offset));</span>
+                        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                            <span class="s1">offset = Math.min(length, findEndOfLine(offset) + </span><span class="s4">1</span><span class="s1">);</span>
+                        <span class="s1">}</span>
+                        <span class="s2">if </span><span class="s1">(isDoc) {</span>
+                            <span class="s1">setComment(start, offset, isLeadingComment);</span>
+                            <span class="s1">isLeadingComment = </span><span class="s2">true</span><span class="s1">;</span>
+                        <span class="s1">}</span>
+                        <span class="s1">line++;</span>
+                        <span class="s1">repeat = </span><span class="s2">true</span><span class="s1">;</span>
+                    <span class="s1">}</span>
+                <span class="s1">} </span><span class="s2">else if </span><span class="s1">((curr = charAt(offset)) === </span><span class="s0">&quot;*&quot;</span><span class="s1">) { </span><span class="s3">/* Block */</span>
+                    <span class="s3">// check for /** (regular comment mode) or /* (alternate comment mode)</span>
+                    <span class="s1">start = offset + </span><span class="s4">1</span><span class="s1">;</span>
+                    <span class="s1">isDoc = alternateCommentMode || charAt(start) === </span><span class="s0">&quot;*&quot;</span><span class="s1">;</span>
+                    <span class="s2">do </span><span class="s1">{</span>
+                        <span class="s2">if </span><span class="s1">(curr === </span><span class="s0">&quot;</span><span class="s2">\n</span><span class="s0">&quot;</span><span class="s1">) {</span>
+                            <span class="s1">++line;</span>
+                        <span class="s1">}</span>
+                        <span class="s2">if </span><span class="s1">(++offset === length) {</span>
+                            <span class="s2">throw </span><span class="s1">illegal(</span><span class="s0">&quot;comment&quot;</span><span class="s1">);</span>
+                        <span class="s1">}</span>
+                        <span class="s1">prev = curr;</span>
+                        <span class="s1">curr = charAt(offset);</span>
+                    <span class="s1">} </span><span class="s2">while </span><span class="s1">(prev !== </span><span class="s0">&quot;*&quot; </span><span class="s1">|| curr !== </span><span class="s0">&quot;/&quot;</span><span class="s1">);</span>
+                    <span class="s1">++offset;</span>
+                    <span class="s2">if </span><span class="s1">(isDoc) {</span>
+                        <span class="s1">setComment(start, offset - </span><span class="s4">2</span><span class="s1">, isLeadingComment);</span>
+                        <span class="s1">isLeadingComment = </span><span class="s2">true</span><span class="s1">;</span>
+                    <span class="s1">}</span>
+                    <span class="s1">repeat = </span><span class="s2">true</span><span class="s1">;</span>
+                <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+                    <span class="s2">return </span><span class="s0">&quot;/&quot;</span><span class="s1">;</span>
+                <span class="s1">}</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">while </span><span class="s1">(repeat);</span>
+
+        <span class="s3">// offset !== length if we got here</span>
+
+        <span class="s2">var </span><span class="s1">end = offset;</span>
+        <span class="s1">delimRe.lastIndex = </span><span class="s4">0</span><span class="s1">;</span>
+        <span class="s2">var </span><span class="s1">delim = delimRe.test(charAt(end++));</span>
+        <span class="s2">if </span><span class="s1">(!delim)</span>
+            <span class="s2">while </span><span class="s1">(end &lt; length &amp;&amp; !delimRe.test(charAt(end)))</span>
+                <span class="s1">++end;</span>
+        <span class="s2">var </span><span class="s1">token = source.substring(offset, offset = end);</span>
+        <span class="s2">if </span><span class="s1">(token === </span><span class="s0">&quot;</span><span class="s2">\&quot;</span><span class="s0">&quot; </span><span class="s1">|| token === </span><span class="s0">&quot;'&quot;</span><span class="s1">)</span>
+            <span class="s1">stringDelim = token;</span>
+        <span class="s2">return </span><span class="s1">token;</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Pushes a token back to the stack. 
+     * @param {string} token Token 
+     * @returns {undefined} 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">push(token) {</span>
+        <span class="s1">stack.push(token);</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Peeks for the next token. 
+     * @returns {string|null} Token or `null` on eof 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">peek() {</span>
+        <span class="s2">if </span><span class="s1">(!stack.length) {</span>
+            <span class="s2">var </span><span class="s1">token = next();</span>
+            <span class="s2">if </span><span class="s1">(token === </span><span class="s2">null</span><span class="s1">)</span>
+                <span class="s2">return null</span><span class="s1">;</span>
+            <span class="s1">push(token);</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">stack[</span><span class="s4">0</span><span class="s1">];</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Skips a token. 
+     * @param {string} expected Expected token 
+     * @param {boolean} [optional=false] Whether the token is optional 
+     * @returns {boolean} `true` when skipped, `false` if not 
+     * @throws {Error} When a required token is not present 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">skip(expected, optional) {</span>
+        <span class="s2">var </span><span class="s1">actual = peek(),</span>
+            <span class="s1">equals = actual === expected;</span>
+        <span class="s2">if </span><span class="s1">(equals) {</span>
+            <span class="s1">next();</span>
+            <span class="s2">return true</span><span class="s1">;</span>
+        <span class="s1">}</span>
+        <span class="s2">if </span><span class="s1">(!optional)</span>
+            <span class="s2">throw </span><span class="s1">illegal(</span><span class="s0">&quot;token '&quot; </span><span class="s1">+ actual + </span><span class="s0">&quot;', '&quot; </span><span class="s1">+ expected + </span><span class="s0">&quot;' expected&quot;</span><span class="s1">);</span>
+        <span class="s2">return false</span><span class="s1">;</span>
+    <span class="s1">}</span>
+
+    <span class="s3">/** 
+     * Gets a comment. 
+     * @param {number} [trailingLine] Line number if looking for a trailing comment 
+     * @returns {string|null} Comment text 
+     * @inner 
+     */</span>
+    <span class="s2">function </span><span class="s1">cmnt(trailingLine) {</span>
+        <span class="s2">var </span><span class="s1">ret = </span><span class="s2">null</span><span class="s1">;</span>
+        <span class="s2">var </span><span class="s1">comment;</span>
+        <span class="s2">if </span><span class="s1">(trailingLine === undefined) {</span>
+            <span class="s1">comment = comments[line - </span><span class="s4">1</span><span class="s1">];</span>
+            <span class="s2">delete </span><span class="s1">comments[line - </span><span class="s4">1</span><span class="s1">];</span>
+            <span class="s2">if </span><span class="s1">(comment &amp;&amp; (alternateCommentMode || comment.type === </span><span class="s0">&quot;*&quot; </span><span class="s1">|| comment.lineEmpty)) {</span>
+                <span class="s1">ret = comment.leading ? comment.text : </span><span class="s2">null</span><span class="s1">;</span>
+            <span class="s1">}</span>
+        <span class="s1">} </span><span class="s2">else </span><span class="s1">{</span>
+            <span class="s3">/* istanbul ignore else */</span>
+            <span class="s2">if </span><span class="s1">(lastCommentLine &lt; trailingLine) {</span>
+                <span class="s1">peek();</span>
+            <span class="s1">}</span>
+            <span class="s1">comment = comments[trailingLine];</span>
+            <span class="s2">delete </span><span class="s1">comments[trailingLine];</span>
+            <span class="s2">if </span><span class="s1">(comment &amp;&amp; !comment.lineEmpty &amp;&amp; (alternateCommentMode || comment.type === </span><span class="s0">&quot;/&quot;</span><span class="s1">)) {</span>
+                <span class="s1">ret = comment.leading ? </span><span class="s2">null </span><span class="s1">: comment.text;</span>
+            <span class="s1">}</span>
+        <span class="s1">}</span>
+        <span class="s2">return </span><span class="s1">ret;</span>
+    <span class="s1">}</span>
+
+    <span class="s2">return </span><span class="s1">Object.defineProperty({</span>
+        <span class="s1">next: next,</span>
+        <span class="s1">peek: peek,</span>
+        <span class="s1">push: push,</span>
+        <span class="s1">skip: skip,</span>
+        <span class="s1">cmnt: cmnt</span>
+    <span class="s1">}, </span><span class="s0">&quot;line&quot;</span><span class="s1">, {</span>
+        <span class="s1">get: </span><span class="s2">function</span><span class="s1">() { </span><span class="s2">return </span><span class="s1">line; }</span>
+    <span class="s1">});</span>
+    <span class="s3">/* eslint-enable callback-return */</span>
+<span class="s1">}</span>
+</pre>
+</body>
+</html>

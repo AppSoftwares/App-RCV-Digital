@@ -1,0 +1,471 @@
+<html>
+<head>
+<title>PostgrestClient.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #56a8f5;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+PostgrestClient.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">PostgrestQueryBuilder </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./PostgrestQueryBuilder</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">PostgrestFilterBuilder </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./PostgrestFilterBuilder</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ Fetch, GenericSchema, ClientServerOptions } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types/common/common</span><span class="s2">'</span>
+<span class="s0">import </span><span class="s2">{ GetRpcFunctionFilterBuilderByArgs } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types/common/rpc</span><span class="s2">'</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* PostgREST client. 
+ * 
+ * </span><span class="s2">@</span><span class="s0">typeParam </span><span class="s4">Database - Types for the schema from the [type 
+ * generator](https://supabase.com/docs/reference/javascript/next/typescript-support) 
+ * 
+ * </span><span class="s2">@</span><span class="s0">typeParam </span><span class="s4">SchemaName - Postgres schema to switch to. Must be a string 
+ * literal, the same one passed to the constructor. If the schema is not 
+ * `&quot;public&quot;`, this must be supplied manually. 
+ </span><span class="s2">*/</span>
+<span class="s0">export default class </span><span class="s2">PostgrestClient&lt;</span>
+  <span class="s2">Database = any,</span>
+  <span class="s2">ClientOptions </span><span class="s0">extends </span><span class="s2">ClientServerOptions = Database </span><span class="s0">extends </span><span class="s2">{</span>
+    <span class="s2">__InternalSupabase: infer I extends ClientServerOptions</span>
+  <span class="s2">}</span>
+    <span class="s2">? I</span>
+    <span class="s2">: {},</span>
+  <span class="s2">SchemaName </span><span class="s0">extends </span><span class="s2">string &amp;</span>
+    <span class="s2">keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt; = '</span><span class="s3">public</span><span class="s2">' </span><span class="s0">extends </span><span class="s2">keyof Omit&lt;</span>
+    <span class="s2">Database,</span>
+    <span class="s2">'</span><span class="s3">__InternalSupabase</span><span class="s2">'</span>
+  <span class="s2">&gt;</span>
+    <span class="s2">? '</span><span class="s3">public</span><span class="s2">'</span>
+    <span class="s2">: string &amp; keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;,</span>
+  <span class="s2">Schema </span><span class="s0">extends </span><span class="s2">GenericSchema = Omit&lt;</span>
+    <span class="s2">Database,</span>
+    <span class="s2">'</span><span class="s3">__InternalSupabase</span><span class="s2">'</span>
+  <span class="s2">&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">GenericSchema</span>
+    <span class="s2">? Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;</span><span class="s1">[</span><span class="s2">SchemaName</span><span class="s1">]</span>
+    <span class="s2">: any,</span>
+<span class="s2">&gt; {</span>
+  <span class="s2">url: string</span>
+  <span class="s2">headers: Headers</span>
+  <span class="s2">schemaName?: SchemaName</span>
+  <span class="s2">fetch?: Fetch</span>
+  <span class="s2">urlLengthLimit: number</span>
+
+  <span class="s2">// </span><span class="s4">Retry configuration - enabled by default</span>
+  <span class="s2">retry?: boolean</span>
+
+  <span class="s2">// </span><span class="s4">TODO: Add back shouldThrowOnError once we figure out the typings</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Creates a PostgREST client. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">url </span><span class="s4">- URL of the PostgREST endpoint 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.headers </span><span class="s4">- Custom headers 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.schema </span><span class="s4">- Postgres schema to switch to 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.fetch </span><span class="s4">- Custom fetch 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.timeout </span><span class="s4">- Optional timeout in milliseconds for all requests. When set, requests will automatically abort after this duration to prevent indefinite hangs. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.urlLengthLimit </span><span class="s4">- Maximum URL length in characters before warnings/errors are triggered. Defaults to 8000. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.retry </span><span class="s4">- Enable or disable automatic retries for transient errors. 
+   *   When enabled, idempotent requests (GET, HEAD, OPTIONS) that fail with network 
+   *   errors or HTTP 503/520 responses will be automatically retried up to 3 times 
+   *   with exponential backoff (1s, 2s, 4s). Defaults to `true`. 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Using supabase-js (recommended) 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { createClient } from '@supabase/supabase-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const supabase = createClient('https://xyzcompany.supabase.co', 'your-publishable-key') 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.from('profiles').select('*') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">remarks</span>
+   <span class="s4">* - A `timeout` option (in milliseconds) can be set to automatically abort requests that take too long. 
+   * - A `urlLengthLimit` option (default: 8000) can be set to control when URL length warnings are included in error messages for aborted requests. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Standalone import for bundle-sensitive environments 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">import { PostgrestClient } from '@supabase/postgrest-js' 
+   </span><span class="s4">* 
+   * </span><span class="s1">const postgrest = new PostgrestClient('https://xyzcompany.supabase.co/rest/v1', { 
+   </span><span class="s4">*   </span><span class="s1">headers: { apikey: 'your-publishable-key' }, 
+   </span><span class="s4">*   </span><span class="s1">schema: 'public', 
+   </span><span class="s4">*   </span><span class="s1">timeout: 30000, // 30 second timeout 
+   </span><span class="s4">* </span><span class="s1">}) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s2">*/</span>
+  <span class="s0">constructor</span><span class="s2">(</span>
+    <span class="s2">url: string,</span>
+    <span class="s2">{</span>
+      <span class="s2">headers = {},</span>
+      <span class="s2">schema,</span>
+      <span class="s2">fetch,</span>
+      <span class="s2">timeout,</span>
+      <span class="s2">urlLengthLimit = </span><span class="s5">8000</span><span class="s2">,</span>
+      <span class="s2">retry,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">headers?: HeadersInit</span>
+      <span class="s2">schema?: SchemaName</span>
+      <span class="s2">fetch?: Fetch</span>
+      <span class="s2">timeout?: number</span>
+      <span class="s2">urlLengthLimit?: number</span>
+      <span class="s2">retry?: boolean</span>
+    <span class="s2">} = {}</span>
+  <span class="s2">) {</span>
+    <span class="s2">this.url = url</span>
+    <span class="s2">this.headers = new </span><span class="s6">Headers</span><span class="s1">(</span><span class="s2">headers</span><span class="s1">)</span>
+    <span class="s2">this.schemaName = schema</span>
+    <span class="s2">this.urlLengthLimit = urlLengthLimit</span>
+
+    <span class="s0">const </span><span class="s2">originalFetch = fetch ?? globalThis.fetch</span>
+
+    <span class="s2">// </span><span class="s4">Wrap fetch with timeout if specified</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">timeout !== </span><span class="s7">undefined </span><span class="s2">&amp;&amp; timeout &gt; </span><span class="s5">0</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">this.</span><span class="s6">fetch </span><span class="s2">= (input, init) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">controller = new </span><span class="s6">AbortController</span><span class="s1">()</span>
+        <span class="s0">const </span><span class="s2">timeoutId = </span><span class="s6">setTimeout</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">controller.</span><span class="s6">abort</span><span class="s1">()</span><span class="s2">, timeout</span><span class="s1">)</span>
+
+        <span class="s2">// </span><span class="s4">Merge abort signals if one already exists</span>
+        <span class="s0">const </span><span class="s2">existingSignal = init?.signal</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">existingSignal</span><span class="s1">) </span><span class="s2">{</span>
+          <span class="s2">// </span><span class="s4">If the existing signal is already aborted, use it directly</span>
+          <span class="s0">if </span><span class="s1">(</span><span class="s2">existingSignal.aborted</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">timeoutId</span><span class="s1">)</span>
+            <span class="s0">return </span><span class="s6">originalFetch</span><span class="s1">(</span><span class="s2">input, init</span><span class="s1">)</span>
+          <span class="s2">}</span>
+
+          <span class="s2">// </span><span class="s4">Listen to existing signal and abort our controller too</span>
+          <span class="s0">const </span><span class="s6">abortHandler </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">timeoutId</span><span class="s1">)</span>
+            <span class="s2">controller.</span><span class="s6">abort</span><span class="s1">()</span>
+          <span class="s2">}</span>
+          <span class="s2">existingSignal.</span><span class="s6">addEventListener</span><span class="s1">(</span><span class="s2">'</span><span class="s3">abort</span><span class="s2">', abortHandler, { </span><span class="s1">once</span><span class="s2">: </span><span class="s7">true </span><span class="s2">}</span><span class="s1">)</span>
+
+          <span class="s0">return </span><span class="s6">originalFetch</span><span class="s1">(</span><span class="s2">input, {</span>
+            <span class="s2">...init,</span>
+            <span class="s1">signal</span><span class="s2">: controller.signal,</span>
+          <span class="s2">}</span><span class="s1">)</span><span class="s2">.</span><span class="s6">finally</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">timeoutId</span><span class="s1">)</span>
+            <span class="s2">existingSignal.</span><span class="s6">removeEventListener</span><span class="s1">(</span><span class="s2">'</span><span class="s3">abort</span><span class="s2">', abortHandler</span><span class="s1">)</span>
+          <span class="s2">}</span><span class="s1">)</span>
+        <span class="s2">}</span>
+
+        <span class="s0">return </span><span class="s6">originalFetch</span><span class="s1">(</span><span class="s2">input, {</span>
+          <span class="s2">...init,</span>
+          <span class="s1">signal</span><span class="s2">: controller.signal,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">.</span><span class="s6">finally</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s6">clearTimeout</span><span class="s1">(</span><span class="s2">timeoutId</span><span class="s1">))</span>
+      <span class="s2">}</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">this.fetch = originalFetch</span>
+    <span class="s2">}</span>
+    <span class="s2">this.retry = retry</span>
+  <span class="s2">}</span>
+  <span class="s2">from&lt;</span>
+    <span class="s2">TableName extends string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Table extends Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">][</span><span class="s2">TableName</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s2">&gt;(relation: TableName): PostgrestQueryBuilder&lt;ClientOptions, Schema, Table, TableName&gt;</span>
+  <span class="s6">from</span><span class="s2">&lt;ViewName </span><span class="s0">extends </span><span class="s2">string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">]</span><span class="s2">, View </span><span class="s0">extends </span><span class="s2">Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">][</span><span class="s2">ViewName</span><span class="s1">]</span><span class="s2">&gt;(</span>
+    <span class="s2">relation: ViewName</span>
+  <span class="s2">): PostgrestQueryBuilder&lt;ClientOptions, Schema, View, ViewName&gt;</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Perform a query on a table or a view. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">relation </span><span class="s4">- The table or view name to query 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   </span><span class="s2">*/</span>
+  <span class="s6">from</span><span class="s2">(</span>
+    <span class="s2">relation: </span><span class="s1">(</span><span class="s2">string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Tables</span><span class="s2">'</span><span class="s1">]) </span><span class="s2">| </span><span class="s1">(</span><span class="s2">string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Views</span><span class="s2">'</span><span class="s1">])</span>
+  <span class="s2">): PostgrestQueryBuilder&lt;ClientOptions, Schema, any, any&gt; {</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!relation || typeof relation !== '</span><span class="s3">string</span><span class="s2">' || relation.</span><span class="s6">trim</span><span class="s1">() </span><span class="s2">=== ''</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s6">Error</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Invalid relation name: relation must be a non-empty string.</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">url = new </span><span class="s6">URL</span><span class="s1">(</span><span class="s2">`${this.url}</span><span class="s3">/</span><span class="s2">${relation}`</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestQueryBuilder</span><span class="s1">(</span><span class="s2">url, {</span>
+      <span class="s1">headers</span><span class="s2">: new </span><span class="s6">Headers</span><span class="s1">(</span><span class="s2">this.headers</span><span class="s1">)</span><span class="s2">,</span>
+      <span class="s1">schema</span><span class="s2">: this.schemaName,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Select a schema to query or perform an function (rpc) call. 
+   * 
+   * The schema needs to be on the list of exposed schemas inside Supabase. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">schema </span><span class="s4">- The schema to query 
+   * 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   </span><span class="s2">*/</span>
+  <span class="s6">schema</span><span class="s2">&lt;DynamicSchema </span><span class="s0">extends </span><span class="s2">string &amp; keyof Omit&lt;Database, '</span><span class="s3">__InternalSupabase</span><span class="s2">'&gt;&gt;(</span>
+    <span class="s2">schema: DynamicSchema</span>
+  <span class="s2">): PostgrestClient&lt;</span>
+    <span class="s2">Database,</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">DynamicSchema,</span>
+    <span class="s2">Database</span><span class="s1">[</span><span class="s2">DynamicSchema</span><span class="s1">] </span><span class="s0">extends </span><span class="s2">GenericSchema ? Database</span><span class="s1">[</span><span class="s2">DynamicSchema</span><span class="s1">] </span><span class="s2">: any</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestClient</span><span class="s1">(</span><span class="s2">this.url, {</span>
+      <span class="s1">headers</span><span class="s2">: this.headers,</span>
+      <span class="s2">schema,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Perform a function call. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">fn </span><span class="s4">- The function name to call 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">args </span><span class="s4">- The arguments to pass to the function call 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Named parameters 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.head </span><span class="s4">- When set to `true`, `data` will not be returned. 
+   * Useful if you only need the count. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.get </span><span class="s4">- When set to `true`, the function will be called with 
+   * read-only access mode. 
+   * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options.count </span><span class="s4">- Count algorithm to use to count rows returned by the 
+   * function. Only applicable for [set-returning 
+   * functions](https://www.postgresql.org/docs/current/functions-srf.html). 
+   * 
+   * `&quot;exact&quot;`: Exact but slow count algorithm. Performs a `COUNT(*)` under the 
+   * hood. 
+   * 
+   * `&quot;planned&quot;`: Approximated but fast count algorithm. Uses the Postgres 
+   * statistics under the hood. 
+   * 
+   * `&quot;estimated&quot;`: Uses exact count for low numbers and planned count for high 
+   * numbers. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example</span>
+   <span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">// For cross-schema functions where type inference fails, use overrideTypes: 
+   </span><span class="s4">* </span><span class="s1">const { data } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.schema('schema_b') 
+   </span><span class="s4">*   </span><span class="s1">.rpc('function_a', {}) 
+   </span><span class="s4">*   </span><span class="s1">.overrideTypes&lt;{ id: string; user_id: string }[]&gt;() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">category </span><span class="s4">Database 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Call a Postgres function without arguments 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.rpc('hello_world') 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Call a Postgres function without arguments 
+   * ```sql 
+   * create function hello_world() returns text as $$ 
+   *   select 'Hello world'; 
+   * $$ language sql; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Call a Postgres function without arguments 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: &quot;Hello world&quot;, 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Call a Postgres function with arguments 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.rpc('echo', { say: '👋' }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Call a Postgres function with arguments 
+   * ```sql 
+   * create function echo(say text) returns text as $$ 
+   *   select say; 
+   * $$ language sql; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Call a Postgres function with arguments 
+   * ```json 
+   *   { 
+   *     &quot;data&quot;: &quot;👋&quot;, 
+   *     &quot;status&quot;: 200, 
+   *     &quot;statusText&quot;: &quot;OK&quot; 
+   *   } 
+   * 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Bulk processing 
+   * You can process large payloads by passing in an array as an argument. 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Bulk processing 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.rpc('add_one_each', { arr: [1, 2, 3] }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Bulk processing 
+   * ```sql 
+   * create function add_one_each(arr int[]) returns int[] as $$ 
+   *   select array_agg(n + 1) from unnest(arr) as n; 
+   * $$ language sql; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Bulk processing 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: [ 
+   *     2, 
+   *     3, 
+   *     4 
+   *   ], 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleDescription </span><span class="s4">Call a Postgres function with filters 
+   * Postgres functions that return tables can also be combined with [Filters](/docs/reference/javascript/using-filters) and [Modifiers](/docs/reference/javascript/using-modifiers). 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Call a Postgres function with filters 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase 
+   </span><span class="s4">*   </span><span class="s1">.rpc('list_stored_countries') 
+   </span><span class="s4">*   </span><span class="s1">.eq('id', 1) 
+   </span><span class="s4">*   </span><span class="s1">.single() 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Call a Postgres function with filters 
+   * ```sql 
+   * create table 
+   *   countries (id int8 primary key, name text); 
+   * 
+   * insert into 
+   *   countries (id, name) 
+   * values 
+   *   (1, 'Rohan'), 
+   *   (2, 'The Shire'); 
+   * 
+   * create function list_stored_countries() returns setof countries as $$ 
+   *   select * from countries; 
+   * $$ language sql; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Call a Postgres function with filters 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: { 
+   *     &quot;id&quot;: 1, 
+   *     &quot;name&quot;: &quot;Rohan&quot; 
+   *   }, 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">example </span><span class="s1">Call a read-only Postgres function 
+   </span><span class="s4">* </span><span class="s1">```ts 
+   </span><span class="s4">* </span><span class="s1">const { data, error } = await supabase.rpc('hello_world', undefined, { get: true }) 
+   </span><span class="s4">* </span><span class="s1">``` 
+   </span><span class="s4">* 
+   * </span><span class="s2">@</span><span class="s0">exampleSql </span><span class="s4">Call a read-only Postgres function 
+   * ```sql 
+   * create function hello_world() returns text as $$ 
+   *   select 'Hello world'; 
+   * $$ language sql; 
+   * ``` 
+   * 
+   * </span><span class="s2">@</span><span class="s0">exampleResponse </span><span class="s4">Call a read-only Postgres function 
+   * ```json 
+   * { 
+   *   &quot;data&quot;: &quot;Hello world&quot;, 
+   *   &quot;status&quot;: 200, 
+   *   &quot;statusText&quot;: &quot;OK&quot; 
+   * } 
+   * ``` 
+   </span><span class="s2">*/</span>
+  <span class="s2">rpc&lt;</span>
+    <span class="s2">FnName extends string &amp; keyof Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Functions</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">Args extends Schema</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Functions</span><span class="s2">'</span><span class="s1">][</span><span class="s2">FnName</span><span class="s1">][</span><span class="s2">'</span><span class="s3">Args</span><span class="s2">'</span><span class="s1">] </span><span class="s2">= never,</span>
+    <span class="s2">FilterBuilder extends GetRpcFunctionFilterBuilderByArgs&lt;</span>
+      <span class="s2">Schema,</span>
+      <span class="s2">FnName,</span>
+      <span class="s2">Args</span>
+    <span class="s2">&gt; = GetRpcFunctionFilterBuilderByArgs&lt;Schema, FnName, Args&gt;,</span>
+  <span class="s2">&gt;(</span>
+    <span class="s2">fn: FnName,</span>
+    <span class="s2">args: Args = {} </span><span class="s0">as </span><span class="s2">Args,</span>
+    <span class="s2">{</span>
+      <span class="s2">head = </span><span class="s7">false</span><span class="s2">,</span>
+      <span class="s2">get = </span><span class="s7">false</span><span class="s2">,</span>
+      <span class="s2">count,</span>
+    <span class="s2">}: {</span>
+      <span class="s2">head?: boolean</span>
+      <span class="s2">get?: boolean</span>
+      <span class="s2">count?: '</span><span class="s3">exact</span><span class="s2">' | '</span><span class="s3">planned</span><span class="s2">' | '</span><span class="s3">estimated</span><span class="s2">' | </span><span class="s1">(</span><span class="s2">string &amp; {}</span><span class="s1">)</span>
+    <span class="s2">} = {}</span>
+  <span class="s2">): PostgrestFilterBuilder&lt;</span>
+    <span class="s2">ClientOptions,</span>
+    <span class="s2">Schema,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Row</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Result</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">RelationName</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">FilterBuilder</span><span class="s1">[</span><span class="s2">'</span><span class="s3">Relationships</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+    <span class="s2">'</span><span class="s3">RPC</span><span class="s2">'</span>
+  <span class="s2">&gt; {</span>
+    <span class="s0">let </span><span class="s2">method: '</span><span class="s3">HEAD</span><span class="s2">' | '</span><span class="s3">GET</span><span class="s2">' | '</span><span class="s3">POST</span><span class="s2">'</span>
+    <span class="s0">const </span><span class="s2">url = new </span><span class="s6">URL</span><span class="s1">(</span><span class="s2">`${this.url}</span><span class="s3">/rpc/</span><span class="s2">${fn}`</span><span class="s1">)</span>
+    <span class="s0">let </span><span class="s2">body: unknown | undefined</span>
+    <span class="s2">// </span><span class="s4">objects/arrays-of-objects can't be serialized to URL params, use POST + return=minimal instead</span>
+    <span class="s0">const </span><span class="s6">_isObject </span><span class="s2">= (v: unknown): boolean </span><span class="s0">=&gt;</span>
+      <span class="s2">v !== </span><span class="s7">null </span><span class="s2">&amp;&amp; typeof v === '</span><span class="s3">object</span><span class="s2">' &amp;&amp; </span><span class="s1">(</span><span class="s2">!Array.</span><span class="s6">isArray</span><span class="s1">(</span><span class="s2">v</span><span class="s1">) </span><span class="s2">|| v.</span><span class="s6">some</span><span class="s1">(</span><span class="s2">_isObject</span><span class="s1">))</span>
+    <span class="s0">const </span><span class="s2">_hasObjectArg = head &amp;&amp; Object.</span><span class="s6">values</span><span class="s1">(</span><span class="s2">args </span><span class="s0">as </span><span class="s2">object</span><span class="s1">)</span><span class="s2">.</span><span class="s6">some</span><span class="s1">(</span><span class="s2">_isObject</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">_hasObjectArg</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">method = '</span><span class="s3">POST</span><span class="s2">'</span>
+      <span class="s2">body = args</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">head || get</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">method = head ? '</span><span class="s3">HEAD</span><span class="s2">' : '</span><span class="s3">GET</span><span class="s2">'</span>
+      <span class="s2">Object.</span><span class="s6">entries</span><span class="s1">(</span><span class="s2">args</span><span class="s1">)</span>
+        <span class="s2">// </span><span class="s4">params with undefined value needs to be filtered out, otherwise it'll</span>
+        <span class="s2">// </span><span class="s4">show up as `?param=undefined`</span>
+        <span class="s2">.</span><span class="s6">filter</span><span class="s1">(</span><span class="s2">([_, value]) </span><span class="s0">=&gt; </span><span class="s2">value !== </span><span class="s7">undefined</span><span class="s1">)</span>
+        <span class="s2">// </span><span class="s4">array values need special syntax</span>
+        <span class="s2">.</span><span class="s6">map</span><span class="s1">(</span><span class="s2">([name, value]) </span><span class="s0">=&gt; </span><span class="s1">[</span><span class="s2">name, Array.</span><span class="s6">isArray</span><span class="s1">(</span><span class="s2">value</span><span class="s1">) </span><span class="s2">? `</span><span class="s3">{</span><span class="s2">${value.</span><span class="s6">join</span><span class="s1">(</span><span class="s2">'</span><span class="s3">,</span><span class="s2">'</span><span class="s1">)</span><span class="s2">}</span><span class="s3">}</span><span class="s2">` : `${value}`</span><span class="s1">])</span>
+        <span class="s2">.</span><span class="s6">forEach</span><span class="s1">(</span><span class="s2">([name, value]) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+          <span class="s2">url.searchParams.</span><span class="s6">append</span><span class="s1">(</span><span class="s2">name, value</span><span class="s1">)</span>
+        <span class="s2">}</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+      <span class="s2">method = '</span><span class="s3">POST</span><span class="s2">'</span>
+      <span class="s2">body = args</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">headers = new </span><span class="s6">Headers</span><span class="s1">(</span><span class="s2">this.headers</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">_hasObjectArg</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', count ? `</span><span class="s3">count=</span><span class="s2">${count}</span><span class="s3">,return=minimal</span><span class="s2">` : '</span><span class="s3">return=minimal</span><span class="s2">'</span><span class="s1">)</span>
+    <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">count</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">headers.</span><span class="s6">set</span><span class="s1">(</span><span class="s2">'</span><span class="s3">Prefer</span><span class="s2">', `</span><span class="s3">count=</span><span class="s2">${count}`</span><span class="s1">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">return </span><span class="s2">new </span><span class="s6">PostgrestFilterBuilder</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s2">method,</span>
+      <span class="s2">url,</span>
+      <span class="s2">headers,</span>
+      <span class="s1">schema</span><span class="s2">: this.schemaName,</span>
+      <span class="s2">body,</span>
+      <span class="s1">fetch</span><span class="s2">: this.fetch ?? fetch,</span>
+      <span class="s1">urlLengthLimit</span><span class="s2">: this.urlLengthLimit,</span>
+      <span class="s1">retry</span><span class="s2">: this.retry,</span>
+    <span class="s2">}</span><span class="s1">)</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

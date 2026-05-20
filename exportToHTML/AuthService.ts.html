@@ -1,0 +1,140 @@
+<html>
+<head>
+<title>AuthService.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #2aacb8; font-style: italic;}
+.s7 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+AuthService.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ UserProfile, UserRole } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../types</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ normalizeEmail, validateAuthInput } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../shared/security</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ globalRateLimiter } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../../infrastructure/network/RateLimiter</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ auditService } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./AuditService</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Servicio de Autenticación con defensa en profundidad. 
+ </span><span class="s2">*/</span>
+<span class="s0">export class </span><span class="s2">AuthService {</span>
+  <span class="s2">/**</span>
+   <span class="s4">* Proceso de login seguro. 
+   </span><span class="s2">*/</span>
+  <span class="s0">async </span><span class="s5">login</span><span class="s2">(rawIdentifier: unknown, rawPassword: unknown): Promise&lt;UserProfile&gt; {</span>
+    <span class="s0">const </span><span class="s2">identifier = </span><span class="s5">normalizeEmail</span><span class="s1">(</span><span class="s2">rawIdentifier</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s2">// </span><span class="s4">1. WAF &amp; Pattern Monitoring</span>
+    <span class="s2">this.</span><span class="s5">monitorPatterns</span><span class="s1">(</span><span class="s2">rawIdentifier, rawPassword</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s2">// </span><span class="s4">2. Rate Limiting</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!globalRateLimiter.</span><span class="s5">isAllowed</span><span class="s1">(</span><span class="s2">`</span><span class="s3">login_</span><span class="s2">${identifier}`</span><span class="s1">)) </span><span class="s2">{</span>
+      <span class="s2">auditService.</span><span class="s5">log</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">action</span><span class="s2">: '</span><span class="s3">LOGIN_BLOCKED</span><span class="s2">',</span>
+        <span class="s1">category</span><span class="s2">: '</span><span class="s3">security</span><span class="s2">',</span>
+        <span class="s1">severity</span><span class="s2">: '</span><span class="s3">high</span><span class="s2">',</span>
+        <span class="s1">details</span><span class="s2">: `</span><span class="s3">Rate limit alcanzado para: </span><span class="s2">${identifier}`,</span>
+        <span class="s1">metadata</span><span class="s2">: { identifier }</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">Demasiados intentos. Por favor, espere.</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s2">// </span><span class="s4">3. Validación de tipos</span>
+    <span class="s0">const </span><span class="s2">validatedId = </span><span class="s5">validateAuthInput</span><span class="s1">(</span><span class="s2">rawIdentifier</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">validatedPass = </span><span class="s5">validateAuthInput</span><span class="s1">(</span><span class="s2">rawPassword</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!validatedId.isValid || !validatedPass.isValid</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">auditService.</span><span class="s5">log</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">action</span><span class="s2">: '</span><span class="s3">LOGIN_INVALID_INPUT</span><span class="s2">',</span>
+        <span class="s1">category</span><span class="s2">: '</span><span class="s3">security</span><span class="s2">',</span>
+        <span class="s1">severity</span><span class="s2">: '</span><span class="s3">medium</span><span class="s2">',</span>
+        <span class="s1">details</span><span class="s2">: `</span><span class="s3">Intento de login con formato inválido</span><span class="s2">`,</span>
+        <span class="s1">metadata</span><span class="s2">: { rawIdentifier }</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">Credenciales inválidas</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s0">const </span><span class="s2">mockUsers: Record&lt;string, any&gt; = {</span>
+      <span class="s2">'</span><span class="s3">admin@rcv.com</span><span class="s2">': { </span><span class="s1">role</span><span class="s2">: '</span><span class="s3">admin</span><span class="s2">', </span><span class="s1">hash</span><span class="s2">: '</span><span class="s3">HASH_BCRYPT_ADMIN</span><span class="s2">' },</span>
+      <span class="s2">'</span><span class="s3">contador@rcv.com</span><span class="s2">': { </span><span class="s1">role</span><span class="s2">: '</span><span class="s3">contador</span><span class="s2">', </span><span class="s1">hash</span><span class="s2">: '</span><span class="s3">HASH_BCRYPT_CONTADOR</span><span class="s2">' },</span>
+      <span class="s2">'</span><span class="s3">operador@rcv.com</span><span class="s2">': { </span><span class="s1">role</span><span class="s2">: '</span><span class="s3">operador</span><span class="s2">', </span><span class="s1">hash</span><span class="s2">: '</span><span class="s3">HASH_BCRYPT_OPERADOR</span><span class="s2">' },</span>
+      <span class="s2">'</span><span class="s3">cliente@rcv.com</span><span class="s2">': { </span><span class="s1">role</span><span class="s2">: '</span><span class="s3">cliente</span><span class="s2">', </span><span class="s1">hash</span><span class="s2">: '</span><span class="s3">HASH_BCRYPT_CLIENTE</span><span class="s2">' }</span>
+    <span class="s2">};</span>
+
+    <span class="s0">const </span><span class="s2">userInDb = mockUsers</span><span class="s1">[</span><span class="s2">validatedId.value</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">isPasswordCorrect = userInDb &amp;&amp; </span><span class="s0">await </span><span class="s2">this.</span><span class="s5">compareHash</span><span class="s1">(</span><span class="s2">validatedPass.value, userInDb.hash</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">!userInDb || !isPasswordCorrect</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s2">auditService.</span><span class="s5">log</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">action</span><span class="s2">: '</span><span class="s3">LOGIN_FAILED</span><span class="s2">',</span>
+        <span class="s1">category</span><span class="s2">: '</span><span class="s3">security</span><span class="s2">',</span>
+        <span class="s1">severity</span><span class="s2">: '</span><span class="s3">medium</span><span class="s2">',</span>
+        <span class="s1">details</span><span class="s2">: `</span><span class="s3">Fallo de autenticación para: </span><span class="s2">${validatedId.value}`</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s0">throw </span><span class="s2">new </span><span class="s5">Error</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">Credenciales inválidas</span><span class="s2">&quot;</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+
+    <span class="s2">auditService.</span><span class="s5">log</span><span class="s1">(</span><span class="s2">{</span>
+      <span class="s1">action</span><span class="s2">: '</span><span class="s3">LOGIN_SUCCESS</span><span class="s2">',</span>
+      <span class="s1">category</span><span class="s2">: '</span><span class="s3">security</span><span class="s2">',</span>
+      <span class="s1">severity</span><span class="s2">: '</span><span class="s3">low</span><span class="s2">',</span>
+      <span class="s1">details</span><span class="s2">: `</span><span class="s3">Login exitoso: </span><span class="s2">${validatedId.value}`,</span>
+      <span class="s1">userId</span><span class="s2">: validatedId.value,</span>
+      <span class="s1">userRole</span><span class="s2">: userInDb.role </span><span class="s0">as </span><span class="s2">UserRole</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">return </span><span class="s2">{</span>
+      <span class="s1">id</span><span class="s2">: `</span><span class="s3">usr_</span><span class="s2">${Math.</span><span class="s5">random</span><span class="s1">()</span><span class="s2">.</span><span class="s5">toString</span><span class="s1">(</span><span class="s6">36</span><span class="s1">)</span><span class="s2">.</span><span class="s5">substr</span><span class="s1">(</span><span class="s6">2</span><span class="s2">, </span><span class="s6">9</span><span class="s1">)</span><span class="s2">}`,</span>
+      <span class="s1">nombre</span><span class="s2">: `</span><span class="s3">Usuario </span><span class="s2">${userInDb.role}`,</span>
+      <span class="s1">email</span><span class="s2">: validatedId.value,</span>
+      <span class="s1">role</span><span class="s2">: userInDb.role </span><span class="s0">as </span><span class="s2">UserRole,</span>
+      <span class="s1">status</span><span class="s2">: '</span><span class="s3">active</span><span class="s2">'</span>
+    <span class="s2">};</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Monitor de patrones sospechosos (WAF simulado) 
+   </span><span class="s2">*/</span>
+  <span class="s0">private </span><span class="s5">monitorPatterns</span><span class="s2">(id: any, pass: any) {</span>
+    <span class="s0">const </span><span class="s2">suspiciousTags = </span><span class="s1">[</span><span class="s2">'</span><span class="s3">$gt</span><span class="s2">', '</span><span class="s3">$ne</span><span class="s2">', '</span><span class="s3">$where</span><span class="s2">', '</span><span class="s3">{</span><span class="s2">', '</span><span class="s3">}</span><span class="s2">'</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s2">stringified = JSON.</span><span class="s5">stringify</span><span class="s1">(</span><span class="s2">{ id, pass }</span><span class="s1">)</span><span class="s2">;</span>
+
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">suspiciousTags.</span><span class="s5">some</span><span class="s1">(</span><span class="s2">tag </span><span class="s0">=&gt; </span><span class="s2">stringified.</span><span class="s5">includes</span><span class="s1">(</span><span class="s2">tag</span><span class="s1">))) </span><span class="s2">{</span>
+      <span class="s2">auditService.</span><span class="s5">log</span><span class="s1">(</span><span class="s2">{</span>
+        <span class="s1">action</span><span class="s2">: '</span><span class="s3">NOSQL_INJECTION_ATTEMPT</span><span class="s2">',</span>
+        <span class="s1">category</span><span class="s2">: '</span><span class="s3">security</span><span class="s2">',</span>
+        <span class="s1">severity</span><span class="s2">: '</span><span class="s3">critical</span><span class="s2">',</span>
+        <span class="s1">details</span><span class="s2">: `</span><span class="s3">Patrón NoSQL sospechoso detectado en entrada de login</span><span class="s2">`,</span>
+        <span class="s1">metadata</span><span class="s2">: { </span><span class="s1">input</span><span class="s2">: stringified }</span>
+      <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+
+  <span class="s2">/**</span>
+   <span class="s4">* Simulación de comparación criptográfica segura (BCRYPT / ARGON2) 
+   </span><span class="s2">*/</span>
+  <span class="s0">private async </span><span class="s5">compareHash</span><span class="s2">(password: string, hash: string): Promise&lt;boolean&gt; {</span>
+    <span class="s2">// </span><span class="s4">En producción usar: return await bcrypt.compare(password, hash);</span>
+    <span class="s2">// </span><span class="s4">Simulación de tiempo de respuesta constante para evitar ataques de tiempo</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s1">Promise(</span><span class="s2">(resolve) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+      <span class="s5">setTimeout</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s5">resolve</span><span class="s1">(</span><span class="s7">true</span><span class="s1">)</span><span class="s2">; // </span><span class="s4">En este mock siempre aceptamos si el usuario existe</span>
+      <span class="s2">}, </span><span class="s6">300</span><span class="s1">)</span><span class="s2">; // </span><span class="s4">Latencia artificial para normalizar respuesta</span>
+    <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">export const </span><span class="s2">authService = new </span><span class="s5">AuthService</span><span class="s1">()</span><span class="s2">;</span>
+</pre>
+</body>
+</html>

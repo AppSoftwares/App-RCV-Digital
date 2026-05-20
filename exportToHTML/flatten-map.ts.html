@@ -1,0 +1,216 @@
+<html>
+<head>
+<title>flatten-map.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #56a8f5;}
+.s5 { color: #2aacb8; font-style: italic;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+flatten-map.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ TraceMap, presortedDecodedMap, decodedMappings } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./trace-mapping</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{</span>
+  <span class="s2">COLUMN,</span>
+  <span class="s2">SOURCES_INDEX,</span>
+  <span class="s2">SOURCE_LINE,</span>
+  <span class="s2">SOURCE_COLUMN,</span>
+  <span class="s2">NAMES_INDEX,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sourcemap-segment</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ parse } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+
+<span class="s0">import type </span><span class="s2">{</span>
+  <span class="s2">DecodedSourceMap,</span>
+  <span class="s2">DecodedSourceMapXInput,</span>
+  <span class="s2">EncodedSourceMapXInput,</span>
+  <span class="s2">SectionedSourceMapXInput,</span>
+  <span class="s2">SectionedSourceMapInput,</span>
+  <span class="s2">SectionXInput,</span>
+  <span class="s2">Ro,</span>
+<span class="s2">} </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./types</span><span class="s2">';</span>
+<span class="s0">import type </span><span class="s2">{ SourceMapSegment } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./sourcemap-segment</span><span class="s2">';</span>
+
+<span class="s0">type </span><span class="s2">FlattenMap = {</span>
+  <span class="s2">new (map: Ro&lt;SectionedSourceMapInput&gt;, mapUrl?: string | null): TraceMap;</span>
+  <span class="s2">(map: Ro&lt;SectionedSourceMapInput&gt;, mapUrl?: string | null): TraceMap;</span>
+<span class="s2">};</span>
+
+<span class="s0">export const </span><span class="s4">FlattenMap</span><span class="s2">: FlattenMap = </span><span class="s0">function </span><span class="s2">(map, mapUrl) {</span>
+  <span class="s0">const </span><span class="s2">parsed = </span><span class="s4">parse</span><span class="s1">(</span><span class="s2">map </span><span class="s0">as </span><span class="s2">SectionedSourceMapInput</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">!</span><span class="s1">(</span><span class="s2">'</span><span class="s3">sections</span><span class="s2">' in parsed</span><span class="s1">)) </span><span class="s2">{</span>
+    <span class="s0">return </span><span class="s2">new </span><span class="s4">TraceMap</span><span class="s1">(</span><span class="s2">parsed </span><span class="s0">as </span><span class="s2">DecodedSourceMapXInput | EncodedSourceMapXInput, mapUrl</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+
+  <span class="s0">const </span><span class="s2">mappings: SourceMapSegment</span><span class="s1">[][] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">sources: string</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">sourcesContent: </span><span class="s1">(</span><span class="s2">string | null</span><span class="s1">)[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">names: string</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">ignoreList: number</span><span class="s1">[] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+
+  <span class="s4">recurse</span><span class="s1">(</span>
+    <span class="s2">parsed,</span>
+    <span class="s2">mapUrl,</span>
+    <span class="s2">mappings,</span>
+    <span class="s2">sources,</span>
+    <span class="s2">sourcesContent,</span>
+    <span class="s2">names,</span>
+    <span class="s2">ignoreList,</span>
+    <span class="s5">0</span><span class="s2">,</span>
+    <span class="s5">0</span><span class="s2">,</span>
+    <span class="s6">Infinity</span><span class="s2">,</span>
+    <span class="s6">Infinity</span><span class="s2">,</span>
+  <span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">joined: DecodedSourceMap = {</span>
+    <span class="s1">version</span><span class="s2">: </span><span class="s5">3</span><span class="s2">,</span>
+    <span class="s1">file</span><span class="s2">: parsed.file,</span>
+    <span class="s2">names,</span>
+    <span class="s2">sources,</span>
+    <span class="s2">sourcesContent,</span>
+    <span class="s2">mappings,</span>
+    <span class="s2">ignoreList,</span>
+  <span class="s2">};</span>
+
+  <span class="s0">return </span><span class="s4">presortedDecodedMap</span><span class="s1">(</span><span class="s2">joined</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">} </span><span class="s0">as </span><span class="s2">FlattenMap;</span>
+
+<span class="s0">function </span><span class="s4">recurse</span><span class="s2">(</span>
+  <span class="s2">input: SectionedSourceMapXInput,</span>
+  <span class="s2">mapUrl: string | null | undefined,</span>
+  <span class="s2">mappings: SourceMapSegment</span><span class="s1">[][]</span><span class="s2">,</span>
+  <span class="s2">sources: string</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">sourcesContent: </span><span class="s1">(</span><span class="s2">string | null</span><span class="s1">)[]</span><span class="s2">,</span>
+  <span class="s2">names: string</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">ignoreList: number</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">lineOffset: number,</span>
+  <span class="s2">columnOffset: number,</span>
+  <span class="s2">stopLine: number,</span>
+  <span class="s2">stopColumn: number,</span>
+<span class="s2">) {</span>
+  <span class="s0">const </span><span class="s2">{ sections } = input;</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; sections.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">{ map, offset } = sections</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+
+    <span class="s0">let </span><span class="s2">sl = stopLine;</span>
+    <span class="s0">let </span><span class="s2">sc = stopColumn;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">i + </span><span class="s5">1 </span><span class="s2">&lt; sections.</span><span class="s1">length) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">nextOffset = sections</span><span class="s1">[</span><span class="s2">i + </span><span class="s5">1</span><span class="s1">]</span><span class="s2">.offset;</span>
+      <span class="s2">sl = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">stopLine, lineOffset + nextOffset.line</span><span class="s1">)</span><span class="s2">;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">sl === stopLine</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">sc = Math.</span><span class="s4">min</span><span class="s1">(</span><span class="s2">stopColumn, columnOffset + nextOffset.column</span><span class="s1">)</span><span class="s2">;</span>
+      <span class="s2">} </span><span class="s0">else if </span><span class="s1">(</span><span class="s2">sl &lt; stopLine</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">sc = columnOffset + nextOffset.column;</span>
+      <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s4">addSection</span><span class="s1">(</span>
+      <span class="s2">map,</span>
+      <span class="s2">mapUrl,</span>
+      <span class="s2">mappings,</span>
+      <span class="s2">sources,</span>
+      <span class="s2">sourcesContent,</span>
+      <span class="s2">names,</span>
+      <span class="s2">ignoreList,</span>
+      <span class="s2">lineOffset + offset.line,</span>
+      <span class="s2">columnOffset + offset.column,</span>
+      <span class="s2">sl,</span>
+      <span class="s2">sc,</span>
+    <span class="s1">)</span><span class="s2">;</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">addSection</span><span class="s2">(</span>
+  <span class="s2">input: SectionXInput</span><span class="s1">[</span><span class="s2">'</span><span class="s3">map</span><span class="s2">'</span><span class="s1">]</span><span class="s2">,</span>
+  <span class="s2">mapUrl: string | null | undefined,</span>
+  <span class="s2">mappings: SourceMapSegment</span><span class="s1">[][]</span><span class="s2">,</span>
+  <span class="s2">sources: string</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">sourcesContent: </span><span class="s1">(</span><span class="s2">string | null</span><span class="s1">)[]</span><span class="s2">,</span>
+  <span class="s2">names: string</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">ignoreList: number</span><span class="s1">[]</span><span class="s2">,</span>
+  <span class="s2">lineOffset: number,</span>
+  <span class="s2">columnOffset: number,</span>
+  <span class="s2">stopLine: number,</span>
+  <span class="s2">stopColumn: number,</span>
+<span class="s2">) {</span>
+  <span class="s0">const </span><span class="s2">parsed = </span><span class="s4">parse</span><span class="s1">(</span><span class="s2">input</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">'</span><span class="s3">sections</span><span class="s2">' in parsed</span><span class="s1">) </span><span class="s0">return </span><span class="s4">recurse</span><span class="s1">(</span><span class="s2">...</span><span class="s1">(</span><span class="s2">arguments </span><span class="s0">as </span><span class="s2">unknown </span><span class="s0">as </span><span class="s2">Parameters&lt;typeof recurse&gt;</span><span class="s1">))</span><span class="s2">;</span>
+
+  <span class="s0">const </span><span class="s2">map = new </span><span class="s4">TraceMap</span><span class="s1">(</span><span class="s2">parsed, mapUrl</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">sourcesOffset = sources.</span><span class="s1">length</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">namesOffset = names.</span><span class="s1">length</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">decoded = </span><span class="s4">decodedMappings</span><span class="s1">(</span><span class="s2">map</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">const </span><span class="s2">{ resolvedSources, sourcesContent: contents, ignoreList: ignores } = map;</span>
+
+  <span class="s4">append</span><span class="s1">(</span><span class="s2">sources, resolvedSources</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s4">append</span><span class="s1">(</span><span class="s2">names, map.names</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">contents</span><span class="s1">) </span><span class="s4">append</span><span class="s1">(</span><span class="s2">sourcesContent, contents</span><span class="s1">)</span><span class="s2">;</span>
+  <span class="s0">else for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; resolvedSources.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">sourcesContent.</span><span class="s4">push</span><span class="s1">(</span><span class="s6">null</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">if </span><span class="s1">(</span><span class="s2">ignores</span><span class="s1">) </span><span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; ignores.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">ignoreList.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">ignores</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">+ sourcesOffset</span><span class="s1">)</span><span class="s2">;</span>
+
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; decoded.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">{</span>
+    <span class="s0">const </span><span class="s2">lineI = lineOffset + i;</span>
+
+    <span class="s2">// </span><span class="s7">We can only add so many lines before we step into the range that the next section's map</span>
+    <span class="s2">// </span><span class="s7">controls. When we get to the last line, then we'll start checking the segments to see if</span>
+    <span class="s2">// </span><span class="s7">they've crossed into the column range. But it may not have any columns that overstep, so we</span>
+    <span class="s2">// </span><span class="s7">still need to check that we don't overstep lines, too.</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s2">lineI &gt; stopLine</span><span class="s1">) </span><span class="s0">return</span><span class="s2">;</span>
+
+    <span class="s2">// </span><span class="s7">The out line may already exist in mappings (if we're continuing the line started by a</span>
+    <span class="s2">// </span><span class="s7">previous section). Or, we may have jumped ahead several lines to start this section.</span>
+    <span class="s0">const </span><span class="s2">out = </span><span class="s4">getLine</span><span class="s1">(</span><span class="s2">mappings, lineI</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">// </span><span class="s7">On the 0th loop, the section's column offset shifts us forward. On all other lines (since the</span>
+    <span class="s2">// </span><span class="s7">map can be multiple lines), it doesn't.</span>
+    <span class="s0">const </span><span class="s2">cOffset = i === </span><span class="s5">0 </span><span class="s2">? columnOffset : </span><span class="s5">0</span><span class="s2">;</span>
+
+    <span class="s0">const </span><span class="s2">line = decoded</span><span class="s1">[</span><span class="s2">i</span><span class="s1">]</span><span class="s2">;</span>
+    <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">j = </span><span class="s5">0</span><span class="s2">; j &lt; line.</span><span class="s1">length</span><span class="s2">; j++</span><span class="s1">) </span><span class="s2">{</span>
+      <span class="s0">const </span><span class="s2">seg = line</span><span class="s1">[</span><span class="s2">j</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">column = cOffset + seg</span><span class="s1">[</span><span class="s2">COLUMN</span><span class="s1">]</span><span class="s2">;</span>
+
+      <span class="s2">// </span><span class="s7">If this segment steps into the column range that the next section's map controls, we need</span>
+      <span class="s2">// </span><span class="s7">to stop early.</span>
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">lineI === stopLine &amp;&amp; column &gt;= stopColumn</span><span class="s1">) </span><span class="s0">return</span><span class="s2">;</span>
+
+      <span class="s0">if </span><span class="s1">(</span><span class="s2">seg.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">1</span><span class="s1">) </span><span class="s2">{</span>
+        <span class="s2">out.</span><span class="s4">push</span><span class="s1">([</span><span class="s2">column</span><span class="s1">])</span><span class="s2">;</span>
+        <span class="s0">continue</span><span class="s2">;</span>
+      <span class="s2">}</span>
+
+      <span class="s0">const </span><span class="s2">sourcesIndex = sourcesOffset + seg</span><span class="s1">[</span><span class="s2">SOURCES_INDEX</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">sourceLine = seg</span><span class="s1">[</span><span class="s2">SOURCE_LINE</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s0">const </span><span class="s2">sourceColumn = seg</span><span class="s1">[</span><span class="s2">SOURCE_COLUMN</span><span class="s1">]</span><span class="s2">;</span>
+      <span class="s2">out.</span><span class="s4">push</span><span class="s1">(</span>
+        <span class="s2">seg.</span><span class="s1">length </span><span class="s2">=== </span><span class="s5">4</span>
+          <span class="s2">? </span><span class="s1">[</span><span class="s2">column, sourcesIndex, sourceLine, sourceColumn</span><span class="s1">]</span>
+          <span class="s2">: </span><span class="s1">[</span><span class="s2">column, sourcesIndex, sourceLine, sourceColumn, namesOffset + seg</span><span class="s1">[</span><span class="s2">NAMES_INDEX</span><span class="s1">]]</span><span class="s2">,</span>
+      <span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}</span>
+  <span class="s2">}</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">append</span><span class="s2">&lt;T&gt;(arr: T</span><span class="s1">[]</span><span class="s2">, other: T</span><span class="s1">[]</span><span class="s2">) {</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = </span><span class="s5">0</span><span class="s2">; i &lt; other.</span><span class="s1">length</span><span class="s2">; i++</span><span class="s1">) </span><span class="s2">arr.</span><span class="s4">push</span><span class="s1">(</span><span class="s2">other</span><span class="s1">[</span><span class="s2">i</span><span class="s1">])</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">function </span><span class="s4">getLine</span><span class="s2">&lt;T&gt;(arr: T</span><span class="s1">[][]</span><span class="s2">, index: number): T</span><span class="s1">[] </span><span class="s2">{</span>
+  <span class="s0">for </span><span class="s1">(</span><span class="s0">let </span><span class="s2">i = arr.</span><span class="s1">length</span><span class="s2">; i &lt;= index; i++</span><span class="s1">) </span><span class="s2">arr</span><span class="s1">[</span><span class="s2">i</span><span class="s1">] </span><span class="s2">= </span><span class="s1">[]</span><span class="s2">;</span>
+  <span class="s0">return </span><span class="s2">arr</span><span class="s1">[</span><span class="s2">index</span><span class="s1">]</span><span class="s2">;</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,264 @@
+<html>
+<head>
+<title>GeolocationPlugin.swift</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #56a8f5;}
+.s4 { color: #c77dbb; font-style: italic;}
+.s5 { color: #6aab73;}
+.s6 { color: #7a7e85;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+GeolocationPlugin.swift</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">Capacitor</span>
+<span class="s0">import </span><span class="s2">IONGeolocationLib</span>
+<span class="s0">import </span><span class="s2">UIKit</span>
+<span class="s0">import </span><span class="s2">Combine</span>
+
+<span class="s2">@</span><span class="s0">objc</span><span class="s2">(</span><span class="s3">GeolocationPlugin</span><span class="s2">)</span>
+<span class="s0">public class </span><span class="s2">GeolocationPlugin: CAPPlugin, CAPBridgedPlugin {</span>
+    <span class="s1">public let identifier = &quot;GeolocationPlugin&quot; 
+    public let jsName = &quot;Geolocation&quot; 
+    public let pluginMethods</span><span class="s2">: </span><span class="s1">[</span><span class="s2">CAPPluginMethod] </span><span class="s1">= [ 
+        .init(name</span><span class="s2">: </span><span class="s1">&quot;</span><span class="s2">getCurrentPosition&quot;</span><span class="s1">, </span><span class="s2">returnType: CAPPluginReturnPromise)</span><span class="s1">, 
+        .</span><span class="s2">init(name: </span><span class="s1">&quot;</span><span class="s2">watchPosition&quot;</span><span class="s1">, </span><span class="s2">returnType: CAPPluginReturnCallback)</span><span class="s1">, 
+        .</span><span class="s2">init(name: </span><span class="s1">&quot;</span><span class="s2">clearWatch&quot;</span><span class="s1">, </span><span class="s2">returnType: CAPPluginReturnPromise)</span><span class="s1">, 
+        .</span><span class="s2">init(name: </span><span class="s1">&quot;</span><span class="s2">checkPermissions&quot;</span><span class="s1">, </span><span class="s2">returnType: CAPPluginReturnPromise)</span><span class="s1">, 
+        .</span><span class="s2">init(name: </span><span class="s1">&quot;</span><span class="s2">requestPermissions&quot;</span><span class="s1">, </span><span class="s2">returnType: CAPPluginReturnPromise)</span>
+    <span class="s1">] 
+</span>
+    <span class="s1">private var locationService</span><span class="s2">: </span><span class="s1">(</span><span class="s2">any IONGLOCService)</span><span class="s1">?</span>
+    <span class="s1">private var cancellables = Set</span><span class="s2">&lt;AnyCancellable&gt;</span><span class="s1">() 
+    private var locationCancellable</span><span class="s2">: AnyCancellable?</span>
+    <span class="s1">private var timeoutCancellable</span><span class="s2">: AnyCancellable?</span>
+    <span class="s1">private var callbackManager</span><span class="s2">: GeolocationCallbackManager?</span>
+    <span class="s1">private var statusInitialized = false 
+    private var locationInitialized</span><span class="s2">: Bool = false</span>
+
+    <span class="s1">override public func load() </span><span class="s2">{</span>
+        <span class="s2">self</span><span class="s1">.</span><span class="s2">locationService = IONGLOCManagerWrapper()</span>
+        <span class="s2">self</span><span class="s1">.</span><span class="s2">callbackManager = </span><span class="s1">.</span><span class="s0">init</span><span class="s2">(capacitorBridge: </span><span class="s1">bridge</span><span class="s2">)</span>
+
+        <span class="s1">NotificationCenter.</span><span class="s2">default</span><span class="s1">.</span><span class="s2">addObserver(</span>
+            <span class="s2">self</span><span class="s1">, 
+            </span><span class="s2">selector: #selector(</span><span class="s1">appDidBecomeActive</span><span class="s2">)</span><span class="s1">, 
+            </span><span class="s2">name: </span><span class="s1">UIApplication.</span><span class="s2">didBecomeActiveNotification</span><span class="s1">, 
+            </span><span class="s2">object: </span><span class="s4">nil</span>
+        <span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc private func </span><span class="s3">appDidBecomeActive</span><span class="s2">() {</span>
+        <span class="s0">if let </span><span class="s1">watchCallbacksEmpty </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.watchCallbacks.isEmpty, </span><span class="s2">!</span><span class="s1">watchCallbacksEmpty </span><span class="s2">{</span>
+            <span class="s2">print(&quot;</span><span class="s5">App became active. Restarting location monitoring for watch callbacks.</span><span class="s2">&quot;)</span>
+            <span class="s1">locationCancellable</span><span class="s2">?</span><span class="s1">.</span><span class="s2">cancel()</span>
+            <span class="s1">locationCancellable </span><span class="s2">= </span><span class="s4">nil</span>
+            <span class="s1">timeoutCancellable</span><span class="s2">?</span><span class="s1">.</span><span class="s2">cancel()</span>
+            <span class="s1">timeoutCancellable </span><span class="s2">= </span><span class="s4">nil</span>
+            <span class="s1">locationInitialized </span><span class="s2">= </span><span class="s4">false</span>
+
+            <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">stopMonitoringLocation()</span>
+            <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">startMonitoringLocation()</span>
+            <span class="s2">bindLocationPublisher()</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">deinit </span><span class="s2">{</span>
+        <span class="s1">NotificationCenter.</span><span class="s2">default</span><span class="s1">.</span><span class="s2">removeObserver(self)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc func </span><span class="s3">getCurrentPosition</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s2">shouldSetupBindings()</span>
+        <span class="s0">let </span><span class="s1">enableHighAccuracy </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">getBool(</span><span class="s1">Constants.</span><span class="s2">Arguments</span><span class="s1">.</span><span class="s2">enableHighAccuracy</span><span class="s1">, </span><span class="s4">false</span><span class="s2">)</span>
+        <span class="s2">handleLocationRequest(</span><span class="s1">enableHighAccuracy, </span><span class="s2">call: </span><span class="s1">call</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc func </span><span class="s3">watchPosition</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s2">shouldSetupBindings()</span>
+        <span class="s0">let </span><span class="s1">enableHighAccuracy </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">getBool(</span><span class="s1">Constants.</span><span class="s2">Arguments</span><span class="s1">.</span><span class="s2">enableHighAccuracy</span><span class="s1">, </span><span class="s4">false</span><span class="s2">)</span>
+        <span class="s0">let </span><span class="s1">watchUUID </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">callbackId</span>
+        <span class="s2">handleLocationRequest(</span><span class="s1">enableHighAccuracy, </span><span class="s2">watchUUID: </span><span class="s1">watchUUID, </span><span class="s2">call: </span><span class="s1">call</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc func </span><span class="s3">clearWatch</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s2">shouldSetupBindings()</span>
+        <span class="s0">guard let </span><span class="s1">callbackId </span><span class="s2">= </span><span class="s1">call.</span><span class="s2">getString(</span><span class="s1">Constants.</span><span class="s2">Arguments</span><span class="s1">.</span><span class="s2">id) </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">inputArgumentsIssue(target: </span><span class="s1">.</span><span class="s2">clearWatch))</span>
+            <span class="s0">return</span>
+        <span class="s2">}</span>
+        <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">clearWatchCallbackIfExists(</span><span class="s1">callbackId</span><span class="s2">)</span>
+
+        <span class="s0">if </span><span class="s2">(</span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">watchCallbacks</span><span class="s1">.isEmpty</span><span class="s2">) ?? </span><span class="s4">false </span><span class="s2">{</span>
+            <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">stopMonitoringLocation()</span>
+            <span class="s1">locationCancellable</span><span class="s2">?</span><span class="s1">.</span><span class="s2">cancel()</span>
+            <span class="s1">locationCancellable </span><span class="s2">= </span><span class="s4">nil</span>
+            <span class="s1">timeoutCancellable</span><span class="s2">?</span><span class="s1">.</span><span class="s2">cancel()</span>
+            <span class="s1">timeoutCancellable </span><span class="s2">= </span><span class="s4">nil</span>
+            <span class="s1">locationInitialized </span><span class="s2">= </span><span class="s4">false</span>
+        <span class="s2">}</span>
+
+        <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendSuccess(</span><span class="s1">call</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc override public func </span><span class="s3">checkPermissions</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s0">guard </span><span class="s2">checkIfLocationServicesAreEnabled(</span><span class="s1">call</span><span class="s2">) </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+
+        <span class="s0">let </span><span class="s1">status </span><span class="s2">= </span><span class="s0">switch </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.authorisationStatus </span><span class="s2">{</span>
+        <span class="s0">case </span><span class="s1">.</span><span class="s2">restricted</span><span class="s1">, .</span><span class="s2">denied: </span><span class="s1">Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">Status</span><span class="s1">.</span><span class="s2">denied</span>
+        <span class="s0">case </span><span class="s1">.</span><span class="s2">authorisedAlways</span><span class="s1">, .</span><span class="s2">authorisedWhenInUse: </span><span class="s1">Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">Status</span><span class="s1">.</span><span class="s2">granted</span>
+        <span class="s0">default</span><span class="s2">: </span><span class="s1">Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">Status</span><span class="s1">.</span><span class="s2">prompt</span>
+        <span class="s2">}</span>
+
+        <span class="s0">let </span><span class="s1">callResultData </span><span class="s2">= </span><span class="s1">[ 
+            Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">ResultKey</span><span class="s1">.</span><span class="s2">location: </span><span class="s1">status, 
+            Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">ResultKey</span><span class="s1">.</span><span class="s2">coarseLocation: </span><span class="s1">status 
+        ] 
+        callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendSuccess(</span><span class="s1">call, </span><span class="s2">with: </span><span class="s1">callResultData</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s2">@</span><span class="s0">objc override public func </span><span class="s3">requestPermissions</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s0">guard </span><span class="s2">checkIfLocationServicesAreEnabled(</span><span class="s1">call</span><span class="s2">) </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+
+        <span class="s0">if </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.authorisationStatus </span><span class="s2">== </span><span class="s1">.notDetermined </span><span class="s2">{</span>
+            <span class="s2">shouldSetupBindings()</span>
+            <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">addRequestPermissionsCallback(capacitorCall: </span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s2">checkPermissions(</span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s1">} 
+</span>
+<span class="s0">private extension </span><span class="s2">GeolocationPlugin {</span>
+    <span class="s0">func </span><span class="s3">shouldSetupBindings</span><span class="s2">() {</span>
+        <span class="s2">bindAuthorisationStatusPublisher()</span>
+        <span class="s2">bindLocationPublisher()</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">bindAuthorisationStatusPublisher</span><span class="s2">() {</span>
+        <span class="s0">guard </span><span class="s2">!</span><span class="s1">statusInitialized </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+        <span class="s1">statusInitialized </span><span class="s2">= </span><span class="s4">true</span>
+        <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">authorisationStatusPublisher</span>
+            <span class="s1">.</span><span class="s2">sink(receiveValue: { </span><span class="s1">[</span><span class="s0">weak </span><span class="s2">self</span><span class="s1">] status </span><span class="s0">in</span>
+                <span class="s0">guard let </span><span class="s2">self </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+
+                <span class="s0">switch </span><span class="s1">status </span><span class="s2">{</span>
+                <span class="s0">case </span><span class="s1">.</span><span class="s2">denied:</span>
+                    <span class="s2">self</span><span class="s1">.</span><span class="s2">onLocationPermissionNotGranted(error: </span><span class="s1">.</span><span class="s2">permissionDenied)</span>
+                <span class="s0">case </span><span class="s1">.</span><span class="s2">notDetermined:</span>
+                    <span class="s2">self</span><span class="s1">.</span><span class="s2">requestLocationAuthorisation(type: </span><span class="s1">.</span><span class="s2">whenInUse)</span>
+                <span class="s0">case </span><span class="s1">.</span><span class="s2">restricted:</span>
+                    <span class="s2">self</span><span class="s1">.</span><span class="s2">onLocationPermissionNotGranted(error: </span><span class="s1">.</span><span class="s2">permissionRestricted)</span>
+                <span class="s0">case </span><span class="s1">.</span><span class="s2">authorisedAlways</span><span class="s1">, .</span><span class="s2">authorisedWhenInUse:</span>
+                    <span class="s2">self</span><span class="s1">.</span><span class="s2">onLocationPermissionGranted()</span>
+                <span class="s2">@</span><span class="s0">unknown default</span><span class="s2">: </span><span class="s0">break</span>
+                <span class="s2">}</span>
+            <span class="s2">})</span>
+            <span class="s1">.</span><span class="s2">store(in: &amp;</span><span class="s1">cancellables</span><span class="s2">)</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">bindLocationPublisher</span><span class="s2">() {</span>
+        <span class="s0">guard </span><span class="s2">!</span><span class="s1">locationInitialized </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+        <span class="s1">locationInitialized </span><span class="s2">= </span><span class="s4">true</span>
+        <span class="s1">locationCancellable </span><span class="s2">= </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">currentLocationPublisher</span>
+            <span class="s1">.</span><span class="s2">catch { </span><span class="s1">[</span><span class="s0">weak </span><span class="s2">self</span><span class="s1">] error </span><span class="s2">-&gt; </span><span class="s1">AnyPublisher</span><span class="s2">&lt;</span><span class="s1">IONGLOCPositionModel, Never</span><span class="s2">&gt; </span><span class="s0">in</span>
+                <span class="s2">print(&quot;</span><span class="s5">An error was found while retrieving the location: </span><span class="s1">\(error)</span><span class="s2">&quot;)</span>
+
+                <span class="s0">if case </span><span class="s1">IONGLOCLocationError.locationUnavailable </span><span class="s2">= </span><span class="s1">error </span><span class="s2">{</span>
+                    <span class="s2">print(&quot;</span><span class="s5">Location unavailable (likely due to backgrounding). Keeping watch callbacks alive.</span><span class="s2">&quot;)</span>
+                    <span class="s2">self?</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">positionUnavailable)</span>
+                    <span class="s0">return </span><span class="s1">Empty</span><span class="s2">&lt;</span><span class="s1">IONGLOCPositionModel, Never</span><span class="s2">&gt;</span><span class="s1">() 
+                        .</span><span class="s2">eraseToAnyPublisher()</span>
+                <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+                    <span class="s2">self?</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">positionUnavailable)</span>
+                    <span class="s0">return </span><span class="s1">Empty</span><span class="s2">&lt;</span><span class="s1">IONGLOCPositionModel, Never</span><span class="s2">&gt;</span><span class="s1">() 
+                        .</span><span class="s2">eraseToAnyPublisher()</span>
+                <span class="s2">}</span>
+            <span class="s2">}</span>
+            <span class="s1">.</span><span class="s2">sink(receiveValue: { </span><span class="s1">[</span><span class="s0">weak </span><span class="s2">self</span><span class="s1">] position </span><span class="s0">in</span>
+                <span class="s2">self?</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendSuccess(with: </span><span class="s1">position</span><span class="s2">)</span>
+            <span class="s2">})</span>
+
+        <span class="s1">timeoutCancellable </span><span class="s2">= </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">locationTimeoutPublisher</span>
+            <span class="s1">.</span><span class="s2">sink(receiveValue: { </span><span class="s1">[</span><span class="s0">weak </span><span class="s2">self</span><span class="s1">] error </span><span class="s0">in</span>
+                <span class="s0">if case </span><span class="s1">.timeout </span><span class="s2">= </span><span class="s1">error </span><span class="s2">{</span>
+                    <span class="s2">self?</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">timeout)</span>
+                <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+                    <span class="s2">self?</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">positionUnavailable)</span>
+                <span class="s2">}</span>
+            <span class="s2">})</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">requestLocationAuthorisation</span><span class="s2">(</span><span class="s3">type </span><span class="s2">requestType</span><span class="s1">: IONGLOCAuthorisationRequestType</span><span class="s2">) {</span>
+        <span class="s1">DispatchQueue.</span><span class="s2">global(qos: </span><span class="s1">.</span><span class="s2">background)</span><span class="s1">.</span><span class="s2">async {</span>
+            <span class="s0">guard </span><span class="s2">self</span><span class="s1">.</span><span class="s2">checkIfLocationServicesAreEnabled() </span><span class="s0">else </span><span class="s2">{ </span><span class="s0">return </span><span class="s2">}</span>
+            <span class="s2">self</span><span class="s1">.</span><span class="s2">locationService?</span><span class="s1">.</span><span class="s2">requestAuthorisation(withType: </span><span class="s1">requestType</span><span class="s2">)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">checkIfLocationServicesAreEnabled</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">call</span><span class="s1">: CAPPluginCall</span><span class="s2">? = </span><span class="s4">nil</span><span class="s2">) -&gt; Bool {</span>
+        <span class="s0">guard </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">areLocationServicesEnabled() == </span><span class="s4">true </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s1">call.</span><span class="s2">map { </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendError($0</span><span class="s1">, </span><span class="s2">error: </span><span class="s1">.</span><span class="s2">locationServicesDisabled) }</span>
+                <span class="s2">?? </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">locationServicesDisabled)</span>
+            <span class="s0">return </span><span class="s4">false</span>
+        <span class="s2">}</span>
+        <span class="s0">return </span><span class="s4">true</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">onLocationPermissionNotGranted</span><span class="s2">(</span><span class="s3">error</span><span class="s1">: GeolocationError</span><span class="s2">) {</span>
+        <span class="s0">let </span><span class="s1">shouldNotifyRequestPermissionsResult </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">requestPermissionsCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false</span>
+        <span class="s0">let </span><span class="s1">shouldNotifyPermissionError </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">locationCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false </span><span class="s2">||  </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">watchCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false</span>
+
+        <span class="s0">if </span><span class="s1">shouldNotifyRequestPermissionsResult </span><span class="s2">{</span>
+            <span class="s2">self</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendRequestPermissionsSuccess(</span><span class="s1">Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">Status</span><span class="s1">.</span><span class="s2">denied)</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">shouldNotifyPermissionError </span><span class="s2">{</span>
+            <span class="s2">self</span><span class="s1">.</span><span class="s2">callbackManager?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">error</span><span class="s2">)</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">onLocationPermissionGranted</span><span class="s2">() {</span>
+        <span class="s0">let </span><span class="s1">shouldNotifyPermissionGranted </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">requestPermissionsCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false</span>
+        <span class="s2">// </span><span class="s6">should request location if callbacks below exist and are not empty</span>
+        <span class="s0">let </span><span class="s1">shouldRequestCurrentPosition </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">locationCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false</span>
+        <span class="s0">let </span><span class="s1">shouldRequestLocationMonitoring </span><span class="s2">= </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">watchCallbacks</span><span class="s1">.isEmpty </span><span class="s2">== </span><span class="s4">false</span>
+
+        <span class="s0">if </span><span class="s1">shouldNotifyPermissionGranted </span><span class="s2">{</span>
+            <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendRequestPermissionsSuccess(</span><span class="s1">Constants.</span><span class="s2">AuthorisationStatus</span><span class="s1">.</span><span class="s2">Status</span><span class="s1">.</span><span class="s2">granted)</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">shouldRequestCurrentPosition </span><span class="s2">{</span>
+            <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">requestSingleLocation(options: IONGLOCRequestOptionsModel(timeout: </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">timeout))</span>
+        <span class="s2">}</span>
+        <span class="s0">if </span><span class="s1">shouldRequestLocationMonitoring </span><span class="s2">{</span>
+            <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">startMonitoringLocation(options: IONGLOCRequestOptionsModel(timeout: </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">timeout))</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+
+    <span class="s0">func </span><span class="s3">handleLocationRequest</span><span class="s2">(</span><span class="s3">_ </span><span class="s2">enableHighAccuracy</span><span class="s1">: </span><span class="s2">Bool</span><span class="s1">, </span><span class="s3">watchUUID</span><span class="s1">: </span><span class="s2">String? = </span><span class="s4">nil</span><span class="s1">, </span><span class="s3">call</span><span class="s1">: CAPPluginCall</span><span class="s2">) {</span>
+        <span class="s2">bindLocationPublisher()</span>
+        <span class="s0">let </span><span class="s1">configurationModel </span><span class="s2">= IONGLOCConfigurationModel(enableHighAccuracy: </span><span class="s1">enableHighAccuracy</span><span class="s2">)</span>
+        <span class="s1">locationService</span><span class="s2">?</span><span class="s1">.</span><span class="s2">updateConfiguration(</span><span class="s1">configurationModel</span><span class="s2">)</span>
+
+        <span class="s0">if let </span><span class="s1">watchUUID </span><span class="s2">{</span>
+            <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">addWatchCallback(</span><span class="s1">watchUUID, </span><span class="s2">capacitorCall: </span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s2">} </span><span class="s0">else </span><span class="s2">{</span>
+            <span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">addLocationCallback(capacitorCall: </span><span class="s1">call</span><span class="s2">)</span>
+        <span class="s2">}</span>
+
+        <span class="s0">switch </span><span class="s1">locationService</span><span class="s2">?</span><span class="s1">.authorisationStatus </span><span class="s2">{</span>
+        <span class="s0">case </span><span class="s1">.</span><span class="s2">authorisedAlways</span><span class="s1">, .</span><span class="s2">authorisedWhenInUse: onLocationPermissionGranted()</span>
+        <span class="s0">case </span><span class="s1">.</span><span class="s2">denied: </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">permissionDenied)</span>
+        <span class="s0">case </span><span class="s1">.</span><span class="s2">restricted: </span><span class="s1">callbackManager</span><span class="s2">?</span><span class="s1">.</span><span class="s2">sendError(</span><span class="s1">.</span><span class="s2">permissionRestricted)</span>
+        <span class="s0">default</span><span class="s2">: </span><span class="s0">break</span>
+        <span class="s2">}</span>
+    <span class="s2">}</span>
+<span class="s2">}</span>
+</pre>
+</body>
+</html>

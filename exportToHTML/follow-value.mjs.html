@@ -1,0 +1,149 @@
+<html>
+<head>
+<title>follow-value.mjs</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cf8e6d;}
+.s1 { color: #bcbec4;}
+.s2 { color: #bcbec4;}
+.s3 { color: #6aab73;}
+.s4 { color: #7a7e85;}
+.s5 { color: #56a8f5;}
+.s6 { color: #c77dbb; font-style: italic;}
+.s7 { color: #bcbec4; font-style: italic;}
+.s8 { color: #2aacb8; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+follow-value.mjs</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s2">{ motionValue } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./index.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ JSAnimation } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../animation/JSAnimation.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ isMotionValue } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">./utils/is-motion-value.mjs</span><span class="s2">';</span>
+<span class="s0">import </span><span class="s2">{ frame } </span><span class="s0">from </span><span class="s2">'</span><span class="s3">../frameloop/frame.mjs</span><span class="s2">';</span>
+
+<span class="s2">/**</span>
+ <span class="s4">* Create a `MotionValue` that animates to its latest value using any transition type. 
+ * Can either be a value or track another `MotionValue`. 
+ * 
+ * ```jsx 
+ * const x = motionValue(0) 
+ * const y = followValue(x, { type: &quot;spring&quot;, stiffness: 300 }) 
+ * // or with tween 
+ * const z = followValue(x, { type: &quot;tween&quot;, duration: 0.5, ease: &quot;easeOut&quot; }) 
+ * ``` 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">source </span><span class="s4">- Initial value or MotionValue to track 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Animation transition options 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">`MotionValue` 
+ * 
+ * </span><span class="s2">@</span><span class="s0">public</span>
+ <span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">followValue</span><span class="s2">(source, options) {</span>
+    <span class="s0">const </span><span class="s2">initialValue = </span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">source</span><span class="s1">) </span><span class="s2">? source.</span><span class="s5">get</span><span class="s1">() </span><span class="s2">: source;</span>
+    <span class="s0">const </span><span class="s2">value = </span><span class="s5">motionValue</span><span class="s1">(</span><span class="s2">initialValue</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s5">attachFollow</span><span class="s1">(</span><span class="s2">value, source, options</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">return </span><span class="s2">value;</span>
+<span class="s2">}</span>
+<span class="s2">/**</span>
+ <span class="s4">* Attach an animation to a MotionValue that will animate whenever the value changes. 
+ * Similar to attachSpring but supports any transition type (spring, tween, inertia, etc.) 
+ * 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">value </span><span class="s4">- The MotionValue to animate 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">source </span><span class="s4">- Initial value or MotionValue to track 
+ * </span><span class="s2">@</span><span class="s0">param </span><span class="s2">options </span><span class="s4">- Animation transition options 
+ * </span><span class="s2">@</span><span class="s0">returns </span><span class="s4">Cleanup function 
+ * 
+ * </span><span class="s2">@</span><span class="s0">public</span>
+ <span class="s2">*/</span>
+<span class="s0">function </span><span class="s5">attachFollow</span><span class="s2">(value, source, options = {}) {</span>
+    <span class="s0">const </span><span class="s2">initialValue = value.</span><span class="s5">get</span><span class="s1">()</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">activeAnimation = </span><span class="s6">null</span><span class="s2">;</span>
+    <span class="s0">let </span><span class="s2">latestValue = initialValue;</span>
+    <span class="s0">let </span><span class="s2">latestSetter;</span>
+    <span class="s0">const </span><span class="s2">unit = typeof initialValue === &quot;</span><span class="s3">string</span><span class="s2">&quot;</span>
+        <span class="s2">? initialValue.</span><span class="s5">replace</span><span class="s1">(</span><span class="s2">/</span><span class="s7">[</span><span class="s6">\d.-</span><span class="s7">]</span><span class="s2">/</span><span class="s0">g</span><span class="s2">, &quot;&quot;</span><span class="s1">)</span>
+        <span class="s2">: </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s0">const </span><span class="s5">stopAnimation </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">activeAnimation</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s2">activeAnimation.</span><span class="s5">stop</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s2">activeAnimation = </span><span class="s6">null</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">value.animation = </span><span class="s6">undefined</span><span class="s2">;</span>
+    <span class="s2">};</span>
+    <span class="s0">const </span><span class="s5">startAnimation </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s0">const </span><span class="s2">currentValue = </span><span class="s5">asNumber</span><span class="s1">(</span><span class="s2">value.</span><span class="s5">get</span><span class="s1">())</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">targetValue = </span><span class="s5">asNumber</span><span class="s1">(</span><span class="s2">latestValue</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s2">// </span><span class="s4">Don't animate if we're already at the target</span>
+        <span class="s0">if </span><span class="s1">(</span><span class="s2">currentValue === targetValue</span><span class="s1">) </span><span class="s2">{</span>
+            <span class="s5">stopAnimation</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s0">return</span><span class="s2">;</span>
+        <span class="s2">}</span>
+        <span class="s2">// </span><span class="s4">Use the running animation's analytical velocity for accuracy,</span>
+        <span class="s2">// </span><span class="s4">falling back to the MotionValue's velocity for the initial animation.</span>
+        <span class="s2">// </span><span class="s4">This prevents systematic velocity loss at high frame rates (240hz+).</span>
+        <span class="s0">const </span><span class="s2">velocity = activeAnimation</span>
+            <span class="s2">? activeAnimation.</span><span class="s5">getGeneratorVelocity</span><span class="s1">()</span>
+            <span class="s2">: value.</span><span class="s5">getVelocity</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s5">stopAnimation</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">activeAnimation = new </span><span class="s5">JSAnimation</span><span class="s1">(</span><span class="s2">{</span>
+            <span class="s1">keyframes</span><span class="s2">: </span><span class="s1">[</span><span class="s2">currentValue, targetValue</span><span class="s1">]</span><span class="s2">,</span>
+            <span class="s2">velocity,</span>
+            <span class="s2">// </span><span class="s4">Default to spring if no type specified (matches useSpring behavior)</span>
+            <span class="s1">type</span><span class="s2">: &quot;</span><span class="s3">spring</span><span class="s2">&quot;,</span>
+            <span class="s1">restDelta</span><span class="s2">: </span><span class="s8">0.001</span><span class="s2">,</span>
+            <span class="s1">restSpeed</span><span class="s2">: </span><span class="s8">0.01</span><span class="s2">,</span>
+            <span class="s2">...options,</span>
+            <span class="s1">onUpdate</span><span class="s2">: latestSetter,</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">};</span>
+    <span class="s2">// </span><span class="s4">Use a stable function reference so the frame loop Set deduplicates</span>
+    <span class="s2">// </span><span class="s4">multiple calls within the same frame (e.g. rapid mouse events)</span>
+    <span class="s0">const </span><span class="s5">scheduleAnimation </span><span class="s2">= () </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s5">startAnimation</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">value.animation = activeAnimation ?? </span><span class="s6">undefined</span><span class="s2">;</span>
+        <span class="s2">value</span><span class="s1">[</span><span class="s2">&quot;</span><span class="s3">events</span><span class="s2">&quot;</span><span class="s1">]</span><span class="s2">.animationStart?.</span><span class="s5">notify</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">activeAnimation?.</span><span class="s5">then</span><span class="s1">(</span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s2">value.animation = </span><span class="s6">undefined</span><span class="s2">;</span>
+            <span class="s2">value</span><span class="s1">[</span><span class="s2">&quot;</span><span class="s3">events</span><span class="s2">&quot;</span><span class="s1">]</span><span class="s2">.animationComplete?.</span><span class="s5">notify</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">};</span>
+    <span class="s2">value.</span><span class="s5">attach</span><span class="s1">(</span><span class="s2">(v, set) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+        <span class="s2">latestValue = v;</span>
+        <span class="s5">latestSetter </span><span class="s2">= (latest) </span><span class="s0">=&gt; </span><span class="s5">set</span><span class="s1">(</span><span class="s5">parseValue</span><span class="s1">(</span><span class="s2">latest, unit</span><span class="s1">))</span><span class="s2">;</span>
+        <span class="s2">frame.</span><span class="s5">postRender</span><span class="s1">(</span><span class="s2">scheduleAnimation</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s2">}, stopAnimation</span><span class="s1">)</span><span class="s2">;</span>
+    <span class="s0">if </span><span class="s1">(</span><span class="s5">isMotionValue</span><span class="s1">(</span><span class="s2">source</span><span class="s1">)) </span><span class="s2">{</span>
+        <span class="s0">let </span><span class="s2">skipNextAnimation = options.skipInitialAnimation === </span><span class="s6">true</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">removeSourceOnChange = source.</span><span class="s5">on</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">change</span><span class="s2">&quot;, (v) </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s0">if </span><span class="s1">(</span><span class="s2">skipNextAnimation</span><span class="s1">) </span><span class="s2">{</span>
+                <span class="s2">skipNextAnimation = </span><span class="s6">false</span><span class="s2">;</span>
+                <span class="s2">value.</span><span class="s5">jump</span><span class="s1">(</span><span class="s5">parseValue</span><span class="s1">(</span><span class="s2">v, unit</span><span class="s1">)</span><span class="s2">, </span><span class="s6">false</span><span class="s1">)</span><span class="s2">;</span>
+            <span class="s2">}</span>
+            <span class="s0">else </span><span class="s2">{</span>
+                <span class="s2">value.</span><span class="s5">set</span><span class="s1">(</span><span class="s5">parseValue</span><span class="s1">(</span><span class="s2">v, unit</span><span class="s1">))</span><span class="s2">;</span>
+            <span class="s2">}</span>
+        <span class="s2">}</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">const </span><span class="s2">removeValueOnDestroy = value.</span><span class="s5">on</span><span class="s1">(</span><span class="s2">&quot;</span><span class="s3">destroy</span><span class="s2">&quot;, removeSourceOnChange</span><span class="s1">)</span><span class="s2">;</span>
+        <span class="s0">return </span><span class="s2">() </span><span class="s0">=&gt; </span><span class="s2">{</span>
+            <span class="s5">removeSourceOnChange</span><span class="s1">()</span><span class="s2">;</span>
+            <span class="s5">removeValueOnDestroy</span><span class="s1">()</span><span class="s2">;</span>
+        <span class="s2">};</span>
+    <span class="s2">}</span>
+    <span class="s0">return </span><span class="s2">stopAnimation;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">parseValue</span><span class="s2">(v, unit) {</span>
+    <span class="s0">return </span><span class="s2">unit ? v + unit : v;</span>
+<span class="s2">}</span>
+<span class="s0">function </span><span class="s5">asNumber</span><span class="s2">(v) {</span>
+    <span class="s0">return </span><span class="s2">typeof v === &quot;</span><span class="s3">number</span><span class="s2">&quot; ? v : </span><span class="s5">parseFloat</span><span class="s1">(</span><span class="s2">v</span><span class="s1">)</span><span class="s2">;</span>
+<span class="s2">}</span>
+
+<span class="s0">export </span><span class="s2">{ attachFollow, followValue };</span>
+<span class="s2">//</span><span class="s4"># sourceMappingURL=follow-value.mjs.map</span>
+</pre>
+</body>
+</html>

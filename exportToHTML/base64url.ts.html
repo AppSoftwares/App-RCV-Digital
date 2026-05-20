@@ -1,0 +1,333 @@
+<html>
+<head>
+<title>base64url.ts</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #bcbec4;}
+.s1 { color: #7a7e85;}
+.s2 { color: #bcbec4;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #6aab73;}
+.s5 { color: #56a8f5;}
+.s6 { color: #cf8e6d; font-style: italic;}
+.s7 { color: #2aacb8; font-style: italic;}
+.s8 { color: #c77dbb; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+base64url.ts</font>
+</center></td></tr></table>
+<pre><span class="s0">/**</span>
+ <span class="s1">* Avoid modifying this file. It's part of 
+ * https://github.com/supabase-community/base64url-js.  Submit all fixes on 
+ * that repo! 
+ </span><span class="s0">*/</span>
+
+<span class="s3">import </span><span class="s0">{ Uint8Array_ } </span><span class="s3">from </span><span class="s0">'</span><span class="s4">./webauthn.dom</span><span class="s0">'</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* An array of characters that encode 6 bits into a Base64-URL alphabet 
+ * character. 
+ </span><span class="s0">*/</span>
+<span class="s3">const </span><span class="s0">TO_BASE64URL = '</span><span class="s4">ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_</span><span class="s0">'.</span><span class="s5">split</span><span class="s2">(</span><span class="s0">''</span><span class="s2">)</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* An array of characters that can appear in a Base64-URL encoded string but 
+ * should be ignored. 
+ </span><span class="s0">*/</span>
+<span class="s3">const </span><span class="s0">IGNORE_BASE64URL = ' </span><span class="s6">\t\n\r</span><span class="s4">=</span><span class="s0">'.</span><span class="s5">split</span><span class="s2">(</span><span class="s0">''</span><span class="s2">)</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* An array of 128 numbers that map a Base64-URL character to 6 bits, or if -2 
+ * used to skip the character, or if -1 used to error out. 
+ </span><span class="s0">*/</span>
+<span class="s3">const </span><span class="s0">FROM_BASE64URL = </span><span class="s2">(</span><span class="s0">() </span><span class="s3">=&gt; </span><span class="s0">{</span>
+  <span class="s3">const </span><span class="s0">charMap: number</span><span class="s2">[] </span><span class="s0">= new </span><span class="s5">Array</span><span class="s2">(</span><span class="s7">128</span><span class="s2">)</span>
+
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; charMap.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">charMap</span><span class="s2">[</span><span class="s0">i</span><span class="s2">] </span><span class="s0">= -</span><span class="s7">1</span>
+  <span class="s0">}</span>
+
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; IGNORE_BASE64URL.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">charMap</span><span class="s2">[</span><span class="s0">IGNORE_BASE64URL</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s7">0</span><span class="s2">)] </span><span class="s0">= -</span><span class="s7">2</span>
+  <span class="s0">}</span>
+
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; TO_BASE64URL.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">charMap</span><span class="s2">[</span><span class="s0">TO_BASE64URL</span><span class="s2">[</span><span class="s0">i</span><span class="s2">]</span><span class="s0">.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s7">0</span><span class="s2">)] </span><span class="s0">= i</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">charMap</span>
+<span class="s0">}</span><span class="s2">)()</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a byte to a Base64-URL string. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">byte </span><span class="s1">The byte to convert, or null to flush at the end of the byte sequence. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">state </span><span class="s1">The Base64 conversion state. Pass an initial value of `{ queue: 0, queuedBits: 0 }`. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">emit </span><span class="s1">A function called with the next Base64 character when ready. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">byteToBase64URL</span><span class="s0">(</span>
+  <span class="s0">byte: number | null,</span>
+  <span class="s0">state: { queue: number; queuedBits: number },</span>
+  <span class="s5">emit</span><span class="s0">: (char: string) </span><span class="s3">=&gt; </span><span class="s0">void</span>
+<span class="s0">) {</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">byte !== </span><span class="s8">null</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">state.queue = </span><span class="s2">(</span><span class="s0">state.queue &lt;&lt; </span><span class="s7">8</span><span class="s2">) </span><span class="s0">| byte</span>
+    <span class="s0">state.queuedBits += </span><span class="s7">8</span>
+
+    <span class="s3">while </span><span class="s2">(</span><span class="s0">state.queuedBits &gt;= </span><span class="s7">6</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">pos = </span><span class="s2">(</span><span class="s0">state.queue &gt;&gt; </span><span class="s2">(</span><span class="s0">state.queuedBits - </span><span class="s7">6</span><span class="s2">)) </span><span class="s0">&amp; </span><span class="s7">63</span>
+      <span class="s5">emit</span><span class="s2">(</span><span class="s0">TO_BASE64URL</span><span class="s2">[</span><span class="s0">pos</span><span class="s2">])</span>
+      <span class="s0">state.queuedBits -= </span><span class="s7">6</span>
+    <span class="s0">}</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">state.queuedBits &gt; </span><span class="s7">0</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">state.queue = state.queue &lt;&lt; </span><span class="s2">(</span><span class="s7">6 </span><span class="s0">- state.queuedBits</span><span class="s2">)</span>
+    <span class="s0">state.queuedBits = </span><span class="s7">6</span>
+
+    <span class="s3">while </span><span class="s2">(</span><span class="s0">state.queuedBits &gt;= </span><span class="s7">6</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">const </span><span class="s0">pos = </span><span class="s2">(</span><span class="s0">state.queue &gt;&gt; </span><span class="s2">(</span><span class="s0">state.queuedBits - </span><span class="s7">6</span><span class="s2">)) </span><span class="s0">&amp; </span><span class="s7">63</span>
+      <span class="s5">emit</span><span class="s2">(</span><span class="s0">TO_BASE64URL</span><span class="s2">[</span><span class="s0">pos</span><span class="s2">])</span>
+      <span class="s0">state.queuedBits -= </span><span class="s7">6</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a String char code (extracted using `string.charCodeAt(position)`) to a sequence of Base64-URL characters. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">charCode </span><span class="s1">The char code of the JavaScript string. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">state </span><span class="s1">The Base64 state. Pass an initial value of `{ queue: 0, queuedBits: 0 }`. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">emit </span><span class="s1">A function called with the next byte. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">byteFromBase64URL</span><span class="s0">(</span>
+  <span class="s0">charCode: number,</span>
+  <span class="s0">state: { queue: number; queuedBits: number },</span>
+  <span class="s5">emit</span><span class="s0">: (byte: number) </span><span class="s3">=&gt; </span><span class="s0">void</span>
+<span class="s0">) {</span>
+  <span class="s3">const </span><span class="s0">bits = FROM_BASE64URL</span><span class="s2">[</span><span class="s0">charCode</span><span class="s2">]</span>
+
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">bits &gt; -</span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">// </span><span class="s1">valid Base64-URL character</span>
+    <span class="s0">state.queue = </span><span class="s2">(</span><span class="s0">state.queue &lt;&lt; </span><span class="s7">6</span><span class="s2">) </span><span class="s0">| bits</span>
+    <span class="s0">state.queuedBits += </span><span class="s7">6</span>
+
+    <span class="s3">while </span><span class="s2">(</span><span class="s0">state.queuedBits &gt;= </span><span class="s7">8</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s5">emit</span><span class="s2">((</span><span class="s0">state.queue &gt;&gt; </span><span class="s2">(</span><span class="s0">state.queuedBits - </span><span class="s7">8</span><span class="s2">)) </span><span class="s0">&amp; </span><span class="s7">0xff</span><span class="s2">)</span>
+      <span class="s0">state.queuedBits -= </span><span class="s7">8</span>
+    <span class="s0">}</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">bits === -</span><span class="s7">2</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s0">// </span><span class="s1">ignore spaces, tabs, newlines, =</span>
+    <span class="s3">return</span>
+  <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+    <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">`</span><span class="s4">Invalid Base64-URL character &quot;</span><span class="s0">${String.</span><span class="s5">fromCharCode</span><span class="s2">(</span><span class="s0">charCode</span><span class="s2">)</span><span class="s0">}</span><span class="s4">&quot;</span><span class="s0">`</span><span class="s2">)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a JavaScript string (which may include any valid character) into a 
+ * Base64-URL encoded string. The string is first encoded in UTF-8 which is 
+ * then encoded as Base64-URL. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">str </span><span class="s1">The string to convert. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">stringToBase64URL</span><span class="s0">(str: string) {</span>
+  <span class="s3">const </span><span class="s0">base64: string</span><span class="s2">[] </span><span class="s0">= </span><span class="s2">[]</span>
+
+  <span class="s3">const </span><span class="s5">emitter </span><span class="s0">= (char: string) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s0">base64.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">char</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s0">state = { </span><span class="s2">queue</span><span class="s0">: </span><span class="s7">0</span><span class="s0">, </span><span class="s2">queuedBits</span><span class="s0">: </span><span class="s7">0 </span><span class="s0">}</span>
+
+  <span class="s5">stringToUTF8</span><span class="s2">(</span><span class="s0">str, (byte: number) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s5">byteToBase64URL</span><span class="s2">(</span><span class="s0">byte, state, emitter</span><span class="s2">)</span>
+  <span class="s0">}</span><span class="s2">)</span>
+
+  <span class="s5">byteToBase64URL</span><span class="s2">(</span><span class="s8">null</span><span class="s0">, state, emitter</span><span class="s2">)</span>
+
+  <span class="s3">return </span><span class="s0">base64.</span><span class="s5">join</span><span class="s2">(</span><span class="s0">''</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a Base64-URL encoded string into a JavaScript string. It is assumed 
+ * that the underlying string has been encoded as UTF-8. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">str </span><span class="s1">The Base64-URL encoded string. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">stringFromBase64URL</span><span class="s0">(str: string) {</span>
+  <span class="s3">const </span><span class="s0">conv: string</span><span class="s2">[] </span><span class="s0">= </span><span class="s2">[]</span>
+
+  <span class="s3">const </span><span class="s5">utf8Emit </span><span class="s0">= (codepoint: number) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s0">conv.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">String.</span><span class="s5">fromCodePoint</span><span class="s2">(</span><span class="s0">codepoint</span><span class="s2">))</span>
+  <span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s0">utf8State = {</span>
+    <span class="s2">utf8seq</span><span class="s0">: </span><span class="s7">0</span><span class="s0">,</span>
+    <span class="s2">codepoint</span><span class="s0">: </span><span class="s7">0</span><span class="s0">,</span>
+  <span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s0">b64State = { </span><span class="s2">queue</span><span class="s0">: </span><span class="s7">0</span><span class="s0">, </span><span class="s2">queuedBits</span><span class="s0">: </span><span class="s7">0 </span><span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s5">byteEmit </span><span class="s0">= (byte: number) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s5">stringFromUTF8</span><span class="s2">(</span><span class="s0">byte, utf8State, utf8Emit</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; str.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">byteFromBase64URL</span><span class="s2">(</span><span class="s0">str.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s0">i</span><span class="s2">)</span><span class="s0">, b64State, byteEmit</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">conv.</span><span class="s5">join</span><span class="s2">(</span><span class="s0">''</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a Unicode codepoint to a multi-byte UTF-8 sequence. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">codepoint </span><span class="s1">The Unicode codepoint. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">emit      </span><span class="s1">Function which will be called for each UTF-8 byte that represents the codepoint. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">codepointToUTF8</span><span class="s0">(codepoint: number, </span><span class="s5">emit</span><span class="s0">: (byte: number) </span><span class="s3">=&gt; </span><span class="s0">void) {</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">codepoint &lt;= </span><span class="s7">0x7f</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s0">codepoint</span><span class="s2">)</span>
+    <span class="s3">return</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">codepoint &lt;= </span><span class="s7">0x7ff</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0xc0 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">6</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s3">return</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">codepoint &lt;= </span><span class="s7">0xffff</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0xe0 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">12</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">((</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">6</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s3">return</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">codepoint &lt;= </span><span class="s7">0x10ffff</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0xf0 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">18</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">((</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">12</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">((</span><span class="s0">codepoint &gt;&gt; </span><span class="s7">6</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s5">emit</span><span class="s2">(</span><span class="s7">0x80 </span><span class="s0">| </span><span class="s2">(</span><span class="s0">codepoint &amp; </span><span class="s7">0x3f</span><span class="s2">))</span>
+    <span class="s3">return</span>
+  <span class="s0">}</span>
+
+  <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">`</span><span class="s4">Unrecognized Unicode codepoint: </span><span class="s0">${codepoint.</span><span class="s5">toString</span><span class="s2">(</span><span class="s7">16</span><span class="s2">)</span><span class="s0">}`</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a JavaScript string to a sequence of UTF-8 bytes. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">str  </span><span class="s1">The string to convert to UTF-8. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">emit </span><span class="s1">Function which will be called for each UTF-8 byte of the string. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">stringToUTF8</span><span class="s0">(str: string, </span><span class="s5">emit</span><span class="s0">: (byte: number) </span><span class="s3">=&gt; </span><span class="s0">void) {</span>
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; str.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">let </span><span class="s0">codepoint = str.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s0">i</span><span class="s2">)</span>
+
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">codepoint &gt; </span><span class="s7">0xd7ff </span><span class="s0">&amp;&amp; codepoint &lt;= </span><span class="s7">0xdbff</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">// </span><span class="s1">most UTF-16 codepoints are Unicode codepoints, except values in this</span>
+      <span class="s0">// </span><span class="s1">range where the next UTF-16 codepoint needs to be combined with the</span>
+      <span class="s0">// </span><span class="s1">current one to get the Unicode codepoint</span>
+      <span class="s3">const </span><span class="s0">highSurrogate = </span><span class="s2">((</span><span class="s0">codepoint - </span><span class="s7">0xd800</span><span class="s2">) </span><span class="s0">* </span><span class="s7">0x400</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s7">0xffff</span>
+      <span class="s3">const </span><span class="s0">lowSurrogate = </span><span class="s2">(</span><span class="s0">str.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s0">i + </span><span class="s7">1</span><span class="s2">) </span><span class="s0">- </span><span class="s7">0xdc00</span><span class="s2">) </span><span class="s0">&amp; </span><span class="s7">0xffff</span>
+      <span class="s0">codepoint = </span><span class="s2">(</span><span class="s0">lowSurrogate | highSurrogate</span><span class="s2">) </span><span class="s0">+ </span><span class="s7">0x10000</span>
+      <span class="s0">i += </span><span class="s7">1</span>
+    <span class="s0">}</span>
+
+    <span class="s5">codepointToUTF8</span><span class="s2">(</span><span class="s0">codepoint, emit</span><span class="s2">)</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Converts a UTF-8 byte to a Unicode codepoint. 
+ * 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">byte  </span><span class="s1">The UTF-8 byte next in the sequence. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">state </span><span class="s1">The shared state between consecutive UTF-8 bytes in the 
+ *              sequence, an object with the shape `{ utf8seq: 0, codepoint: 0 }`. 
+ * </span><span class="s0">@</span><span class="s3">param </span><span class="s0">emit  </span><span class="s1">Function which will be called for each codepoint. 
+ </span><span class="s0">*/</span>
+<span class="s3">export function </span><span class="s5">stringFromUTF8</span><span class="s0">(</span>
+  <span class="s0">byte: number,</span>
+  <span class="s0">state: { utf8seq: number; codepoint: number },</span>
+  <span class="s5">emit</span><span class="s0">: (codepoint: number) </span><span class="s3">=&gt; </span><span class="s0">void</span>
+<span class="s0">) {</span>
+  <span class="s3">if </span><span class="s2">(</span><span class="s0">state.utf8seq === </span><span class="s7">0</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">byte &lt;= </span><span class="s7">0x7f</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s5">emit</span><span class="s2">(</span><span class="s0">byte</span><span class="s2">)</span>
+      <span class="s3">return</span>
+    <span class="s0">}</span>
+
+    <span class="s0">// </span><span class="s1">count the number of 1 leading bits until you reach 0</span>
+    <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">leadingBit = </span><span class="s7">1</span><span class="s0">; leadingBit &lt; </span><span class="s7">6</span><span class="s0">; leadingBit += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">if </span><span class="s2">(((</span><span class="s0">byte &gt;&gt; </span><span class="s2">(</span><span class="s7">7 </span><span class="s0">- leadingBit</span><span class="s2">)) </span><span class="s0">&amp; </span><span class="s7">1</span><span class="s2">) </span><span class="s0">=== </span><span class="s7">0</span><span class="s2">) </span><span class="s0">{</span>
+        <span class="s0">state.utf8seq = leadingBit</span>
+        <span class="s3">break</span>
+      <span class="s0">}</span>
+    <span class="s0">}</span>
+
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">state.utf8seq === </span><span class="s7">2</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">state.codepoint = byte &amp; </span><span class="s7">31</span>
+    <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">state.utf8seq === </span><span class="s7">3</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">state.codepoint = byte &amp; </span><span class="s7">15</span>
+    <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">state.utf8seq === </span><span class="s7">4</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s0">state.codepoint = byte &amp; </span><span class="s7">7</span>
+    <span class="s0">} </span><span class="s3">else </span><span class="s0">{</span>
+      <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">'</span><span class="s4">Invalid UTF-8 sequence</span><span class="s0">'</span><span class="s2">)</span>
+    <span class="s0">}</span>
+
+    <span class="s0">state.utf8seq -= </span><span class="s7">1</span>
+  <span class="s0">} </span><span class="s3">else if </span><span class="s2">(</span><span class="s0">state.utf8seq &gt; </span><span class="s7">0</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">byte &lt;= </span><span class="s7">0x7f</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s3">throw </span><span class="s0">new </span><span class="s5">Error</span><span class="s2">(</span><span class="s0">'</span><span class="s4">Invalid UTF-8 sequence</span><span class="s0">'</span><span class="s2">)</span>
+    <span class="s0">}</span>
+
+    <span class="s0">state.codepoint = </span><span class="s2">(</span><span class="s0">state.codepoint &lt;&lt; </span><span class="s7">6</span><span class="s2">) </span><span class="s0">| </span><span class="s2">(</span><span class="s0">byte &amp; </span><span class="s7">63</span><span class="s2">)</span>
+    <span class="s0">state.utf8seq -= </span><span class="s7">1</span>
+
+    <span class="s3">if </span><span class="s2">(</span><span class="s0">state.utf8seq === </span><span class="s7">0</span><span class="s2">) </span><span class="s0">{</span>
+      <span class="s5">emit</span><span class="s2">(</span><span class="s0">state.codepoint</span><span class="s2">)</span>
+    <span class="s0">}</span>
+  <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s0">/**</span>
+ <span class="s1">* Helper functions to convert different types of strings to Uint8Array 
+ </span><span class="s0">*/</span>
+
+<span class="s3">export function </span><span class="s5">base64UrlToUint8Array</span><span class="s0">(str: string): Uint8Array_ {</span>
+  <span class="s3">const </span><span class="s0">result: number</span><span class="s2">[] </span><span class="s0">= </span><span class="s2">[]</span>
+  <span class="s3">const </span><span class="s0">state = { </span><span class="s2">queue</span><span class="s0">: </span><span class="s7">0</span><span class="s0">, </span><span class="s2">queuedBits</span><span class="s0">: </span><span class="s7">0 </span><span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s5">onByte </span><span class="s0">= (byte: number) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s0">result.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">byte</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">for </span><span class="s2">(</span><span class="s3">let </span><span class="s0">i = </span><span class="s7">0</span><span class="s0">; i &lt; str.</span><span class="s2">length</span><span class="s0">; i += </span><span class="s7">1</span><span class="s2">) </span><span class="s0">{</span>
+    <span class="s5">byteFromBase64URL</span><span class="s2">(</span><span class="s0">str.</span><span class="s5">charCodeAt</span><span class="s2">(</span><span class="s0">i</span><span class="s2">)</span><span class="s0">, state, onByte</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s3">return </span><span class="s0">new </span><span class="s5">Uint8Array</span><span class="s2">(</span><span class="s0">result</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s3">export function </span><span class="s5">stringToUint8Array</span><span class="s0">(str: string): Uint8Array_ {</span>
+  <span class="s3">const </span><span class="s0">result: number</span><span class="s2">[] </span><span class="s0">= </span><span class="s2">[]</span>
+  <span class="s5">stringToUTF8</span><span class="s2">(</span><span class="s0">str, (byte: number) </span><span class="s3">=&gt; </span><span class="s0">result.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">byte</span><span class="s2">))</span>
+  <span class="s3">return </span><span class="s0">new </span><span class="s5">Uint8Array</span><span class="s2">(</span><span class="s0">result</span><span class="s2">)</span>
+<span class="s0">}</span>
+
+<span class="s3">export function </span><span class="s5">bytesToBase64URL</span><span class="s0">(bytes: Uint8Array) {</span>
+  <span class="s3">const </span><span class="s0">result: string</span><span class="s2">[] </span><span class="s0">= </span><span class="s2">[]</span>
+  <span class="s3">const </span><span class="s0">state = { </span><span class="s2">queue</span><span class="s0">: </span><span class="s7">0</span><span class="s0">, </span><span class="s2">queuedBits</span><span class="s0">: </span><span class="s7">0 </span><span class="s0">}</span>
+
+  <span class="s3">const </span><span class="s5">onChar </span><span class="s0">= (char: string) </span><span class="s3">=&gt; </span><span class="s0">{</span>
+    <span class="s0">result.</span><span class="s5">push</span><span class="s2">(</span><span class="s0">char</span><span class="s2">)</span>
+  <span class="s0">}</span>
+
+  <span class="s0">bytes.</span><span class="s5">forEach</span><span class="s2">(</span><span class="s0">(byte) </span><span class="s3">=&gt; </span><span class="s5">byteToBase64URL</span><span class="s2">(</span><span class="s0">byte, state, onChar</span><span class="s2">))</span>
+
+  <span class="s0">// </span><span class="s1">always call with `null` after processing all bytes</span>
+  <span class="s5">byteToBase64URL</span><span class="s2">(</span><span class="s8">null</span><span class="s0">, state, onChar</span><span class="s2">)</span>
+
+  <span class="s3">return </span><span class="s0">result.</span><span class="s5">join</span><span class="s2">(</span><span class="s0">''</span><span class="s2">)</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

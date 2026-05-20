@@ -1,0 +1,149 @@
+<html>
+<head>
+<title>AliasFieldPlugin.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #7a7e85;}
+.s1 { color: #bcbec4;}
+.s2 { color: #6aab73;}
+.s3 { color: #cf8e6d;}
+.s4 { color: #2aacb8;}
+</style>
+</head>
+<body bgcolor="#191a1c">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+AliasFieldPlugin.js</font>
+</center></td></tr></table>
+<pre><span class="s0">/* 
+    MIT License http://www.opensource.org/licenses/mit-license.php 
+    Author Tobias Koppers @sokra 
+*/</span>
+
+<span class="s2">&quot;use strict&quot;</span><span class="s1">;</span>
+
+<span class="s1">const DescriptionFileUtils = require(</span><span class="s2">&quot;./DescriptionFileUtils&quot;</span><span class="s1">);</span>
+<span class="s1">const getInnerRequest = require(</span><span class="s2">&quot;./getInnerRequest&quot;</span><span class="s1">);</span>
+
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;)} Resolver */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).JsonPrimitive} JsonPrimitive */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveRequest} ResolveRequest */</span>
+<span class="s0">/** @typedef {import(&quot;./Resolver&quot;).ResolveStepHook} ResolveStepHook */</span>
+
+<span class="s0">// Sentinel stored in `_fieldDataCache` when a description file does not</span>
+<span class="s0">// contain a usable alias field object. Lets us distinguish &quot;not cached yet&quot;</span>
+<span class="s0">// from &quot;no valid field&quot; without calling back into `getField`.</span>
+<span class="s1">const NO_FIELD_OBJECT = Symbol(</span><span class="s2">&quot;NoFieldObject&quot;</span><span class="s1">);</span>
+
+<span class="s1">module.exports = class AliasFieldPlugin {</span>
+	<span class="s0">/** 
+     * @param {string | ResolveStepHook} source source 
+     * @param {string | string[]} field field 
+     * @param {string | ResolveStepHook} target target 
+     */</span>
+	<span class="s1">constructor(source, field, target) {</span>
+		<span class="s3">this</span><span class="s1">.source = source;</span>
+		<span class="s3">this</span><span class="s1">.field = field;</span>
+		<span class="s3">this</span><span class="s1">.target = target;</span>
+		<span class="s0">// `this.field` is fixed for the plugin's lifetime, so caching</span>
+		<span class="s0">// per description-file content is safe. The cached value is either</span>
+		<span class="s0">// the resolved alias-map object or the `NO_FIELD_OBJECT` sentinel</span>
+		<span class="s0">// meaning &quot;description file has no usable alias field&quot;.</span>
+		<span class="s0">/** @type {WeakMap&lt;import(&quot;./Resolver&quot;).JsonObject, { [k: string]: JsonPrimitive } | typeof NO_FIELD_OBJECT&gt;} */</span>
+		<span class="s3">this</span><span class="s1">._fieldDataCache = </span><span class="s3">new </span><span class="s1">WeakMap();</span>
+	<span class="s1">}</span>
+
+	<span class="s0">/** 
+     * @param {Resolver} resolver the resolver 
+     * @returns {void} 
+     */</span>
+	<span class="s1">apply(resolver) {</span>
+		<span class="s1">const target = resolver.ensureHook(</span><span class="s3">this</span><span class="s1">.target);</span>
+		<span class="s1">resolver</span>
+			<span class="s1">.getHook(</span><span class="s3">this</span><span class="s1">.source)</span>
+			<span class="s1">.tapAsync(</span><span class="s2">&quot;AliasFieldPlugin&quot;</span><span class="s1">, (request, resolveContext, callback) =&gt; {</span>
+				<span class="s3">if </span><span class="s1">(!request.descriptionFileData) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">const innerRequest = getInnerRequest(resolver, request);</span>
+				<span class="s3">if </span><span class="s1">(!innerRequest) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">const { descriptionFileData } = request;</span>
+				<span class="s1">let fieldData = </span><span class="s3">this</span><span class="s1">._fieldDataCache.get(descriptionFileData);</span>
+				<span class="s3">if </span><span class="s1">(fieldData === undefined) {</span>
+					<span class="s1">const raw = DescriptionFileUtils.getField(</span>
+						<span class="s1">descriptionFileData,</span>
+						<span class="s3">this</span><span class="s1">.field,</span>
+					<span class="s1">);</span>
+					<span class="s3">if </span><span class="s1">(raw === </span><span class="s3">null </span><span class="s1">|| </span><span class="s3">typeof </span><span class="s1">raw !== </span><span class="s2">&quot;object&quot;</span><span class="s1">) {</span>
+						<span class="s3">this</span><span class="s1">._fieldDataCache.set(descriptionFileData, NO_FIELD_OBJECT);</span>
+						<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+							<span class="s1">resolveContext.log(</span>
+								<span class="s1">`Field </span><span class="s2">'${this.field}' </span><span class="s1">doesn</span><span class="s2">'t contain a valid alias configuration`,</span>
+							<span class="s1">);</span>
+						<span class="s1">}</span>
+						<span class="s3">return </span><span class="s1">callback();</span>
+					<span class="s1">}</span>
+					<span class="s1">fieldData = </span><span class="s0">/** @type {{ [k: string]: JsonPrimitive }} */ </span><span class="s1">(raw);</span>
+					<span class="s3">this</span><span class="s1">._fieldDataCache.set(descriptionFileData, fieldData);</span>
+				<span class="s1">} </span><span class="s3">else if </span><span class="s1">(fieldData === NO_FIELD_OBJECT) {</span>
+					<span class="s3">if </span><span class="s1">(resolveContext.log) {</span>
+						<span class="s1">resolveContext.log(</span>
+							<span class="s1">`Field </span><span class="s2">'${this.field}' </span><span class="s1">doesn</span><span class="s2">'t contain a valid alias configuration`,</span>
+						<span class="s1">);</span>
+					<span class="s1">}</span>
+					<span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s1">}</span>
+				<span class="s0">/** @type {JsonPrimitive | undefined} */</span>
+				<span class="s1">const data = Object.prototype.hasOwnProperty.call(</span>
+					<span class="s1">fieldData,</span>
+					<span class="s1">innerRequest,</span>
+				<span class="s1">)</span>
+					<span class="s1">? </span><span class="s0">/** @type {{ [Key in string]: JsonPrimitive }} */ </span><span class="s1">(fieldData)[</span>
+							<span class="s1">innerRequest</span>
+						<span class="s1">]</span>
+					<span class="s1">: innerRequest.startsWith(</span><span class="s2">&quot;./&quot;</span><span class="s1">)</span>
+						<span class="s1">? </span><span class="s0">/** @type {{ [Key in string]: JsonPrimitive }} */ </span><span class="s1">(fieldData)[</span>
+								<span class="s1">innerRequest.slice(</span><span class="s4">2</span><span class="s1">)</span>
+							<span class="s1">]</span>
+						<span class="s1">: undefined;</span>
+				<span class="s3">if </span><span class="s1">(data === innerRequest) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s3">if </span><span class="s1">(data === undefined) </span><span class="s3">return </span><span class="s1">callback();</span>
+				<span class="s3">if </span><span class="s1">(data === </span><span class="s3">false</span><span class="s1">) {</span>
+					<span class="s0">/** @type {ResolveRequest} */</span>
+					<span class="s1">const ignoreObj = {</span>
+						<span class="s1">...request,</span>
+						<span class="s1">path: </span><span class="s3">false</span><span class="s1">,</span>
+					<span class="s1">};</span>
+					<span class="s3">if </span><span class="s1">(</span><span class="s3">typeof </span><span class="s1">resolveContext.yield === </span><span class="s2">&quot;function&quot;</span><span class="s1">) {</span>
+						<span class="s1">resolveContext.yield(ignoreObj);</span>
+						<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+					<span class="s1">}</span>
+					<span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, ignoreObj);</span>
+				<span class="s1">}</span>
+				<span class="s0">/** @type {ResolveRequest} */</span>
+				<span class="s1">const obj = {</span>
+					<span class="s1">...request,</span>
+					<span class="s1">path: </span><span class="s0">/** @type {string} */ </span><span class="s1">(request.descriptionFileRoot),</span>
+					<span class="s1">request: </span><span class="s0">/** @type {string} */ </span><span class="s1">(data),</span>
+					<span class="s1">fullySpecified: </span><span class="s3">false</span><span class="s1">,</span>
+				<span class="s1">};</span>
+				<span class="s1">resolver.doResolve(</span>
+					<span class="s1">target,</span>
+					<span class="s1">obj,</span>
+					<span class="s1">`aliased from description file ${</span>
+						<span class="s1">request.descriptionFilePath</span>
+					<span class="s1">} </span><span class="s3">with </span><span class="s1">mapping </span><span class="s2">'${innerRequest}' </span><span class="s1">to </span><span class="s2">'${/** @type {string} */ data}'</span><span class="s1">`,</span>
+					<span class="s1">resolveContext,</span>
+					<span class="s1">(err, result) =&gt; {</span>
+						<span class="s3">if </span><span class="s1">(err) </span><span class="s3">return </span><span class="s1">callback(err);</span>
+
+						<span class="s0">// Don't allow other aliasing or raw request</span>
+						<span class="s3">if </span><span class="s1">(result === undefined) </span><span class="s3">return </span><span class="s1">callback(</span><span class="s3">null</span><span class="s1">, </span><span class="s3">null</span><span class="s1">);</span>
+						<span class="s1">callback(</span><span class="s3">null</span><span class="s1">, result);</span>
+					<span class="s1">},</span>
+				<span class="s1">);</span>
+			<span class="s1">});</span>
+	<span class="s1">}</span>
+<span class="s1">};</span>
+</pre>
+</body>
+</html>
