@@ -27,7 +27,7 @@ export class AuthService {
     }
 
     const mockUsers: Record<string, any> = {
-      'admin@rcv.com': { role: 'admin', hash: 'HASH_BCRYPT_ADMIN' },
+      'admin@rcv.com': { role: 'admin', hash: 'JESS.PIRELA@GMAIL.COM' },
       'contador@rcv.com': { role: 'contador', hash: 'HASH_BCRYPT_CONTADOR' },
       'operador@rcv.com': { role: 'operador', hash: 'HASH_BCRYPT_OPERADOR' },
       'cliente@rcv.com': { role: 'cliente', hash: 'HASH_BCRYPT_CLIENTE' }
