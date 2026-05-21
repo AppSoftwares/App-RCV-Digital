@@ -534,6 +534,9 @@ const SuccessScreen: React.FC<{ onReset: () => void, data: ExtractedData }> = ({
       console.error('Error al compartir', error);
     }
   };
+
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="min-h-screen flex flex-col pt-24 pb-32 px-6 max-w-2xl mx-auto w-full relative z-10">
       <div className="text-center mb-16">
         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring' }} className="inline-flex items-center justify-center w-24 h-24 bg-gradient-to-br from-brand-primary to-brand-secondary text-white rounded-[32px] mb-8 shadow-2xl shadow-indigo-500/40">
           <CheckCircle2 className="w-12 h-12" />

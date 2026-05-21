@@ -1,7 +1,6 @@
 import React from 'react';
 import { Shield } from 'lucide-react';
 import { ExtractedData } from '../types';
-import QRCode from 'react-qr-code';
 
 interface FiscalInvoiceProps {
   data: ExtractedData;
@@ -89,7 +88,11 @@ export const FiscalInvoice: React.FC<FiscalInvoiceProps> = ({
               <p><span className="font-bold uppercase text-slate-500 text-[8px] block">Comisiones</span> <span className="text-slate-900">Varias</span></p>
             </div>
             <div className="bg-white p-2 border border-slate-200 rounded-xl shadow-sm">
-              <QRCode value={qrData} size={64} />
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(qrData)}`}
+                alt="QR Validation"
+                className="w-16 h-16"
+              />
             </div>
           </div>
         </div>
