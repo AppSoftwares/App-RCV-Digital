@@ -33,20 +33,31 @@ export const PaymentScreen: React.FC<PaymentScreenProps> = ({ amount, onSuccess,
       // 1. Simular procesamiento de pago
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // 2. Ejecutar lógica de facturación (Envío automático de correo)
+      // 2. Generación y Envío AUTOMÁTICO de PDF al correo
+      const bcvRate = await financialService.getExchangeRate();
+
+      // Llamamos al servicio de generación silenciosa
       await billingService.processDigitalInvoice({
         invoice_number: "108991",
         total_amount: amount,
       }, fiscalEmail);
 
-      // 3. Registro Contable y de Fianza (SENIAT / SUDEASEG)
-      const bcvRate = await financialService.getExchangeRate();
-      await accountingService.recordPolicySale(
-        "108991",
-        "user_id_placeholder",
-        amount,
-        bcvRate
-      );
+      // Descarga automática silenciosa (Simulada para el cliente)
+      // @ts-ignore
+      if (window.html2pdf) {
+        const element = document.getElementById('hidden-invoice');
+        if (element) {
+           const options = {
+              margin: 0,
+              filename: `Factura_RCV_Digital_${fiscalRIF}.pdf`,
+              image: { type: 'jpeg', quality: 0.98 },
+              html2canvas: { scale: 2 },
+              jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
+           };
+           // @ts-ignore
+           await window.html2pdf().from(element).set(options).save();
+        }
+      }
 
       onSuccess();
     } catch (error) {

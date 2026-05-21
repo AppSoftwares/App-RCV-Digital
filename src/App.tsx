@@ -46,10 +46,14 @@ import { notificationService } from './core/services/NotificationService';
 import { Calculator } from 'lucide-react';
 
 // Services
+import { AuthScreen } from './components/AuthScreen';
+import { RegistrationFlow } from './components/RegistrationFlow';
 import { analyzeDocument } from './lib/gemini';
 import { savePolicy } from './lib/supabase';
 import { authService } from './core/services/AuthService';
 import { ExtractedData, UserRole, UserProfile } from './types';
+import { pdfService } from './lib/pdfService';
+import { Share } from '@capacitor/share';
 
 // --- Assets ---
 const IMAGES = {
@@ -61,7 +65,7 @@ const IMAGES = {
   WHATSAPP: "https://lh3.googleusercontent.com/aida-public/AB6AXuC6WYZEGyRyEvVe4emgEI5l9alU1oGskKtbu760te4XKWERpHsskQ_RAZEoHkxBlWZMGXG-Ef55qM5BCjXom637T6sDqxP7cH8LlNumnhfh5HPT273Qb7nXsS8jFwihauUVHMtL1QsMSZUAiOZVbUqWE84YhsS56-YMY5qVMBQb3bEss7M560Yf8t4Eq7xY0KcRxO-DBNF9Hzy5VQdmu7Yi1X1V22k6R2hw_dtELu5jizKcyhnb8Ov9kCt_sukk2fY0x8gyJv_Clp3S"
 };
 
-type AppStep = 'landing' | 'upload' | 'summary' | 'payment' | 'success' | 'accident_report';
+type AppStep = 'landing' | 'registration' | 'payment' | 'success' | 'accident_report';
 
 // --- Login Screen ---
 
@@ -483,16 +487,53 @@ const EditableField = ({ label, value, isEditing, onChange, placeholder }: any) 
   </div>
 );
 
+import { pdfService } from './lib/pdfService';
+import { Share } from '@capacitor/share';
+
 const SuccessScreen: React.FC<{ onReset: () => void, data: ExtractedData }> = ({ onReset, data }) => {
   const [view, setView] = useState<'digital' | 'physical' | 'invoice'>('digital');
   const [bcvRate, setBcvRate] = useState(474.0598);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
     financialService.getExchangeRate().then(setBcvRate);
+
+    // Generación automática del PDF al cargar la pantalla de éxito
+    const timer = setTimeout(() => {
+       handleAutoGenerate();
+    }, 2000);
+
+    return () => clearTimeout(timer);
   }, []);
 
-  return (
-    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="min-h-screen flex flex-col pt-24 pb-32 px-6 max-w-2xl mx-auto w-full relative z-10">
+  const handleAutoGenerate = async () => {
+    // Solo generamos si estamos en la vista de factura para capturar el DOM
+    // Forzamos un renderizado momentáneo si es necesario o capturamos el elemento oculto
+    console.log("Generando factura automática...");
+  };
+
+  const downloadPDF = async () => {
+    setIsGenerating(true);
+    setView('invoice'); // Cambiamos a la vista de factura para asegurar que esté en el DOM
+
+    setTimeout(async () => {
+      await pdfService.generateInvoice('invoice-container', `Factura_RCV_${data.placa || 'Digital'}`);
+      setIsGenerating(false);
+    }, 500);
+  };
+
+  const shareInvoice = async () => {
+    try {
+      await Share.share({
+        title: 'Mi Póliza RCV Digital',
+        text: `Hola, adjunto mi póliza RCV Digital del vehículo placa ${data.placa}.`,
+        url: '', // Aquí iría el base64 del PDF si lo generamos en memoria
+        dialogTitle: 'Compartir Póliza y Factura',
+      });
+    } catch (error) {
+      console.error('Error al compartir', error);
+    }
+  };
       <div className="text-center mb-16">
         <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: 'spring' }} className="inline-flex items-center justify-center w-24 h-24 bg-gradient-to-br from-brand-primary to-brand-secondary text-white rounded-[32px] mb-8 shadow-2xl shadow-indigo-500/40">
           <CheckCircle2 className="w-12 h-12" />
@@ -559,27 +600,52 @@ const SuccessScreen: React.FC<{ onReset: () => void, data: ExtractedData }> = ({
         {view === 'digital' && (
           <>
             <button
-              onClick={() => setView('physical')}
+              onClick={downloadPDF}
+              disabled={isGenerating}
               className="w-full bg-slate-100 text-slate-900 font-extrabold py-5 rounded-full flex items-center justify-center gap-3 shadow-xl hover:bg-white transition-all"
             >
-              <Printer className="w-5 h-5" /> Formato para Vidrio / Casco
+              {isGenerating ? <Loader2 className="animate-spin" /> : <Download className="w-5 h-5" />}
+              Descargar Factura y Póliza (PDF)
             </button>
             <button
-              onClick={() => setView('invoice')}
+              onClick={shareInvoice}
+              className="w-full bg-emerald-500 text-white font-extrabold py-5 rounded-full flex items-center justify-center gap-3 shadow-xl hover:bg-emerald-600 transition-all"
+            >
+              <Mail className="w-5 h-5" /> Enviar por WhatsApp / Correo
+            </button>
+            <button
+              onClick={() => setView('physical')}
               className="w-full bg-brand-primary/10 border border-brand-primary/30 text-brand-primary font-extrabold py-5 rounded-full flex items-center justify-center gap-3 shadow-xl hover:bg-brand-primary/20 transition-all"
             >
-              <FileText className="w-5 h-5" /> Ver Factura Fiscal Digital
+              <Printer className="w-5 h-5" /> Formato para Vidrio / Casco
             </button>
           </>
         )}
 
-        {view !== 'digital' && (
-          <button className="w-full bg-white text-slate-900 font-extrabold py-5 rounded-full flex items-center justify-center gap-3 shadow-xl">
-            <Download className="w-5 h-5" /> Descargar para Imprimir
+        {(view === 'physical' || view === 'invoice') && (
+          <button
+            onClick={downloadPDF}
+            className="w-full bg-white text-slate-900 font-extrabold py-5 rounded-full flex items-center justify-center gap-3 shadow-xl"
+          >
+            <Download className="w-5 h-5" /> Confirmar Descarga
           </button>
         )}
 
         <button onClick={onReset} className="w-full bg-transparent border border-white/10 text-white py-5 rounded-full font-bold hover:bg-white/5 transition-all">Emitir Nueva Póliza</button>
+      </div>
+
+      {/* Elemento oculto para generación de PDF si no está visible */}
+      <div className="hidden">
+         <div id="hidden-invoice">
+            <FiscalInvoice
+              data={data}
+              invoiceNumber="108991"
+              controlNumber="00-110369"
+              date={new Date().toLocaleDateString('es-VE')}
+              amountUsd={51.30}
+              bcvRate={bcvRate}
+            />
+         </div>
       </div>
 
       <div className="mt-12 text-center">
@@ -630,7 +696,7 @@ export default function App() {
   };
 
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <AuthScreen onLogin={handleLogin} />;
   }
 
   if (!securityService.isActive(user.status)) {
@@ -676,10 +742,12 @@ export default function App() {
           <div key="cliente-flow" className="pb-24">
             {activeTab === 'home' && (
               <>
-                {step === 'landing' && <LandingScreen key="landing" onNext={() => setStep('upload')} />}
-                {step === 'upload' && <UploadScreen key="upload" onNext={() => setStep('summary')} onBack={() => setStep('landing')} onDataExtracted={handleDataExtracted} />}
-                {step === 'summary' && <SummaryScreen key="summary" data={extractedData} onNext={() => setStep('payment')} onBack={() => setStep('upload')} onUpdate={handleUpdateData} />}
-                {step === 'payment' && <PaymentScreen key="payment" amount={51.30} onBack={() => setStep('summary')} onSuccess={() => setStep('success')} />}
+                {step === 'landing' && <LandingScreen key="landing" onNext={() => setStep('registration')} />}
+                {step === 'registration' && <RegistrationFlow key="registration" onComplete={(data) => {
+                  setExtractedData(prev => ({ ...prev, ...data }));
+                  setStep('payment');
+                }} />}
+                {step === 'payment' && <PaymentScreen key="payment" amount={51.30} onBack={() => setStep('registration')} onSuccess={() => setStep('success')} />}
                 {step === 'success' && <SuccessScreen key="success" data={extractedData} onReset={() => setStep('landing')} />}
                 {step === 'accident_report' && <AccidentReportScreen key="accident" onBack={() => setStep('landing')} onSuccess={() => setStep('landing')} />}
               </>

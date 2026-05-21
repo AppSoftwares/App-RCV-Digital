@@ -1,18 +1,13 @@
-// Mock de Supabase para desarrollo sin credenciales
-export const supabase = {
-  from: (table: string) => ({
-    insert: async (data: any) => {
-      console.log(`[Supabase Mock] Insertando en ${table}:`, data);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      return { data: { id: 'mock-id-' + Math.random() }, error: null };
-    },
-    select: () => ({
-      eq: () => ({
-        single: async () => ({ data: null, error: null })
-      })
-    })
-  })
-};
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.replace(/\/rest\/v1\/?$/, '');
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('Faltan las credenciales de Supabase en el archivo .env');
+}
+
+export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
 
 export async function savePolicy(policyData: any) {
   return await supabase.from('policies').insert(policyData);

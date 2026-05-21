@@ -1,21 +1,62 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Shield, Mail, Lock, User, ArrowRight, Chrome } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { UserProfile, UserRole } from '../types';
 
-export const AuthScreen: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSuccess }) => {
+export const AuthScreen: React.FC<{ onLogin: (user: UserProfile) => void }> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    // Simulación de autenticación (Aquí se conectaría con Supabase o Spacetimedb)
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setLoading(false);
-    onAuthSuccess();
+    setError(null);
+
+    try {
+      if (isLogin) {
+        const { data, error: signInError } = await supabase.auth.signInWithPassword({
+          email: email.toLowerCase(),
+          password,
+        });
+        if (signInError) throw signInError;
+
+        if (data.user) {
+          onLogin({
+            id: data.user.id,
+            nombre: data.user.user_metadata?.username || data.user.email?.split('@')[0] || 'Usuario',
+            email: data.user.email || '',
+            role: (data.user.user_metadata?.role as UserRole) || 'cliente',
+            status: 'active'
+          });
+        }
+      } else {
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email: email.toLowerCase(),
+          password,
+          options: {
+            data: {
+              username: username,
+              role: 'cliente'
+            },
+          },
+        });
+        if (signUpError) throw signUpError;
+
+        if (data.user) {
+          alert('Registro exitoso. Revisa tu correo para confirmar la cuenta.');
+          setIsLogin(true);
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Ocurrió un error en la autenticación');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGoogleAuth = async () => {
@@ -41,6 +82,11 @@ export const AuthScreen: React.FC<{ onAuthSuccess: () => void }> = ({ onAuthSucc
           <p className="text-slate-500 text-sm font-medium italic mt-1">
             {isLogin ? 'Inicia sesión para continuar' : 'Crea tu cuenta de grado empresarial'}
           </p>
+          {error && (
+            <div className="mt-4 p-3 bg-red-500/20 border border-red-500/50 rounded-xl text-red-500 text-xs font-bold text-center">
+              {error}
+            </div>
+          )}
         </div>
 
         <form onSubmit={handleAuth} className="space-y-5">
